@@ -427,5 +427,20 @@
     "sdk_mcp": "v0.14.0 (read-only, no key custody). SDK: getRoomPolicy/isAdmitted/isAccessRevoked/getAdmission*/getCommitteeKeyEpoch + canAccessRoom (per-leg breakdown, reads gates at the policy-pinned addresses). DEMO_DATAROOM_POLICY. smoke GREEN. MCP: 4 read tools (get_room_policy/can_access_room/is_access_revoked/get_committee_key_epoch); NO admit/revoke/rotate/policy-set tool (writes backend-only); selftest GREEN.",
     "frontend": "/dataroom DR6 card (composite-policy admission per-leg breakdown via canAccessRoom + live Numbers panel reading on-chain grants/admissions/key-epoch) + Playwright dataroom-dr6.spec.ts; full suite 14/14 GREEN.",
     "numbers_report": "development/Build-Plan/dataroom/DR6-NUMBERS.md (local) + the in-app /dataroom DR6 Numbers panel (live)."
+  },
+  "dataroom_pattern2_selfserve": {
+    "name": "DataRoom contract — Pattern 2 prove-a-policy self-serve, PER-DOCUMENT access policy (in place)",
+    "contract_id": "CDUQITRVJOPJNVWBUINLZFI2LHPOLVFW2I7354WEFDG2W3VIG627HLNN",
+    "upgrade_wasm_hash": "382b3b6b653357ce3a04a7c263d5130d8f7d6018804e56ae28fb21d46cf5dc04",
+    "upgrade_tx": "1b8a2cf0d03d1ed116476cfcefd125744b977e19ce6f195a505ee9a8d31688e8",
+    "wasm_size_bytes": 73051,
+    "wasm_size_note": "stellar contract build --optimize = 73,051 B (DR6 baseline + the per-doc additions); testnet max_contract_size_bytes = 131072 (128 KB), queried live, so it fits comfortably.",
+    "no_new_guest": "Pattern 2 adds NO new RISC0 guest. It composes the shipped DR2 membership proof + DR6 composite admission + DR3 threshold-ECIES key release. The contract change is additive: one write, two reads, one DataKey, one event.",
+    "datakeys_added": "DocPolicy(room, doc) — reuses the RoomPolicy struct; additive, no retype; DR1-DR6 storage preserved (room_count=20 survived, demo accessor still is_admitted=true post-upgrade).",
+    "new_methods": "set_doc_policy(room, doc, require_membership, compliance_gate, accredited_gate) [room-owner auth; committee doc must exist (CommitteeDocNotFound #26); reject empty (EmptyPolicy #27)] emits DocPolicySet. Reads: is_doc_admitted(room, doc, accessor) [effective policy = DocPolicy else RoomPolicy else bare membership is_granted; then the same leg AND as is_admitted] + get_doc_policy(room, doc).",
+    "keyper_gate": "the DR3 keypers gate /share on is_doc_admitted (was is_granted); recipient_pub still from the DR2 grant. Backward-compatible (no-policy committee docs fall back to membership).",
+    "cargo_tests": "100/100 (+10 Pattern-2: full composite, doc-overrides-room, fallback-to-room, fallback-to-membership, revoke drops + restore, gate-only revoke drops, owner-auth, requires-committee-doc #26, empty #27, totality).",
+    "acceptance_testnet": "Upgrade tx 1b8a2cf0 preserved all DR1-DR6 storage (room_count=20, is_admitted(db16742c, ed4928c6)=true). New reads live: get_doc_policy(demo doc)=null (no doc policy yet); is_doc_admitted(demo room/doc/accessor)=true (falls back to the DR6 room policy).",
+    "status": "contract DEPLOYED + verified 2026-06-19; keyper/backend/SDK/frontend Pattern-2 build IN PROGRESS (branch dataroom-selfserve-access)."
   }
 }
