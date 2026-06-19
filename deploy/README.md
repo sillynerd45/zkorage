@@ -50,14 +50,18 @@ on the VM:
 ```bash
 # On the Windows dev box (Git Bash), from the repo root:
 cd frontend && npm run build && cd ..        # stamps dist/ with the current commit's short SHA
-tar czf - --exclude='backend/node_modules' --exclude='sdk/node_modules' --exclude='*.tsbuildinfo' \
-  backend sdk frontend/dist frontend/serve.json deploy docker-compose.yml .dockerignore .gitattributes \
+tar czf - --exclude='backend/node_modules' --exclude='sdk/node_modules' --exclude='keyper/node_modules' \
+  --exclude='backend/.env' --exclude='backend/data' --exclude='keyper/data' --exclude='*.tsbuildinfo' \
+  backend sdk keyper frontend/dist frontend/serve.json deploy docker-compose.yml .dockerignore .gitattributes \
 | ssh -i ~/.ssh/id_<user>_vm <user>@<vm-host> \
   'tar xzf - -C /home/<user>/Project/Stellar/zkorage-web'
 # Then on the VM:
 ssh -i ~/.ssh/id_<user>_vm <user>@<vm-host> \
   'cd /home/<user>/Project/Stellar/zkorage-web && docker compose up -d --build'
 ```
+The tar now ships `keyper/` too (the keeper image builds from the same root context) and EXCLUDES
+`keyper/data` so the VM keeps its own Shamir share stores (mirrors the `backend/.env` + `backend/data`
+rule). The keeper share stores live in Docker named volumes (`keyper{1,2,3}-data`), so a rebuild keeps them.
 Bump the version with `npm version patch|minor|major` in `frontend/` per deploy (single source of truth =
 `frontend/package.json`). First diagnostic for a "stale view" report: the badge's `<sha>` vs the commit you
 shipped.
@@ -84,6 +88,46 @@ ssh -i ~/.ssh/id_<user>_vm <user>@<vm-host> \
 ```
 Verify: `curl -I https://zkorage.wazowsky.id/` → `200` + `no-store`; the badge `<sha>` matches the shipped
 commit. No Cloudflare change needed (the `zkorage.wazowsky.id` → localhost:4173 route already exists).
+
+## The 3-keeper threshold committee (DR3 / Pattern-2 key release)
+
+The Data Room key-release step (collect 2-of-3 sealed shares, rebuild the document key, decrypt) needs the
+keeper committee live. Three keepers run as compose services `keyper1` / `keyper2` / `keyper3` (image
+`deploy/keyper.Dockerfile`, one Shamir share each). They are **VM-internal only**: no published host ports
+and no Cloudflare route, so only the backend aggregator reaches them by service-name DNS
+(`http://keyper{1,2,3}:880{1,2,3}`). The public path stays `apizk.../dataroom/committee/collect`.
+
+Each keeper reads its OWN testnet RPC (keyper1 + keyper3 on SDF, keyper2 on Gateway.fm) so the committee
+does not trust a single shared oracle. With three keepers over two providers one provider serves two
+keepers (= the threshold); a third independent RPC provider would close that, and the `STELLAR_RPC_URL` per
+keeper in `docker-compose.yml` is the single knob to do it. The keepers gate `/share` on the on-chain
+`is_doc_admitted` (the Pattern-2 per-document policy), rate-limit `/share` (`SHARE_RATE_PER_MIN`), and
+restrict browser CORS (`KEYPER_ALLOWED_ORIGINS`); `GET /health` echoes both so you can confirm they are on.
+
+**Per-box secrets/config live in `./.env`** next to `docker-compose.yml` on the VM (compose interpolation,
+NOT shipped by the deploy tar, so a redeploy never clobbers it):
+```bash
+# /home/<user>/Project/Stellar/zkorage-web/.env  (create once; chmod 600)
+KEYPER_DEAL_TOKEN=<a strong random token>     # shared by the backend dealer + all 3 keepers; gates /deal
+DATAROOM_CONTRACT_ID=<the live DataRoom C... > # match backend/.env
+SIM_SOURCE_PUBKEY=<a funded testnet G...>      # the keepers' read-only simulation source (match backend/.env)
+```
+`docker compose up` fails loudly (the `:?` guards) if any of these is missing, so the keepers can never
+silently fall back to the demo token and mismatch the backend.
+
+**Seed the demo committee docs' shares to the fresh keepers** (their share stores start empty), AFTER all 3
+are healthy (a partial deal aborts):
+```bash
+ssh -i ~/.ssh/id_<user>_vm <user>@<vm-host> \
+  'docker exec zkorage-backend node scripts/dr-prod-reseal-committee.mjs'
+```
+This re-splits a fresh K' for the DR3 demo doc (`a17388e8…/614664eb…`) and the DR6 / Pattern-2 demo doc
+(`db16742c…/8b041fe3…`), deals one share per keeper, re-anchors on-chain (bumps `key_epoch`), and verifies
+the round-trip. The room/doc/recipient IDs and the demo recipient secret are unchanged, so the frontend
+demo constants and the key-free opener keep working.
+
+Verify the committee: `curl -s http://localhost:8787/dataroom/committee/info` shows `online: 3` and each
+keeper's `shares` count > 0 after the reseal.
 
 ## Durability
 `restart: unless-stopped` + the VM is an always-on server whose `cloudflared` and Docker already run for the

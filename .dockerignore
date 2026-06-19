@@ -7,13 +7,18 @@
 CLAUDE.md
 README.md
 
-# Large local-only trees + other subprojects not part of the FE/BE images
+# Large local-only trees + other subprojects not part of the FE/BE images. keyper/ IS needed (the keeper
+# image builds from this same root context), so it is NOT excluded — only its node_modules + share-store
+# data dir are (below). The FE/BE images don't COPY keyper/, so the small extra context is harmless.
 development/
 contract/
 prover/
 mcp/
 keeper/
-keyper/
+
+# Keeper: source IS needed by deploy/keyper.Dockerfile; its share-store data + deps are not baked in.
+keyper/data
+keyper/.env
 
 # Deps / build caches (re-installed inside the image)
 **/node_modules

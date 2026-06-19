@@ -30,6 +30,15 @@ const PORT = Number(process.env.KEYPER_PORT || "8801");
 const DEAL_TOKEN = process.env.DEAL_TOKEN || "";
 const CONTRACT_ID = process.env.DATAROOM_CONTRACT_ID || "";
 const STORE_PATH = process.env.SHARE_STORE_PATH || `./data/keyper-${KEYPER_INDEX}.json`;
+// Hardening (both DISABLED by default so the local 3-process demo + selftest are unaffected; set in prod):
+//   SHARE_RATE_PER_MIN  — per-IP /share cap (0 = unlimited). /share runs two RPC simulates per call, so an
+//                         unbounded spray would burn this keyper's RPC quota.
+//   KEYPER_ALLOWED_ORIGINS — comma-separated CORS allowlist for browser callers (empty = open, dev default).
+const SHARE_RATE_PER_MIN = Number(process.env.SHARE_RATE_PER_MIN || "0");
+const ALLOWED_ORIGINS = (process.env.KEYPER_ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 if (KEYPER_INDEX < 1 || KEYPER_INDEX > 255) {
   throw new Error("KEYPER_INDEX must be set to this keyper's Shamir x-coordinate (1..255)");
@@ -37,9 +46,29 @@ if (KEYPER_INDEX < 1 || KEYPER_INDEX > 255) {
 if (!CONTRACT_ID) throw new Error("DATAROOM_CONTRACT_ID must be set");
 if (!DEAL_TOKEN) console.warn("[keyper] WARNING: DEAL_TOKEN is empty → /deal is fail-CLOSED (every deal 503s until a token is set)");
 
+// Per-IP fixed-window limiter for /share (no new dependency). The server never BLOCKS on the limiter being
+// off; with SHARE_RATE_PER_MIN <= 0 it is a no-op. A released share is only ever useful to the proof-bound
+// recipient, so this guards the keeper's RPC budget, not secrecy.
+const shareHits = new Map<string, { n: number; resetAt: number }>();
+function shareRateLimited(ip: string): boolean {
+  if (SHARE_RATE_PER_MIN <= 0) return false;
+  const now = Date.now();
+  if (shareHits.size > 4096) for (const [k, v] of shareHits) if (now >= v.resetAt) shareHits.delete(k);
+  const rec = shareHits.get(ip);
+  if (!rec || now >= rec.resetAt) {
+    shareHits.set(ip, { n: 1, resetAt: now + 60_000 });
+    return false;
+  }
+  rec.n += 1;
+  return rec.n > SHARE_RATE_PER_MIN;
+}
+
 const store = new ShareStore(STORE_PATH);
 const app = express();
-app.use(cors());
+app.set("trust proxy", true);
+// CORS: an allowlist (prod) restricts which browser ORIGINS get CORS headers; server-to-server calls (the
+// backend aggregator, no Origin header) are unaffected either way. Unset → open, the local-demo default.
+app.use(ALLOWED_ORIGINS.length ? cors({ origin: ALLOWED_ORIGINS }) : cors());
 app.use(express.json({ limit: "256kb" }));
 
 app.get("/health", (_req: Request, res: Response) => {
@@ -49,6 +78,8 @@ app.get("/health", (_req: Request, res: Response) => {
     rpc: rpcUrl(),
     contract: CONTRACT_ID,
     shares: store.count(),
+    share_rate_per_min: SHARE_RATE_PER_MIN || null,
+    cors: ALLOWED_ORIGINS.length ? ALLOWED_ORIGINS : "open",
   });
 });
 
@@ -78,6 +109,8 @@ app.post("/deal", (req: Request, res: Response) => {
 // Public: release this keyper's sealed share IFF the requester holds a live on-chain grant. The share is
 // sealed to the grant's recorded recipient_pub (read from chain), so the response is useless to anyone else.
 app.post("/share", async (req: Request, res: Response) => {
+  const ip = req.ip || req.socket.remoteAddress || "unknown";
+  if (shareRateLimited(ip)) return res.status(429).json({ error: "rate limit exceeded; retry shortly" });
   const { room_id, doc_id, accessor } = (req.body ?? {}) as Record<string, unknown>;
   if (typeof room_id !== "string" || !HEX32.test(room_id)) return res.status(400).json({ error: "room_id must be 32-byte hex" });
   if (typeof doc_id !== "string" || !HEX32.test(doc_id)) return res.status(400).json({ error: "doc_id must be 32-byte hex" });

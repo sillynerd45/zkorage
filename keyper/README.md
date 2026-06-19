@@ -55,8 +55,12 @@ npx tsx scripts/dr3-committee-selftest.ts   # drives the 3 live keypers against 
 - **`/share` is a public oracle (by design):** it is unauthenticated and confirms grant-existence + the
   proof-bound `recipient_pub` for any `accessor` — but that is *already public on-chain* (`get_grant`), and a
   released share is decryptable only by the holder of the recipient secret. It reveals **no identity** (DR2
-  anonymity holds). **Production TODO:** rate-limit `/share` (it triggers two RPC simulates per call → a
-  spray attack costs the keyper's RPC quota) and restrict CORS to the known caller origin.
+  anonymity holds). **Hardening (env-gated, both off by default so the local demo + selftest are unchanged):**
+  `SHARE_RATE_PER_MIN` caps `/share` per IP (it triggers two RPC simulates per call → a spray costs the
+  keyper's RPC quota) and `KEYPER_ALLOWED_ORIGINS` restricts browser CORS to a known origin allowlist
+  (server-to-server calls have no `Origin`, so the backend aggregator is unaffected). `GET /health` echoes
+  `share_rate_per_min` + `cors` so an operator can confirm they are on. The production committee on the VM
+  sets both (see `deploy/README.md`).
 - **`/deal` is fail-closed:** with no `DEAL_TOKEN` set, every `/deal` returns 503 (never silently
   unauthenticated). Use a distinct token per keyper in production (the demo shares one).
 - **Partial deal is inert, not a leak:** if the dealer reaches only some keypers, it does **not** anchor the

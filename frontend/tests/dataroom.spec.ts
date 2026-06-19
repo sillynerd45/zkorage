@@ -87,6 +87,12 @@ test("dataroom overview: task-oriented cards route to the right place; guided-de
   await expect(page.getByTestId("task-browse")).toBeVisible();
   await expect(page.getByTestId("task-eligibility")).toBeVisible();
 
+  // the live key-release readiness pill is shown so a visitor sees the keepers are up before they try the
+  // "Open a shared document" path (count is environment-dependent; assert the format, not a fixed number)
+  const committee = page.getByTestId("overview-committee");
+  await expect(committee).toBeVisible({ timeout: 30_000 });
+  await expect(committee).toContainText(/of \d+ keepers online/);
+
   // the passive "Guided demo" is no longer a dataroom tab
   await expect(page.getByRole("link", { name: "Guided demo" })).toHaveCount(0);
 
