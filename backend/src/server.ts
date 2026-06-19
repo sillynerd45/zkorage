@@ -18,7 +18,7 @@ import express from "express";
 import cors from "cors";
 import fs from "node:fs";
 import path from "node:path";
-import { StrKey } from "@stellar/stellar-sdk";
+import { StrKey, xdr } from "@stellar/stellar-sdk";
 import {
   attest, attestKyc, attestPayroll, attestAccredited, attestRevenue, attestTeaser,
   kycIssuerPubkey, payrollAttesterPubkey, accreditedIssuerPubkey, revenueAttesterPubkey, teaserAttesterPubkey,
@@ -55,7 +55,7 @@ import { buildDocauthJob, bankIssuer } from "./docauth.js";
 import { getEligible, addEligible, indexOfCommitment } from "./eligible-store.js";
 import { demoDenyTree, DENY_DEPTH } from "./denylist.js";
 import { verifyOnChain, type Bundle } from "./verify.js";
-import { readContract, invokeContract, scBytes, scAddress, scOptAddress, scI128, scU32, scBool, jsonSafe } from "./chain.js";
+import { readContract, invokeContract, buildUnsignedXdr, submitSignedXdr, scBytes, scAddress, scOptAddress, scI128, scU32, scBool, jsonSafe } from "./chain.js";
 import { verifyBundle, cliRecipe, type AuditContext } from "./audit.js";
 
 const PORT = Number(process.env.PORT || 8787);
@@ -218,6 +218,35 @@ function toBaseUnits(body: { whole?: unknown; amount?: unknown }): bigint {
 
 const err = (e: unknown) => String((e as Error)?.message ?? e);
 
+// ── Client-side signing (Freighter) ─────────────────────────────────────────────────────────────
+// A write request MAY include `source` = the caller's Stellar G-address. When present (and valid), we
+// build the tx UNSIGNED with that source and return its XDR for the wallet to sign — the user submits
+// + pays their own gas via POST /tx/submit. When absent, the existing server-relay path runs unchanged.
+// Only the PERMISSIONLESS proof entrypoints opt in (the proof is the authorization); admin/owner ops
+// and the anonymous DR2/DR6 flows stay relay-only.
+function userSource(req: express.Request): string | null {
+  const s = (req.body as { source?: unknown } | undefined)?.source;
+  return typeof s === "string" && StrKey.isValidEd25519PublicKey(s) ? s : null;
+}
+
+/** If the request carries a valid `source`, respond with unsigned XDR and return true (handler should
+ *  then `return`). Otherwise return false so the handler proceeds with the server-relay path. Any build
+ *  error is thrown for the handler's catch block to format. */
+async function maybeXdr(
+  req: express.Request,
+  res: express.Response,
+  contractId: string,
+  method: string,
+  args: xdr.ScVal[],
+  idField: Record<string, string>,
+): Promise<boolean> {
+  const source = userSource(req);
+  if (!source) return false;
+  const { xdr: x, cost } = await buildUnsignedXdr(contractId, method, args, source);
+  res.json({ ok: true, mode: "xdr", xdr: x, cost, source, ...idField });
+  return true;
+}
+
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 app.get("/info", (_req, res) =>
@@ -349,14 +378,27 @@ app.post("/submit", async (req, res) => {
     return res.status(400).json({ error: "seal, image_id, journal (raw) required" });
   }
   try {
-    const out = await invokeContract(POLICY_ID, "submit_proof_of_reserves", [
-      scBytes(b.seal),
-      scBytes(b.image_id),
-      scBytes(b.journal),
-    ]);
+    const args = [scBytes(b.seal), scBytes(b.image_id), scBytes(b.journal)];
+    if (await maybeXdr(req, res, POLICY_ID, "submit_proof_of_reserves", args, { policyId: POLICY_ID })) return;
+    const out = await invokeContract(POLICY_ID, "submit_proof_of_reserves", args);
     res.json({ ok: true, txHash: out.hash, cost: out.cost, result: jsonSafe(out.returnValue), policyId: POLICY_ID });
   } catch (e) {
     res.json({ ok: false, error: err(e), policyId: POLICY_ID });
+  }
+});
+
+// Submit a client-signed tx XDR (the wallet path's second half). Pairs with the `source` opt-in on the
+// permissionless write routes: those return unsigned XDR, Freighter signs it, this submits + confirms.
+app.post("/tx/submit", async (req, res) => {
+  const signedXdr = (req.body as { signedXdr?: unknown })?.signedXdr;
+  if (typeof signedXdr !== "string" || !signedXdr) {
+    return res.status(400).json({ ok: false, error: "signedXdr (string) required" });
+  }
+  try {
+    const out = await submitSignedXdr(signedXdr);
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, result: jsonSafe(out.returnValue) });
+  } catch (e) {
+    res.json({ ok: false, error: err(e) });
   }
 });
 
@@ -668,11 +710,9 @@ app.post("/grant-access", async (req, res) => {
     return res.status(400).json({ error: "seal, image_id, journal (raw) required" });
   }
   try {
-    const out = await invokeContract(GATE_ID, "request_access", [
-      scBytes(b.seal),
-      scBytes(b.image_id),
-      scBytes(b.journal),
-    ]);
+    const args = [scBytes(b.seal), scBytes(b.image_id), scBytes(b.journal)];
+    if (await maybeXdr(req, res, GATE_ID, "request_access", args, { gateId: GATE_ID })) return;
+    const out = await invokeContract(GATE_ID, "request_access", args);
     const journal = b.journal ? safe(() => identityJournalView(b.journal!)) : undefined;
     res.json({ ok: true, txHash: out.hash, cost: out.cost, result: jsonSafe(out.returnValue), journal, gateId: GATE_ID });
   } catch (e) {
@@ -819,11 +859,9 @@ app.post("/grant-compliance", async (req, res) => {
     return res.status(400).json({ error: "seal, image_id, journal (raw) required" });
   }
   try {
-    const out = await invokeContract(COMPLIANCE_ID, "request_access", [
-      scBytes(b.seal),
-      scBytes(b.image_id),
-      scBytes(b.journal),
-    ]);
+    const args = [scBytes(b.seal), scBytes(b.image_id), scBytes(b.journal)];
+    if (await maybeXdr(req, res, COMPLIANCE_ID, "request_access", args, { complianceId: COMPLIANCE_ID })) return;
+    const out = await invokeContract(COMPLIANCE_ID, "request_access", args);
     const journal = b.journal ? safe(() => complianceJournalView(b.journal!)) : undefined;
     res.json({ ok: true, txHash: out.hash, cost: out.cost, result: jsonSafe(out.returnValue), journal, complianceId: COMPLIANCE_ID });
   } catch (e) {
@@ -1003,11 +1041,9 @@ app.post("/submit-payroll", async (req, res) => {
     return res.status(400).json({ error: "seal, image_id, journal (raw) required" });
   }
   try {
-    const out = await invokeContract(PAYROLL_ID, "submit_payroll_proof", [
-      scBytes(b.seal),
-      scBytes(b.image_id),
-      scBytes(b.journal),
-    ]);
+    const args = [scBytes(b.seal), scBytes(b.image_id), scBytes(b.journal)];
+    if (await maybeXdr(req, res, PAYROLL_ID, "submit_payroll_proof", args, { payrollId: PAYROLL_ID })) return;
+    const out = await invokeContract(PAYROLL_ID, "submit_payroll_proof", args);
     const journal = b.journal ? safe(() => payrollJournalView(b.journal!)) : undefined;
     res.json({ ok: true, txHash: out.hash, cost: out.cost, result: jsonSafe(out.returnValue), journal, payrollId: PAYROLL_ID });
   } catch (e) {
@@ -1228,7 +1264,9 @@ app.post("/grant-accredited", async (req, res) => {
   const b = req.body as Bundle;
   if (!b?.seal || !b?.image_id || !b?.journal) return res.status(400).json({ error: "seal, image_id, journal (raw) required" });
   try {
-    const out = await invokeContract(ACCREDITED_ID, "request_access", [scBytes(b.seal), scBytes(b.image_id), scBytes(b.journal)]);
+    const args = [scBytes(b.seal), scBytes(b.image_id), scBytes(b.journal)];
+    if (await maybeXdr(req, res, ACCREDITED_ID, "request_access", args, { accreditedId: ACCREDITED_ID })) return;
+    const out = await invokeContract(ACCREDITED_ID, "request_access", args);
     const journal = b.journal ? safe(() => identityJournalView(b.journal!)) : undefined;
     res.json({ ok: true, txHash: out.hash, cost: out.cost, result: jsonSafe(out.returnValue), journal, accreditedId: ACCREDITED_ID });
   } catch (e) {
@@ -1330,7 +1368,9 @@ app.post("/fundraise/submit-revenue", async (req, res) => {
   const b = req.body as Bundle;
   if (!b?.seal || !b?.image_id || !b?.journal) return res.status(400).json({ error: "seal, image_id, journal (raw) required" });
   try {
-    const out = await invokeContract(FUNDRAISE_ID, "submit_revenue_proof", [scBytes(b.seal), scBytes(b.image_id), scBytes(b.journal)]);
+    const args = [scBytes(b.seal), scBytes(b.image_id), scBytes(b.journal)];
+    if (await maybeXdr(req, res, FUNDRAISE_ID, "submit_revenue_proof", args, { fundraiseId: FUNDRAISE_ID })) return;
+    const out = await invokeContract(FUNDRAISE_ID, "submit_revenue_proof", args);
     const journal = b.journal ? safe(() => revenueJournalView(b.journal!)) : undefined;
     res.json({ ok: true, txHash: out.hash, cost: out.cost, result: jsonSafe(out.returnValue), journal, fundraiseId: FUNDRAISE_ID });
   } catch (e) {
@@ -1346,7 +1386,9 @@ app.post("/fundraise/request-access", async (req, res) => {
   let accessorHex: string;
   try { accessorHex = accessorToHex(accessor); } catch (e) { return res.status(400).json({ error: err(e) }); }
   try {
-    const out = await invokeContract(FUNDRAISE_ID, "request_investor_access", [scBytes(accessorHex)]);
+    const args = [scBytes(accessorHex)];
+    if (await maybeXdr(req, res, FUNDRAISE_ID, "request_investor_access", args, { accessor: accessorHex, fundraiseId: FUNDRAISE_ID })) return;
+    const out = await invokeContract(FUNDRAISE_ID, "request_investor_access", args);
     res.json({ ok: true, txHash: out.hash, cost: out.cost, result: jsonSafe(out.returnValue), accessor: accessorHex, fundraiseId: FUNDRAISE_ID });
   } catch (e) {
     res.json({ ok: false, error: err(e), accessor: accessorHex, fundraiseId: FUNDRAISE_ID });
