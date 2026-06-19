@@ -56,6 +56,7 @@ import { getEligible, addEligible, indexOfCommitment } from "./eligible-store.js
 import { demoDenyTree, DENY_DEPTH } from "./denylist.js";
 import { verifyOnChain, type Bundle } from "./verify.js";
 import { readContract, invokeContract, buildUnsignedXdr, submitSignedXdr, scBytes, scAddress, scOptAddress, scI128, scU32, scBool, jsonSafe } from "./chain.js";
+import { recordRoom, listRoomsByOwner } from "./rooms-store.js";
 import { verifyBundle, cliRecipe, type AuditContext } from "./audit.js";
 
 const PORT = Number(process.env.PORT || 8787);
@@ -1588,16 +1589,63 @@ app.post("/dataroom/create-room", async (req, res) => {
   if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
   if (!ADMIN_ADDRESS) return res.status(503).json({ error: "ADMIN_ADDRESS not configured" });
   let roomIdHex: string;
+  let label: string | undefined;
   try {
+    const raw = String(req.body?.roomId ?? "").trim();
+    // Keep a human label (e.g. "Series A data room") for the owner's "my rooms" list; a 64-hex id has none.
+    label = raw && !/^(0x)?[0-9a-fA-F]{64}$/.test(raw) ? raw : undefined;
     roomIdHex = toBytes32(req.body?.roomId, { random: true });
   } catch (e) {
     return res.status(400).json({ error: err(e) });
+  }
+  // When a wallet is connected (`source`), the ROOM is owned by that wallet ON-CHAIN — it signs create_room
+  // here and put_document later, so "Browse = rooms your wallet owns" reads the authoritative on-chain owner.
+  // No wallet → the server relay owns it (the demo default). DR1 owner ops carry no anonymity concern (unlike
+  // the DR2/DR6 anonymous flows), so attributing them to the wallet is sound. The room is recorded in the
+  // enumeration index either way (the chain stays authoritative; the index is only the set of ids to check).
+  const source = userSource(req);
+  const owner = source || ADMIN_ADDRESS;
+  try { recordRoom(roomIdHex, owner, label); } catch (e) { return res.status(500).json({ error: err(e) }); }
+  if (source) {
+    try {
+      if (await maybeXdr(req, res, DATAROOM_ID, "create_room", [scAddress(source), scBytes(roomIdHex)], { roomId: roomIdHex, owner })) return;
+    } catch (e) {
+      return res.json({ ok: false, error: err(e), roomId: roomIdHex, dataroomId: DATAROOM_ID });
+    }
   }
   try {
     const out = await invokeContract(DATAROOM_ID, "create_room", [scAddress(ADMIN_ADDRESS), scBytes(roomIdHex)]);
     res.json({ ok: true, txHash: out.hash, cost: out.cost, roomId: roomIdHex, owner: ADMIN_ADDRESS, room: jsonSafe(out.returnValue), dataroomId: DATAROOM_ID });
   } catch (e) {
     res.json({ ok: false, error: err(e), roomId: roomIdHex, dataroomId: DATAROOM_ID });
+  }
+});
+
+// List the rooms a given owner (a Stellar G-address) owns, for the owner's "my documents" view. The
+// enumeration index gives the candidate room_ids; each is RE-VERIFIED on-chain (get_room.owner == owner) so
+// the registry is never trusted for ownership, and a doc count is included. A new wallet owns nothing → [].
+app.get("/dataroom/rooms", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  const owner = String(req.query.owner ?? "").trim();
+  if (!StrKey.isValidEd25519PublicKey(owner)) {
+    return res.status(400).json({ error: "owner must be a Stellar account (G-address)" });
+  }
+  try {
+    const candidates = listRoomsByOwner(owner);
+    const rooms = (
+      await Promise.all(
+        candidates.map(async (c) => {
+          const { value: room } = await readContract(DATAROOM_ID, "get_room", [scBytes(c.roomId)]);
+          const r = room ? (jsonSafe(room) as { owner?: string }) : null;
+          if (!r || r.owner !== owner) return null; // chain is authoritative; drop stale/unsubmitted entries
+          const { value: cnt } = await readContract(DATAROOM_ID, "get_doc_count", [scBytes(c.roomId)]);
+          return { roomId: c.roomId, label: c.label ?? null, owner, docCount: Number(cnt ?? 0), ledger: (r as { ledger?: number }).ledger ?? null };
+        }),
+      )
+    ).filter(Boolean);
+    res.json({ owner, count: rooms.length, rooms, dataroomId: DATAROOM_ID });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
   }
 });
 
@@ -1691,13 +1739,16 @@ app.post("/dataroom/submit-document", async (req, res) => {
   } catch (e) {
     return res.status(400).json({ error: err(e) });
   }
+  // When a wallet is connected, IT is the room owner on-chain, so it must sign put_document (require_auth on
+  // room.owner). Build unsigned XDR for the wallet to sign; no wallet → the server relay signs (demo default).
+  const putArgs = [scBytes(b.seal), scBytes(b.image_id), scBytes(b.journal), scBytesUtf8(pointer)];
   try {
-    const out = await invokeContract(DATAROOM_ID, "put_document", [
-      scBytes(b.seal),
-      scBytes(b.image_id),
-      scBytes(b.journal),
-      scBytesUtf8(pointer),
-    ]);
+    if (await maybeXdr(req, res, DATAROOM_ID, "put_document", putArgs, { blobPointer: pointer })) return;
+  } catch (e) {
+    return res.json({ ok: false, error: err(e), dataroomId: DATAROOM_ID });
+  }
+  try {
+    const out = await invokeContract(DATAROOM_ID, "put_document", putArgs);
     const journal = safe(() => dataroomJournalView(b.journal!));
     res.json({ ok: true, txHash: out.hash, cost: out.cost, result: dataroomDocView(out.returnValue), journal, blobPointer: pointer, dataroomId: DATAROOM_ID });
   } catch (e) {
