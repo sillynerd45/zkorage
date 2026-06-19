@@ -62,30 +62,28 @@ Bump the version with `npm version patch|minor|major` in `frontend/` per deploy 
 `frontend/package.json`). First diagnostic for a "stale view" report: the badge's `<sha>` vs the commit you
 shipped.
 
-## Unified UX redesign — preview at zkorage-a (:4174)
+## Unified UX redesign — LIVE on the main domain (:4173)
 
-The unified marketing-site + sidebar-app build (branch `ux-redesign`) is a SINGLE `vite build` →
-`frontend/dist` (no more `VITE_VARIANT` / `dist-a` / `dist-b`). It previews at **`zkorage-a.wazowsky.id`
-→ `http://localhost:4174`** (reusing the existing A/B tunnel route), via `docker-compose.preview.yml` +
-`deploy/frontend-preview.Dockerfile`. The live violet `zkorage.wazowsky.id` (:4173) is untouched until
-cutover. Deploy from the Windows dev box:
+The unified marketing-site + sidebar-app frontend is a SINGLE `vite build` → `frontend/dist` (no more
+`VITE_VARIANT` / `dist-a` / `dist-b`). **As of 2026-06-19 it is the main site at `zkorage.wazowsky.id`**
+(VM `:4173`, container `zkorage-frontend`, the `docker-compose.yml` `frontend` service). The old violet
+build and the throwaway A/B + preview deploys are **decommissioned**: containers `zkorage-frontend-a`
+(:4174), `zkorage-frontend-b` (:4175), and `zkorage-frontend-preview` are removed and the `zkorage-ab`
+compose project is torn down — so the `zkorage-a.wazowsky.id` / `zkorage-b.wazowsky.id` Public Hostnames
+can be removed from the Cloudflare tunnel. (`docker-compose.ab.yml`, `docker-compose.preview.yml`, and
+`deploy/frontend-*.Dockerfile` are kept in-repo as history but are no longer used.)
 
+Redeploy the main site from the Windows dev box (the badge SHA is stamped at `npm run build`):
 ```bash
-# On the Windows dev box (Git Bash), repo root — build stamps dist/ with the current commit SHA:
-cd frontend && npm run build && cd ..
-tar czf - frontend/dist frontend/serve.json deploy/frontend-preview.Dockerfile \
-  docker-compose.preview.yml .dockerignore .gitattributes \
+cd frontend && npm run build && cd ..                 # stamps dist/ with the current commit SHA
+tar czf - frontend/dist frontend/serve.json \
 | ssh -i ~/.ssh/id_<user>_vm <user>@<vm-host> \
   'tar xzf - -C /home/<user>/Project/Stellar/zkorage-web'
-# Then on the VM: free the old A/B ports and bring up the single unified preview
 ssh -i ~/.ssh/id_<user>_vm <user>@<vm-host> \
-  'cd /home/<user>/Project/Stellar/zkorage-web && docker rm -f zkorage-frontend-a zkorage-frontend-b 2>/dev/null; \
-   docker compose -f docker-compose.preview.yml up -d --build'
+  'cd /home/<user>/Project/Stellar/zkorage-web && docker compose up -d --build frontend'
 ```
-Verify on the VM: `curl -I http://localhost:4174/` → `200` + `no-store`; the badge `<sha>` matches the
-shipped commit. The `zkorage-a.wazowsky.id` Public Hostname (→ localhost:4174) is already on the tunnel
-from the A/B phase, so no Cloudflare dashboard change is needed. On sign-off, point the main
-`zkorage.wazowsky.id` route at the unified build (or rebuild the :4173 `zkorage-frontend` from this `dist`).
+Verify: `curl -I https://zkorage.wazowsky.id/` → `200` + `no-store`; the badge `<sha>` matches the shipped
+commit. No Cloudflare change needed (the `zkorage.wazowsky.id` → localhost:4173 route already exists).
 
 ## Durability
 `restart: unless-stopped` + the VM is an always-on server whose `cloudflared` and Docker already run for the
