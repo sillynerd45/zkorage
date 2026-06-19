@@ -58,8 +58,50 @@ test("landing → docs and verify CTAs work", async ({ page }) => {
   await expect(page).toHaveURL(/\/verify$/);
 });
 
-test("freighter placeholder opens coming-soon popover", async ({ page }) => {
+// ── Freighter wallet ────────────────────────────────────────────────────────────────────────
+// Headless Chrome can't load the real extension, so we inject window.__freighterMock (the seam in
+// lib/wallet/client.ts) before the app mounts to drive each connection state.
+const DEMO_G = "GABF456WZDNHKUVWA6BBAYLACD3QTMZA745AVRSBK7IYOBQ5NQJ3HGRC";
+
+function freighterMock(opts: { network?: string } = {}) {
+  const network = opts.network ?? "TESTNET";
+  return `
+    localStorage.setItem("zkorage.wallet.connected", "1");
+    window.__freighterMock = {
+      isConnected: async () => ({ isConnected: true }),
+      isAllowed: async () => ({ isAllowed: true }),
+      requestAccess: async () => ({ address: "${DEMO_G}" }),
+      getAddress: async () => ({ address: "${DEMO_G}" }),
+      getNetwork: async () => ({ network: "${network}", networkPassphrase: "Test SDF Network ; September 2015" }),
+      signTransaction: async (xdr) => ({ signedTxXdr: xdr, signerAddress: "${DEMO_G}" }),
+    };
+  `;
+}
+
+test("wallet shows a connect button when no extension is present", async ({ page }) => {
   await page.goto("/app");
+  // No mock + no extension → the control offers to install Freighter (still testid freighter-connect).
+  await expect(page.getByTestId("freighter-connect")).toBeVisible();
+  await expect(page.getByTestId("freighter-connect")).toContainText(/Install|Connect/);
+});
+
+test("wallet silently reconnects and shows the address + menu (testnet)", async ({ page }) => {
+  await page.addInitScript(freighterMock());
+  await page.goto("/app");
+  await expect(page.getByTestId("wallet-address")).toContainText("GABF", { timeout: 5000 });
   await page.getByTestId("freighter-connect").click();
-  await expect(page.getByText("Wallet connection — coming soon")).toBeVisible();
+  await expect(page.getByTestId("wallet-menu")).toBeVisible();
+  await expect(page.getByTestId("wallet-network")).toHaveText("TESTNET");
+  await expect(page.getByTestId("wallet-disconnect")).toBeVisible();
+  // disconnect returns to the connect button
+  await page.getByTestId("wallet-disconnect").click();
+  await expect(page.getByTestId("freighter-connect")).toContainText("Connect");
+});
+
+test("wallet flags a wrong network", async ({ page }) => {
+  await page.addInitScript(freighterMock({ network: "PUBLIC" }));
+  await page.goto("/app");
+  await expect(page.getByTestId("wallet-address")).toContainText("Wrong network", { timeout: 5000 });
+  await page.getByTestId("freighter-connect").click();
+  await expect(page.getByTestId("wallet-network")).toHaveText("PUBLIC");
 });
