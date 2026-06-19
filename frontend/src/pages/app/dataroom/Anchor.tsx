@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { DataRow, Verdict } from "@/components/app/blocks";
+import { DecryptedFile } from "@/components/app/DecryptedFile";
 
 // The Documents page is now a small submenu (Store / Open / Browse) instead of one long scroll. The
 // Overview's deep links (#store / #open / #browse) select the matching sub-tab, so the entry points still
@@ -126,15 +127,54 @@ export default function Anchor() {
             </div>
             <div className="mt-3">
               <label className="flex flex-col gap-1.5 text-[13px] text-muted-foreground">
-                document (private)
+                document text (private)
                 <textarea
-                  className="min-h-[70px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:border-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+                  className="min-h-[70px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:border-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-50"
                   value={a.content}
                   onChange={(e) => a.setContent(e.target.value)}
                   aria-label="document content"
                   data-testid="doc-content"
+                  disabled={!!a.file}
                 />
               </label>
+            </div>
+
+            {/* Or store a file instead. A chosen file (PDF, image, any bytes) overrides the text box; it is
+                read in your browser and encrypted exactly like text. The contents still never leave in the clear. */}
+            <div className="mt-3">
+              <span className="text-[13px] text-muted-foreground">
+                or store a file <span className="text-muted-foreground/70">(PDF, image, any file up to 8 MB)</span>
+              </span>
+              <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                <input
+                  type="file"
+                  onChange={(e) => a.pickFile(e.target.files?.[0] ?? null)}
+                  aria-label="document file"
+                  data-testid="doc-file"
+                  className="block max-w-full text-xs text-muted-foreground file:mr-3 file:rounded-md file:border file:border-input file:bg-background file:px-3 file:py-1.5 file:text-xs file:font-medium hover:file:bg-accent"
+                />
+                {a.file && (
+                  <span
+                    data-testid="doc-file-chip"
+                    className="inline-flex items-center gap-2 rounded-full border bg-card px-3 py-1 text-xs"
+                  >
+                    <span className="max-w-[16rem] truncate font-medium" title={a.file.name}>{a.file.name}</span>
+                    <span className="text-muted-foreground">{(a.file.size / 1024).toFixed(1)} KB</span>
+                    <button
+                      type="button"
+                      onClick={a.clearFile}
+                      aria-label="remove file"
+                      data-testid="doc-file-clear"
+                      className="text-muted-foreground hover:text-foreground"
+                    >
+                      ✕
+                    </button>
+                  </span>
+                )}
+              </div>
+              {a.fileErr && (
+                <p className="mt-1.5 text-xs text-destructive" data-testid="doc-file-error">{a.fileErr}</p>
+              )}
             </div>
             <div className="mt-4">
               <Button onClick={() => a.setConfirmAnchor(true)} disabled={a.busy} data-testid="upload">
@@ -320,16 +360,9 @@ export default function Anchor() {
               ) : a.opened.faithful ? (
                 <>
                   <Verdict ok>Opened. This is provably the right file (it matched its fingerprint)</Verdict>
-                  <div className="mt-3 text-[11px] uppercase tracking-wide text-muted-foreground">
-                    Decrypted document
+                  <div data-testid="open-plaintext">
+                    <DecryptedFile plaintext={a.opened.plaintext} plaintextUtf8={a.opened.plaintextUtf8} />
                   </div>
-                  <pre
-                    className="mt-1.5 overflow-x-auto rounded-lg border bg-muted/40 px-3.5 py-3 font-mono text-xs"
-                    data-testid="open-plaintext"
-                    style={{ whiteSpace: "pre-wrap" }}
-                  >
-                    {a.opened.plaintextUtf8 ?? `(binary, ${a.opened.plaintext?.length ?? 0} bytes)`}
-                  </pre>
                 </>
               ) : (
                 <Verdict ok={false}>
