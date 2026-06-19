@@ -1553,6 +1553,46 @@ export class ZkorageClient {
     return Boolean(await this.simRead(this.cfg.contracts.dataroom, "is_admitted", [scBytes(roomIdHex), scBytes(accessorHex)]));
   }
 
+  // ── Pattern 2 — prove-a-policy self-serve, PER-DOCUMENT access (reads; no key custody) ──
+
+  /** A committee document's PER-DOCUMENT access policy (which legs apply), or null if unset — in which case
+   *  access falls back to the room policy, then to bare DR2 membership (see `isDocAdmitted`). */
+  async getDocPolicy(roomIdHex: string, docIdHex: string): Promise<RoomPolicy | null> {
+    return normalizeRoomPolicy(await this.simRead(this.cfg.contracts.dataroom, "get_doc_policy", [scBytes(roomIdHex), scBytes(docIdHex)]));
+  }
+
+  /** The live PER-DOCUMENT admission decision (Pattern 2 self-serve key release): true iff `accessor`
+   *  currently satisfies the document's effective policy (the doc policy if set, else the room policy, else
+   *  bare DR2 membership), with the same live leg AND as `isAdmitted`. This is exactly what the DR3 keypers
+   *  gate committee-share release on, so it is the right read for "can I open this document?". */
+  async isDocAdmitted(roomIdHex: string, docIdHex: string, accessorHex: string): Promise<boolean> {
+    return Boolean(await this.simRead(this.cfg.contracts.dataroom, "is_doc_admitted", [scBytes(roomIdHex), scBytes(docIdHex), scBytes(accessorHex)]));
+  }
+
+  /** Like `canAccessRoom`, but for a specific committee DOCUMENT (Pattern 2). Reads the document's effective
+   *  policy (the per-doc policy if set, else the room policy; if neither, the contract falls back to bare
+   *  membership) so a reader UI can show WHAT to prove and which legs are satisfied, plus the authoritative
+   *  on-chain `is_doc_admitted` AND the keypers gate share release on. GATE ON `admitted`; the per-leg
+   *  booleans are advisory display only and may briefly disagree under a concurrent revocation. */
+  async canOpenDocument(roomIdHex: string, docIdHex: string, accessorHex: string): Promise<RoomAccess> {
+    const docPolicy = await this.getDocPolicy(roomIdHex, docIdHex);
+    const policy = docPolicy ?? (await this.getRoomPolicy(roomIdHex));
+    const [admitted, revoked] = await Promise.all([
+      this.isDocAdmitted(roomIdHex, docIdHex, accessorHex),
+      this.isAccessRevoked(roomIdHex, accessorHex),
+    ]);
+    // No policy at any level → the contract falls back to bare membership.
+    const requireMembership = policy ? policy.require_membership : true;
+    const membership = requireMembership === false ? true : await this.isRoomGranted(roomIdHex, accessorHex);
+    const gateGranted = async (gate: string | null | undefined): Promise<boolean | null> =>
+      gate ? Boolean(await this.simRead(gate, "is_granted", [scBytes(accessorHex)])) : null;
+    const [compliance, accredited] = await Promise.all([
+      gateGranted(policy?.compliance_gate),
+      gateGranted(policy?.accredited_gate),
+    ]);
+    return { admitted, membership, compliance, accredited, revoked, policy };
+  }
+
   /** True iff `accessor` has been surgically revoked in this room (`revoke_access`). */
   async isAccessRevoked(roomIdHex: string, accessorHex: string): Promise<boolean> {
     return Boolean(await this.simRead(this.cfg.contracts.dataroom, "is_access_revoked", [scBytes(roomIdHex), scBytes(accessorHex)]));

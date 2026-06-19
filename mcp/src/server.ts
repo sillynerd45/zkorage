@@ -30,7 +30,7 @@ const client = new ZkorageClient({
   apiBaseUrl: process.env.ZKORAGE_API_BASE, // only needed for audit-bundle / by-issuer re-verify
 });
 
-const server = new McpServer({ name: "zkorage", version: "0.14.0" });
+const server = new McpServer({ name: "zkorage", version: "0.15.0" });
 
 // 32-byte hex issuer_id — validate the format, not just the length (agents may pass arbitrary strings).
 const issuerHex = z.string().regex(/^[0-9a-fA-F]{64}$/, "must be 32-byte hex (64 hex chars)");
@@ -823,6 +823,47 @@ server.registerTool(
     inputSchema: { roomId: bytes32Hex.describe("32-byte hex room_id"), docId: bytes32Hex.describe("32-byte hex doc_id") },
   },
   async ({ roomId, docId }) => { try { return ok({ keyEpoch: await client.getCommitteeKeyEpoch(roomId, docId) }); } catch (e) { return err(e); } },
+);
+
+// ── Pattern 2 — prove-a-policy self-serve, PER-DOCUMENT access (read-only; no key custody) ──
+
+server.registerTool(
+  "get_doc_policy",
+  {
+    title: "A committee document's per-document access policy (Pattern 2)",
+    description:
+      "The per-document composite-admission policy (which legs apply) for a committee document, or null if " +
+      "unset (then access falls back to the room policy, then to bare DR2 membership; see is_doc_admitted). " +
+      "Public config; the privacy is in the reader's hidden attributes satisfying it.",
+    inputSchema: { roomId: bytes32Hex.describe("32-byte hex room_id"), docId: bytes32Hex.describe("32-byte hex doc_id") },
+  },
+  async ({ roomId, docId }) => { try { return ok({ policy: await client.getDocPolicy(roomId, docId) }); } catch (e) { return err(e); } },
+);
+
+server.registerTool(
+  "is_doc_admitted",
+  {
+    title: "Live per-document admission decision (Pattern 2)",
+    description:
+      "True iff `accessor` currently satisfies a committee document's effective policy (the doc policy if set, " +
+      "else the room policy, else bare DR2 membership), with the same live leg AND as is_admitted. This is " +
+      "exactly what the DR3 keypers gate share release on, so it answers 'can this accessor open this document?'.",
+    inputSchema: { roomId: bytes32Hex.describe("32-byte hex room_id"), docId: bytes32Hex.describe("32-byte hex doc_id"), accessor: bytes32Hex.describe("32-byte hex pseudonymous accessor") },
+  },
+  async ({ roomId, docId, accessor }) => { try { return ok({ isDocAdmitted: await client.isDocAdmitted(roomId, docId, accessor) }); } catch (e) { return err(e); } },
+);
+
+server.registerTool(
+  "can_access_document",
+  {
+    title: "Per-document admission, per leg (Pattern 2)",
+    description:
+      "The composed per-document admission decision broken out by leg (for UIs that show WHY): `admitted` (the " +
+      "authoritative on-chain AND the keypers gate share release on), plus `membership`/`compliance`/`accredited`/" +
+      "`revoked` + the effective `policy`. Gate on `admitted`; the per-leg booleans are advisory display only.",
+    inputSchema: { roomId: bytes32Hex.describe("32-byte hex room_id"), docId: bytes32Hex.describe("32-byte hex doc_id"), accessor: bytes32Hex.describe("32-byte hex pseudonymous accessor") },
+  },
+  async ({ roomId, docId, accessor }) => { try { return ok(await client.canOpenDocument(roomId, docId, accessor)); } catch (e) { return err(e); } },
 );
 
 const transport = new StdioServerTransport();

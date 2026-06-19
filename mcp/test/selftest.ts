@@ -359,6 +359,27 @@ ok(!["request_room_admission", "revoke_access", "unrevoke_access", "rotate_commi
   }
 }
 
+// ── Pattern 2: prove-a-policy self-serve, PER-DOCUMENT access — read-only, NO key custody ──
+console.log("\n--- Pattern 2 (per-document policy: read-only; NO key custody) ---");
+ok(["get_doc_policy", "is_doc_admitted", "can_access_document"].every((n) => names.includes(n)),
+  "Pattern-2 per-document tools registered");
+// NO set-doc-policy tool — the policy WRITE is backend-only (room-owner auth); the keyper key release is SDK-only.
+ok(!["set_doc_policy"].some((n) => names.includes(n)), "no set_doc_policy tool exposed (write is backend-only)");
+{
+  const { data, isError } = parse(await client.callTool({ name: "get_doc_policy", arguments: { roomId: DEMO_DATAROOM_POLICY.roomId, docId: DEMO_DATAROOM_POLICY.docId } }));
+  if (!isError && data?.policy) {
+    ok(data.policy.require_membership === true && !!data.policy.compliance_gate && !!data.policy.accredited_gate,
+      "get_doc_policy(demo doc) — member ∧ compliance ∧ accredited", `comp=${data.policy.compliance_gate?.slice(0, 8)}…`);
+    const { data: cd } = parse(await client.callTool({ name: "can_access_document", arguments: { roomId: DEMO_DATAROOM_POLICY.roomId, docId: DEMO_DATAROOM_POLICY.docId, accessor: DEMO_DATAROOM_POLICY.accessor } }));
+    ok(cd?.admitted === true && cd?.membership === true && cd?.compliance === true && cd?.accredited === true,
+      "can_access_document(demo accessor) — all legs ✓ (the keyper share-release gate)", `admitted=${cd?.admitted}`);
+    const { data: na } = parse(await client.callTool({ name: "is_doc_admitted", arguments: { roomId: DEMO_DATAROOM_POLICY.roomId, docId: DEMO_DATAROOM_POLICY.docId, accessor: "11".repeat(32) } }));
+    ok(na?.isDocAdmitted === false, "is_doc_admitted(random accessor) → false");
+  } else {
+    console.log("• get_doc_policy(demo) pending (set a per-document policy on the demo committee doc)");
+  }
+}
+
 await client.close();
 console.log(failures === 0 ? "\nMCP SELFTEST OK" : `\nMCP SELFTEST FAILED (${failures})`);
 process.exit(failures === 0 ? 0 : 1);
