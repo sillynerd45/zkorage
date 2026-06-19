@@ -594,10 +594,17 @@ export const getMyRooms = (owner: string) =>
     j<{ owner: string; count: number; rooms: MyRoom[]; dataroomId: string }>,
   );
 
-export const proveSeal = (roomId: string, content: string, recipientPub?: string, docId?: string) =>
+// Accepts either UTF-8 `content` or base64 `contentB64` (binary: PDF, image, any file). The backend
+// encrypts whichever is supplied; only one is sent so an empty text box never overrides a chosen file.
+export const proveSeal = (
+  roomId: string,
+  payload: { content?: string; contentB64?: string },
+  recipientPub?: string,
+  docId?: string,
+) =>
   post<ProveSealResp>("/dataroom/prove-seal", {
     roomId,
-    content,
+    ...(payload.contentB64 ? { contentB64: payload.contentB64 } : { content: payload.content ?? "" }),
     ...(recipientPub ? { recipientPub } : {}),
     ...(docId ? { docId } : {}),
   });

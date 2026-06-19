@@ -138,7 +138,7 @@ function loadBundle(): Bundle | null {
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: "12mb" })); // headroom for base64 document uploads (PDF/image) on prove-seal + committee seal
 
 function journalView(journalHex: string): Record<string, unknown> {
   const j: PublicClaim = decodeJournal(fromHex(journalHex));
