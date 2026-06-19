@@ -2884,6 +2884,13 @@ app.post("/dataroom/doc-policy/set", async (req, res) => {
   } catch (e) {
     return res.status(400).json({ error: err(e) });
   }
+  // A committee document's key is ECIES-sealed to the proof-bound recipient_pub carried by the DR2 membership
+  // grant, so a key-release policy MUST require membership: a gate-only policy would admit a reader who then
+  // has no recipient_pub for the keepers to seal to (admittable but un-openable). Enforce it here (the
+  // contract permits gate-only policies for generality; the demo's key-release path requires membership).
+  if (!requireMembership) {
+    return res.status(400).json({ error: "a document policy must require membership (the key is sealed to the member's proof-bound recipient key)" });
+  }
   try {
     const out = await invokeContract(DATAROOM_ID, "set_doc_policy", [
       scBytes(roomIdHex), scBytes(docIdHex), scBool(requireMembership), scOptAddress(complianceGate), scOptAddress(accreditedGate),
