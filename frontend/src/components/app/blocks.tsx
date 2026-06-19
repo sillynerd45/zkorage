@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { VerdictMark } from "@/components/StatusBadge";
 import { cn } from "@/lib/utils";
 
-// Variant B design molecules — dashboard/app feel: rounded-2xl panels, list-style cards, stat tiles.
+// Variant B design molecules, dashboard/app feel: rounded-2xl panels, list-style cards, stat tiles.
 
 export function PageHeader({
   title,

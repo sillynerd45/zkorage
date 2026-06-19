@@ -4,7 +4,7 @@ import { AppTopbar } from "./app/AppTopbar";
 import { BottomNav } from "./app/BottomNav";
 import VersionBadge from "@/components/VersionBadge";
 
-// App shell (grouped left sidebar, Blank/BlockWallet pattern) — wraps the ZK operations under /app/*.
+// App shell (grouped left sidebar, Blank/BlockWallet pattern) wraps the ZK operations under /app/*.
 // Layout route: renders <Outlet/> for the matched child page. The Freighter wallet control lives in AppTopbar.
 export default function AppShell() {
   return (

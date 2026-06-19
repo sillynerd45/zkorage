@@ -17,7 +17,7 @@ export default function Explorer() {
         lead={
           <>
             Every successful Proof-of-Reserves verification is appended to an <b>on-chain, append-only log</b>{" "}
-            in the policy contract. Anyone can list it straight from the chain — this page just mirrors it.
+            in the policy contract. Anyone can list it straight from the chain, and this page just mirrors it.
           </>
         }
       />
@@ -62,7 +62,7 @@ export default function Explorer() {
                     data-testid="history-row"
                     className="border-b border-border/60 last:border-0"
                   >
-                    <td className="py-2.5 pr-3 tabular-nums text-muted-foreground">{r.index ?? "—"}</td>
+                    <td className="py-2.5 pr-3 tabular-nums text-muted-foreground">{r.index ?? "-"}</td>
                     <td className="py-2.5 pr-3">
                       <span className="inline-flex items-center gap-1.5 rounded-full border border-success/40 bg-success/5 px-2 py-0.5 text-xs font-medium text-success">
                         reserves ≥ supply ✓

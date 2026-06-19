@@ -3,10 +3,10 @@ import { getDataroomInfo } from "@/lib/api";
 import { sdk } from "@/lib/sdk";
 
 // A seeded ~2-minute guided walkthrough to the "aha" (UX research: a guided demo path). It uses the LIVE,
-// instant read path against the seeded DR2 grant — no multi-minute proof — so a first-time visitor reaches
+// instant read path against the seeded DR2 grant (no multi-minute proof), so a first-time visitor reaches
 // the load-bearing idea (anonymous-but-eligible, one-time) in a couple of minutes, then is handed off to the
 // real hands-on flow. These (room, accessor) are the live grant the DR2 acceptance proved (granted, identity
-// absent) — the same pair the dataroom-dr2 spec checks.
+// absent), the same pair the dataroom-dr2 spec checks.
 export const DEMO_ROOM = "c1c33201dad189af07b344cc6b20a9a3e6b75601f04344e618d5281cefa46d75";
 export const GRANTED_ACCESSOR = "ed4928c628d1c2c6eae90338905995612959273a5c63f93636c14614ac8737d1";
 

@@ -3,8 +3,8 @@ import type { AuditChecklist, ReservesAnswer } from "zkorage-sdk";
 import { sdk } from "@/lib/sdk";
 
 // The Developers docs page dogfoods the SDK: this runs `zkorage-sdk` IN THE BROWSER, straight against the
-// public Soroban RPC — the same package the MCP server and any developer uses. Ported from the legacy
-// DeveloperPage. The shared `sdk` client reads from the chain; the proof bundle comes via REST.
+// public Soroban RPC, the same package the MCP server and any developer uses. Ported from the legacy
+// DeveloperPage. The shared `sdk` client reads from the chain, and the proof bundle comes via REST.
 export const DEV_CHECKS: { key: keyof AuditChecklist; label: string }[] = [
   { key: "journalWellFormed", label: "journal well-formed" },
   { key: "digestMatches", label: "digest matches" },

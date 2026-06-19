@@ -33,7 +33,7 @@ export default function Docs() {
       />
 
       <div className="grid gap-8 lg:grid-cols-[200px_1fr]">
-        {/* content side-rail — distinct from the app sidebar (it navigates docs content) */}
+        {/* content side-rail (distinct from the app sidebar; it navigates docs content) */}
         <nav aria-label="Documentation sections" className="lg:sticky lg:top-24 lg:self-start">
           <ul className="flex gap-1 overflow-x-auto lg:flex-col lg:gap-0.5">
             {DOCS_SECTIONS.map((s) => (

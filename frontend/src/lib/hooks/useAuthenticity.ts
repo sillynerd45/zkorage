@@ -4,8 +4,8 @@ import { DEMO_DATAROOM_DOCAUTH, DOCAUTH_IMAGE_ID, type DocumentFact } from "zkor
 import { sdk } from "@/lib/sdk";
 import { isHex32 } from "@/lib/format";
 
-// DR4 — document authenticity (signed-PDF / zkPDF: third-party truth on self-uploaded data). A third party
-// (a bank) RSA-signs a statement; the docauth guest re-verifies that real RSA-2048 signature in-zkVM and
+// DR4 (document authenticity, signed-PDF / zkPDF: third-party truth on self-uploaded data). A third party
+// (a bank) RSA-signs a statement. The docauth guest re-verifies that real RSA-2048 signature in-zkVM and
 // proves a fact about it (e.g. "balance ≥ X") without revealing the statement or the exact value.
 export function useAuthenticity() {
   const [docauth, setDocauth] = useState<DocauthInfoResp | null>(null);
@@ -26,7 +26,7 @@ export function useAuthenticity() {
     loadDocFact(DEMO_DATAROOM_DOCAUTH.roomId, DEMO_DATAROOM_DOCAUTH.msgDigest);
   }, [loadDocFact]);
 
-  // Re-verify the fact's PROVENANCE entirely in-browser via the SDK (public RPC): the fact exists on-chain
+  // Re-verify the fact's PROVENANCE entirely in-browser via the SDK (public RPC). The fact exists on-chain
   // (so the bare Groth16 verifier accepted the proof BEFORE it was stored), the docauth guest image is the
   // pinned canonical one, the third-party issuer key is allowlisted, and the on-chain record carries NO
   // statement/value (only the predicate). This is "third-party truth on self-uploaded data".
@@ -38,10 +38,10 @@ export function useAuthenticity() {
         sdk.getDocauthImageId(),
       ]);
       setDocFact(fact);
-      if (!fact) { setDr4Err("No fact anchored for this (room, document) — the proof hasn't been attested yet."); return; }
+      if (!fact) { setDr4Err("No fact anchored for this (room, document). The proof hasn't been attested yet."); return; }
       const issuerAllowlisted = await sdk.isDocauthIssuerAllowed(fact.issuer_key_hash);
       setDr4Verify({
-        // Compare the on-chain pinned image to the SDK's canonical constant — independent of the backend
+        // Compare the on-chain pinned image to the SDK's canonical constant, independent of the backend
         // /info call (so a failed info fetch can't make this read "pinned" generously).
         factOnChain: true,
         imagePinned: pinnedImage !== null && pinnedImage === DOCAUTH_IMAGE_ID,

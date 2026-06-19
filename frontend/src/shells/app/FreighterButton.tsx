@@ -18,7 +18,7 @@ const FRIENDBOT = "https://friendbot.stellar.org";
 const HORIZON = "https://horizon-testnet.stellar.org";
 
 // funded === true → account exists (show its XLM balance, hide friendbot); false → not created yet
-// (offer friendbot); null → unknown (Horizon unreachable → keep friendbot as a safe fallback).
+// (offer friendbot); null → unknown (Horizon unreachable, so keep friendbot as a safe fallback).
 type Acct = { funded: boolean; balance: string } | null;
 
 function fmtXlm(b: string): string {
@@ -27,7 +27,7 @@ function fmtXlm(b: string): string {
 
 // App-shell top-right wallet control. Real Freighter integration: connect / show address / network
 // check / disconnect (see lib/wallet/WalletContext). When connected the app routes on-chain writes
-// through the wallet (the user signs + pays gas); with no wallet the backend relays — every flow works
+// through the wallet (the user signs + pays gas); with no wallet the backend relays. Every flow works
 // either way.
 export function FreighterButton() {
   const w = useWallet();
@@ -86,7 +86,7 @@ export function FreighterButton() {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
-      /* clipboard blocked — no-op */
+      /* clipboard blocked, no-op */
     }
   };
 
@@ -95,7 +95,7 @@ export function FreighterButton() {
     setFunding("busy");
     try {
       const r = await fetch(`${FRIENDBOT}/?addr=${encodeURIComponent(w.address)}`);
-      // friendbot returns 400 if the account is already funded — treat that as success-ish.
+      // friendbot returns 400 if the account is already funded, so treat that as success-ish.
       setFunding(r.ok || r.status === 400 ? "done" : "error");
       await refreshAcct(); // flip the menu to the balance view
     } catch {
@@ -189,7 +189,7 @@ export function FreighterButton() {
               }
               data-testid="wallet-network"
             >
-              {w.network ?? "—"}
+              {w.network ?? "n/a"}
             </span>
           </div>
 
@@ -234,7 +234,7 @@ export function FreighterButton() {
                   {funding === "busy"
                     ? "Funding…"
                     : funding === "error"
-                      ? "Fund failed — retry"
+                      ? "Fund failed, retry"
                       : "Fund testnet account"}
                 </MenuBtn>
               )}

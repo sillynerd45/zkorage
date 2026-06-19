@@ -8,7 +8,7 @@ import { FeatureCard } from "@/components/marketing/blocks";
 const STEPS = [
   { icon: FileSignature, t: "Attest", d: "A trusted source signs the private data (custodian, KYC provider, bank)." },
   { icon: Cpu, t: "Prove", d: "A self-hosted zkVM proves the fact. The data never leaves the prover you run." },
-  { icon: BadgeCheck, t: "Verify", d: "Anyone re-checks the proof on Stellar and gets the same answer — no account." },
+  { icon: BadgeCheck, t: "Verify", d: "Anyone re-checks the proof on Stellar and gets the same answer. No account needed." },
 ];
 
 export default function Landing() {
@@ -24,8 +24,8 @@ export default function Landing() {
           Prove a private fact. <span className="text-muted-foreground">Verify it on-chain.</span>
         </h1>
         <p className="mt-4 max-w-2xl text-base leading-relaxed text-muted-foreground">
-          zkorage proves a fact about private, attested data — reserves, identity, income, eligibility —
-          and lets anyone re-check it on the public ledger, without ever revealing the data behind it.
+          zkorage proves a fact about private, attested data such as reserves, identity, income, or eligibility.
+          Anyone can re-check it on the public ledger, without ever revealing the data behind it.
         </p>
         <div className="mt-6 flex flex-wrap items-center gap-3">
           <Link to="/app" className={cn(buttonVariants({ size: "lg" }))} data-testid="hero-open-app">
@@ -93,13 +93,13 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* don't trust — verify */}
+      {/* don't trust. verify */}
       <section className="mb-12">
         <div className="rounded-2xl border bg-card p-7">
-          <h2 className="text-lg font-semibold tracking-tight">Don't trust — verify</h2>
+          <h2 className="text-lg font-semibold tracking-tight">Don't trust. Verify.</h2>
           <p className="mt-2 max-w-2xl text-[15px] leading-relaxed text-muted-foreground">
-            Every claim zkorage publishes is checkable by anyone, directly on the public ledger — no wallet,
-            no account, no trust in our server. Re-check a single proof, or browse every verified record.
+            Every claim zkorage publishes is checkable by anyone, directly on the public ledger. There is no
+            wallet, no account, and no need to trust our server. Re-check a single proof, or browse every verified record.
           </p>
           <div className="mt-5 flex flex-wrap gap-3">
             <Link to="/verify" className={cn(buttonVariants())}>
@@ -122,8 +122,8 @@ export default function Landing() {
             <div>
               <h2 className="text-lg font-semibold tracking-tight">For developers</h2>
               <p className="mt-1 max-w-xl text-sm leading-relaxed text-muted-foreground">
-                A read-only TypeScript SDK, an MCP server, and a REST API — query and re-verify any claim
-                from your own code, no keys, no trust in our server.
+                A read-only TypeScript SDK, an MCP server, and a REST API. Query and re-verify any claim
+                from your own code, with no keys and no need to trust our server.
               </p>
             </div>
           </div>

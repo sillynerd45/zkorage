@@ -2,8 +2,8 @@ import { useId } from "react";
 import { GLOSSARY } from "@/lib/glossary";
 
 // The "what's this?" affordance (UX terminology report §7.3/§7.4 + progressive disclosure): plain word on
-// the surface, the exact gloss one focus/hover away. Accessible — role="tooltip" linked via aria-describedby,
-// revealed on hover OR keyboard focus (group-focus-within). display:none by default → never affects layout.
+// the surface, the exact gloss one focus/hover away. Accessible: role="tooltip" linked via aria-describedby,
+// revealed on hover OR keyboard focus (group-focus-within). display:none by default, so it never affects layout.
 export function GlossaryTip({ term, label }: { term: keyof typeof GLOSSARY | string; label?: string }) {
   const id = useId();
   const text = GLOSSARY[term] ?? term;

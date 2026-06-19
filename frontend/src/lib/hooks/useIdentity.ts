@@ -15,7 +15,7 @@ import { decodeIdentityJournal } from "@/lib/journal";
 import { type ClaimState } from "@/components/StatusBadge";
 import { useTxSigner } from "@/lib/wallet/WalletContext";
 
-// Deterministic demo "user wallet" — the public accessor the KYC proof grants access to (Q3).
+// Deterministic demo "user wallet": the public accessor the KYC proof grants access to (Q3).
 export const DEMO_USER_G = "GABF456WZDNHKUVWA6BBAYLACD3QTMZA745AVRSBK7IYOBQ5NQJ3HGRC";
 
 // Identity / KYC data layer (extracted from the legacy IdentityPage). The page renders from this.
@@ -50,8 +50,8 @@ export function useIdentity() {
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [refreshHistory]);
 
-  // Connecting a wallet means "prove for my own account": fill the accessor with the wallet address,
-  // but only while it's still the untouched demo default (never clobber what the user typed).
+  // Connecting a wallet means "prove for my own account": fill the accessor with the wallet address.
+  // Do this only while it's still the untouched demo default (never clobber what the user typed).
   useEffect(() => {
     if (signer && accessor === DEMO_USER_G) {
       setAccessor(signer.address);
@@ -112,10 +112,10 @@ export function useIdentity() {
             onGrant(s.bundle);
           } else if (s.status === "error") {
             if (pollRef.current) clearInterval(pollRef.current);
-            // For a FAILED KYC the guest panics → no receipt → proving "fails" by design.
+            // For a FAILED KYC the guest panics, so there is no receipt, and proving "fails" by design.
             setResp({
               ok: false,
-              error: kycPassed ? (s.error || "proving failed") : "KYC not passed — the guest produced no receipt (nothing to verify).",
+              error: kycPassed ? (s.error || "proving failed") : "KYC not passed, so the guest produced no receipt (nothing to verify).",
               gateId: "",
             });
             setState("failed");

@@ -19,7 +19,7 @@ export function toHex(b: Uint8Array): string {
   return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
 }
 
-/** Flip one bit of one byte — drives the on-chain rejection (✗) demo cases. */
+/** Flip one bit of one byte. Drives the on-chain rejection (✗) demo cases. */
 export function flipByte(hex: string, idx: number): string {
   const b = fromHex(hex);
   b[idx] ^= 1;
@@ -49,7 +49,7 @@ export interface DecodedIdentityJournal {
   expiry: string;
 }
 
-/** Decode the 85-byte identity journal. subject_id is ABSENT — identity stays hidden. */
+/** Decode the 85-byte identity journal. subject_id is ABSENT, so identity stays hidden. */
 export function decodeIdentityJournal(hex: string): DecodedIdentityJournal | null {
   const b = fromHex(hex);
   if (b.length !== 85) return null;
@@ -74,7 +74,7 @@ export interface DecodedComplianceJournal {
   expiry: string;
 }
 
-/** Decode the 117-byte compliance journal. subject_id is ABSENT — identity stays hidden. */
+/** Decode the 117-byte compliance journal. subject_id is ABSENT, so identity stays hidden. */
 export function decodeComplianceJournal(hex: string): DecodedComplianceJournal | null {
   const b = fromHex(hex);
   if (b.length !== 117) return null;
@@ -104,7 +104,7 @@ export interface DecodedPayrollJournal {
   expiry: string;
 }
 
-/** Decode the 229-byte payroll journal. The salary is ABSENT — encrypted to the auditor's view key. */
+/** Decode the 229-byte payroll journal. The salary is ABSENT, encrypted to the auditor's view key. */
 export function decodePayrollJournal(hex: string): DecodedPayrollJournal | null {
   const b = fromHex(hex);
   if (b.length !== 229) return null;

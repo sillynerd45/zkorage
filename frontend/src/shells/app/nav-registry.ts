@@ -3,7 +3,7 @@ import { CAPABILITIES, GROUPS, capability } from "@/lib/content";
 
 // Single source of truth for the app sidebar (Blank/BlockWallet pattern: route→label→icon→group).
 // Derived from the shared IA registry so adding a capability updates the sidebar automatically. Only the
-// in-app groups appear here — Verify/Explorer/Developer are public (top-bar / docs), reached via footer links.
+// in-app groups appear here. Verify/Explorer/Developer are public (top-bar / docs), reached via footer links.
 export interface NavItem {
   to: string;
   label: string;
@@ -18,7 +18,7 @@ export interface NavSection {
 
 const HOME: NavItem = { to: "/app", label: "Home", icon: Home, end: true };
 
-// The groups the app sidebar exposes (the ZK operations), in DISPLAY ORDER — Data Room first, then the
+// The groups the app sidebar exposes (the ZK operations), in DISPLAY ORDER: Data Room first, then the
 // proofs. Verify & developer live on the public side. (Order here drives both the sidebar and the Home.)
 export const APP_GROUP_KEYS = ["dataroom", "prove"] as const;
 

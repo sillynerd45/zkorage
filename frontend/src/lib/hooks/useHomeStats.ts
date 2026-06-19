@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { getCount, getDataroomInfo } from "@/lib/api";
 
-// Lightweight live stats for the app Home, from existing public endpoints. Each resolves independently;
-// nulls render as "—" so a slow/absent endpoint never blocks the page.
+// Lightweight live stats for the app Home, from existing public endpoints. Each resolves independently.
+// Nulls render as a dash placeholder, so a slow or absent endpoint never blocks the page.
 export interface HomeStats {
   verifiedRecords: number | null;
   rooms: number | null;

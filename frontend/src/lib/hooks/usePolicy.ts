@@ -3,9 +3,9 @@ import { DEMO_DATAROOM_POLICY, type RoomAccess } from "zkorage-sdk";
 import { sdk } from "@/lib/sdk";
 import { isHex32 } from "@/lib/format";
 
-// DR6 — private-policy composition + revocation/rotation (the finale). A requester is admitted only by
+// DR6 (private-policy composition plus revocation/rotation, the finale). A requester is admitted only by
 // satisfying a composite policy (member ∧ KYC ∧ accredited ∧ not-sanctioned), each an independent ZK
-// proof bound to one pseudonymous accessor, AND'd on-chain. No new guest — the AND is the cross-call.
+// proof bound to one pseudonymous accessor, AND'd on-chain. No new guest: the AND is the cross-call.
 export function usePolicy() {
   const [dr6Room, setDr6Room] = useState(DEMO_DATAROOM_POLICY.roomId);
   const [dr6Accessor, setDr6Accessor] = useState(DEMO_DATAROOM_POLICY.accessor);
@@ -15,7 +15,7 @@ export function usePolicy() {
   const [dr6Busy, setDr6Busy] = useState(false);
   const [dr6Err, setDr6Err] = useState<string | null>(null);
 
-  // DR6 — read the live composed admission (per-leg) + the room's grant/admission counts + key epoch,
+  // DR6: read the live composed admission (per-leg), the room's grant/admission counts, and the key epoch,
   // entirely in-browser via the SDK (public RPC). The reads reveal only the pseudonymous accessor.
   const loadAccess = useCallback((room: string, accessor: string) => {
     if (!isHex32(room) || !isHex32(accessor)) { setDr6Access(null); return; }
@@ -29,7 +29,7 @@ export function usePolicy() {
     loadAccess(DEMO_DATAROOM_POLICY.roomId, DEMO_DATAROOM_POLICY.accessor);
   }, [loadAccess]);
 
-  // DR6 — read the live composed admission for any (room, accessor), entirely in-browser via the SDK.
+  // DR6: read the live composed admission for any (room, accessor), entirely in-browser via the SDK.
   async function onCheckAccess() {
     setDr6Busy(true); setDr6Err(null);
     try {

@@ -16,7 +16,7 @@ import { decodePayrollJournal } from "@/lib/journal";
 import { type ClaimState } from "@/components/StatusBadge";
 import { useTxSigner } from "@/lib/wallet/WalletContext";
 
-// Deterministic demo "employee wallet" — the public accessor the income proof grants to.
+// Deterministic demo "employee wallet": the public accessor the income proof grants to.
 export const DEMO_USER_G = "GABF456WZDNHKUVWA6BBAYLACD3QTMZA745AVRSBK7IYOBQ5NQJ3HGRC";
 
 // Confidential payroll data layer (extracted from the legacy PayrollPage). Both variants render from this.
@@ -103,14 +103,14 @@ export function usePayroll() {
           } else if (s.status === "error") {
             if (pollRef.current) clearInterval(pollRef.current);
             // salary < threshold makes the guest panic → no receipt → proving "fails" by design.
-            // Guard the BigInt parse — the fields are free text, and a throw here would otherwise be
+            // Guard the BigInt parse. The fields are free text, and a throw here would otherwise be
             // swallowed by the catch below and strand the UI in the "proving" state.
             let belowThreshold = false;
             try { belowThreshold = BigInt(salary || "0") < BigInt(threshold || "0"); } catch { /* non-numeric */ }
             setResp({
               ok: false,
               error: belowThreshold
-                ? "Salary is below the threshold — the guest produced no receipt (nothing to verify)."
+                ? "Salary is below the threshold, so the guest produced no receipt (nothing to verify)."
                 : (s.error || "proving failed"),
               payrollId: "",
             });

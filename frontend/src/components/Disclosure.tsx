@@ -1,6 +1,6 @@
 import { useId, useState, type ReactNode } from "react";
 
-// Progressive disclosure (UX research §12): lead with plain human meaning, tuck the cryptographic
+// Progressive disclosure (UX research §12): lead with plain human meaning, then tuck the cryptographic
 // artifacts behind ONE expander. Machinery is DEMOTED, never deleted (auditors still get every byte).
 export function Disclosure({
   summary,
@@ -52,7 +52,7 @@ export function CopyButton({ text, label = "Copy" }: { text: string; label?: str
           setCopied(true);
           setTimeout(() => setCopied(false), 1200);
         } catch {
-          /* clipboard blocked (insecure context / permissions) — no-op */
+          /* clipboard blocked (insecure context / permissions): no-op */
         }
       }}
       aria-label={copied ? "Copied to clipboard" : `Copy ${label}`}
@@ -76,7 +76,7 @@ export function Hex({ value, label, chars = 6 }: { value: string; label?: string
         title={value}
         aria-label={label ? `${label}: ${value}` : value}
       >
-        {trimmed || "—"}
+        {trimmed || "-"}
       </code>
       {value && <CopyButton text={value} label={label ?? "value"} />}
     </span>

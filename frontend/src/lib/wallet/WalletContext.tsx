@@ -4,7 +4,7 @@ import { freighter } from "./client";
 import { short as shortHex } from "@/lib/format";
 import type { TxSigner } from "@/lib/api";
 
-// zkorage runs on Stellar testnet — every contract is deployed there. A wallet pointed elsewhere can
+// zkorage runs on Stellar testnet, where every contract is deployed. A wallet pointed elsewhere can
 // connect, but can't sign our transactions, so we surface a "wrong network" state instead of failing later.
 export const EXPECTED_NETWORK = "TESTNET";
 export const EXPECTED_PASSPHRASE = Networks.TESTNET;
@@ -20,7 +20,7 @@ export type WalletStatus =
 
 export interface WalletState {
   status: WalletStatus;
-  /** True only when connected AND on the expected (testnet) network — i.e. safe to sign with. */
+  /** True only when connected AND on the expected (testnet) network, meaning it is safe to sign with. */
   connected: boolean;
   address: string | null;
   /** Truncated address for display, or null. */
@@ -30,7 +30,7 @@ export interface WalletState {
   installed: boolean;
   connect: () => Promise<void>;
   disconnect: () => void;
-  /** Sign an XDR with the connected key. Throws if not connected/wrong network or the user rejects. */
+  /** Sign an XDR with the connected key. Throws if not connected, on the wrong network, or the user rejects. */
   sign: (xdr: string) => Promise<string>;
 }
 
@@ -88,7 +88,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     };
   }, [refresh]);
 
-  // Re-validate when the tab regains focus — catches account / network switches made in the extension.
+  // Re-validate when the tab regains focus. This catches account / network switches made in the extension.
   useEffect(() => {
     const onFocus = async () => {
       if (status !== "connected" && status !== "wrong-network") return;
@@ -111,7 +111,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     try {
       const r = await fi.requestAccess();
       if (r.error || !r.address) {
-        // User declined or the extension errored — fall back to disconnected with a readable reason.
+        // User declined or the extension errored. Fall back to disconnected with a readable reason.
         setError(r.error?.message ?? "Connection was declined.");
         setStatus("disconnected");
         return;
@@ -173,7 +173,7 @@ export function useWallet(): WalletState {
 }
 
 /** A stable TxSigner for the api write helpers when the wallet is connected on testnet, else undefined.
- *  Pass it to submit()/grantAccess()/… to route a write through Freighter instead of the server relay. */
+ *  Pass it to submit()/grantAccess()/etc. to route a write through Freighter instead of the server relay. */
 export function useTxSigner(): TxSigner | undefined {
   const w = useWallet();
   return useMemo(

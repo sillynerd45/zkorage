@@ -21,7 +21,7 @@ test("dataroom DR3: committee renders; granted accessor reconstructs K (2-of-3) 
   await expect(card).toBeVisible({ timeout: 30_000 });
   await page.getByTestId("dr3-engine-details").click();
   await expect(page.getByTestId("dr3-committee")).toContainText("threshold", { timeout: 30_000 });
-  await expect(page.getByTestId("dr3-content-hash")).not.toHaveText("—", { timeout: 30_000 });
+  await expect(page.getByTestId("dr3-content-hash")).not.toHaveText("not loaded", { timeout: 30_000 });
   await expect(page.getByTestId("dr3-k-commitment")).toContainText("sha256(K)", { timeout: 30_000 });
 
   // --- the headline: the granted accessor collects shares, reconstructs K (2-of-3) + decrypts in-browser ---

@@ -9,9 +9,9 @@ import { DEMO_DATAROOM_COMMITTEE, type OpenedCommitteeDocument } from "zkorage-s
 import { sdk, DEMO_RECIPIENT_SECRET } from "@/lib/sdk";
 import { isHex32 } from "@/lib/format";
 
-// DR3 — threshold-ECIES committee (key release). A per-doc key K is Shamir-split 2-of-3 across an
-// independent keyper committee; the recipient collects ≥ 2 sealed shares and reconstructs K + decrypts
-// entirely in the browser. The recipient secret never leaves it.
+// DR3 (threshold-ECIES committee, key release). A per-doc key K is Shamir-split 2-of-3 across an
+// independent keyper committee. The recipient collects 2 or more sealed shares, reconstructs K, and
+// decrypts entirely in the browser. The recipient secret never leaves it.
 export function useRelease() {
   const [committee, setCommittee] = useState<CommitteeInfoResp | null>(null);
   const [committeeDoc, setCommitteeDoc] = useState<CommitteeDoc | null>(null);
@@ -30,10 +30,10 @@ export function useRelease() {
       .catch(() => {});
   }, []);
 
-  // DR3 — collect the keyper committee's sealed shares for the granted accessor, then reconstruct K (2-of-3)
-  // and decrypt — ENTIRELY IN THE BROWSER via the SDK. The recipient x25519 secret never leaves the browser:
+  // DR3: collect the keyper committee's sealed shares for the granted accessor, then reconstruct K (2-of-3)
+  // and decrypt, ENTIRELY IN THE BROWSER via the SDK. The recipient x25519 secret never leaves the browser:
   // the backend aggregator only relays SEALED shares (it never sees the secret), and the
-  // open + Lagrange-reconstruct + AES-GCM decrypt all run client-side in openCommitteeDocument.
+  // open, Lagrange-reconstruct, and AES-GCM decrypt all run client-side in openCommitteeDocument.
   async function onCommitteeOpen() {
     setDr3OpenErr(null); setDr3Opened(null);
     if (!isHex32(dr3Room) || !isHex32(dr3Doc) || !isHex32(dr3Accessor)) {

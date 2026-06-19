@@ -37,7 +37,7 @@ export default function Compliance() {
         lead={
           <>
             A user proves they are <b>ID-checked by an approved provider</b> <b>AND not on a sanctions
-            list</b> — <b>without revealing their identity</b> — in a single proof, and the proof grants
+            list</b>, <b>without revealing their identity</b>, in a single proof, and the proof grants
             access to a chosen account. The proof checks the ID credential, then proves the person is
             <b> not on the sanctions list</b>, sharing only a fingerprint of that list. Their identity never
             leaves the prover.
@@ -82,7 +82,7 @@ export default function Compliance() {
             }
           >
             <p className="text-xs text-muted-foreground">
-              A relying party checks whether an account is KYC'd &amp; not-sanctioned — without ever learning
+              A relying party checks whether an account is KYC'd &amp; not-sanctioned, without ever learning
               who the account belongs to.
             </p>
             <div className="mt-3 flex flex-wrap items-center gap-2.5">
@@ -115,8 +115,8 @@ export default function Compliance() {
                 </span>
                 <span className={c.granted ? "text-success" : "text-destructive"}>
                   {c.granted
-                    ? "ACCESS GRANTED — KYC'd & not-sanctioned"
-                    : "ACCESS DENIED — no valid compliance proof"}
+                    ? "ACCESS GRANTED (KYC'd & not-sanctioned)"
+                    : "ACCESS DENIED (no valid compliance proof)"}
                 </span>
               </div>
             )}
@@ -175,7 +175,7 @@ export default function Compliance() {
         <div className="space-y-4">
           <Panel title="Prove compliance" aside={<ProofStatusBadge state={c.state} />}>
             <p className="text-sm text-muted-foreground">
-              Pick <b>Mallory</b> (on the deny-list) to see the ✗ case — a sanctioned subject cannot generate
+              Pick <b>Mallory</b> (on the deny-list) to see the ✗ case. A sanctioned subject cannot generate
               a non-membership proof.
             </p>
 
@@ -223,7 +223,7 @@ export default function Compliance() {
 
             <div className="mt-4">
               <Button onClick={c.onProve} disabled={c.busy} data-testid="prove">
-                {c.state === "proving" ? "Proving…" : "Generate proof & grant access"}
+                {c.state === "proving" ? "Proving…" : "Generate proof and grant access"}
               </Button>
             </div>
             <ProveWait state={c.state} proveBy={c.proveBy} privacy="Your identity never leaves the prover." />
@@ -231,7 +231,7 @@ export default function Compliance() {
             {j && (
               <div className="mt-4">
                 <p className="mb-2 text-[11px] uppercase tracking-wide text-muted-foreground">
-                  Public journal (what goes on-chain) — note the identity is absent
+                  Public journal (what goes on-chain). Note the identity is absent.
                 </p>
                 <DataRow k="claim" mono={false}>
                   {j.claimType === 4 ? "Compliance (KYC ∧ not-sanctioned)" : `type ${j.claimType}`}
@@ -245,7 +245,7 @@ export default function Compliance() {
                 </DataRow>
                 <DataRow k="accessor (granted)">{short(j.accessor, 8)}</DataRow>
                 <DataRow k="subject / identity" variant="private" testId="subject-private">
-                  private — never revealed
+                  private (never revealed)
                 </DataRow>
               </div>
             )}
@@ -255,7 +255,7 @@ export default function Compliance() {
             <div data-testid="grant-verdict-card">
               {resp.ok ? (
                 <Panel>
-                  <Verdict ok>KYC'd &amp; not sanctioned — access granted on Stellar</Verdict>
+                  <Verdict ok>KYC'd &amp; not sanctioned. Access granted on Stellar.</Verdict>
                   <div className="mt-3">
                     {resp.txHash && (
                       <DataRow k="tx">

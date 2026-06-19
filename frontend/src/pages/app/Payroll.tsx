@@ -37,11 +37,11 @@ export default function Payroll() {
         title="Confidential payroll"
         lead={
           <>
-            An employee proves <b>"paid ≥ a threshold"</b> <b>without revealing their salary</b> — the exact
+            An employee proves <b>"paid ≥ a threshold"</b> <b>without revealing their salary</b>. The exact
             figure stays private. The proof checks a signed payroll record, confirms <code>salary ≥ threshold</code>,
             and <b>encrypts the salary to an approved auditor's key</b>. The public sees only <b>✓ paid ≥ X</b>
-            plus an unreadable encrypted blob; an <b>auditor's read key</b> unlocks the exact figures —
-            <i> provably the signed salary</i>. The salary never leaves the prover in the clear.
+            plus an unreadable encrypted blob. An <b>auditor's read key</b> reveals the exact figures
+            (<i>provably the signed salary</i>). The salary never leaves the prover in the clear.
           </>
         }
       />
@@ -77,8 +77,8 @@ export default function Payroll() {
           {/* prover */}
           <Panel title="Prove income" aside={<ProofStatusBadge state={p.state} />}>
             <p className="text-sm leading-relaxed text-muted-foreground">
-              Enter a salary &amp; the public threshold to prove against. Set the salary <b>below</b> the
-              threshold to see the ✗ case — the guest produces no receipt.
+              Enter a salary and the public threshold to prove against. Set the salary <b>below</b> the
+              threshold to see the ✗ case, where the guest produces no receipt.
             </p>
             <div className="mt-4 flex flex-wrap items-end gap-2.5">
               <div className="flex flex-col gap-1.5">
@@ -127,7 +127,7 @@ export default function Payroll() {
             {j && (
               <div className="mt-4">
                 <div className="mb-2 text-[11px] uppercase tracking-wide text-muted-foreground">
-                  Public journal (what goes on-chain) — note the salary is absent
+                  Public journal (what goes on-chain). Note the salary is absent.
                 </div>
                 <DataRow k="claim" mono={false}>
                   {j.claimType === 5 ? "Payroll (proof-of-income)" : `type ${j.claimType}`}
@@ -140,7 +140,7 @@ export default function Payroll() {
                   <span title={j.ct}>encrypted ct {short(j.ct, 8)}</span>
                 </DataRow>
                 <DataRow k="salary" variant="private" testId="salary-private">
-                  private — only the auditor's view key opens it
+                  private (only the auditor's view key opens it)
                 </DataRow>
               </div>
             )}
@@ -152,7 +152,7 @@ export default function Payroll() {
               {p.resp.ok ? (
                 <Panel>
                   <Verdict ok>
-                    Income verified — "paid ≥ {p.resp.result?.threshold}" on Stellar (salary hidden)
+                    Income verified: "paid ≥ {p.resp.result?.threshold}" on Stellar (salary hidden)
                   </Verdict>
                   <div className="mt-3">
                     {p.resp.txHash && (
@@ -182,14 +182,14 @@ export default function Payroll() {
             title="Auditor"
             aside={
               <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                unlock authorized figures with the view key
+reveal authorized figures with the view key
               </span>
             }
           >
             <p className="text-sm leading-relaxed text-muted-foreground">
-              An allow-listed auditor holds a <b>view key</b> that decrypts each employee's exact salary — and
+              An allow-listed auditor holds a <b>view key</b> that decrypts each employee's exact salary, and
               the proof guarantees it equals the attester-signed figure (<b>faithful</b>). The public, with no
-              key, sees only the ciphertext. Leave the field blank to use the demo auditor's key; paste a
+              key, sees only the ciphertext. Leave the field blank to use the demo auditor's key, or paste a
               different key to see <b>faithful = ✗</b>.
             </p>
             <div className="mt-4 flex flex-wrap items-end gap-2.5">
@@ -206,7 +206,7 @@ export default function Payroll() {
                 />
               </div>
               <Button variant="outline" onClick={p.onUnlock} data-testid="unlock">
-                Unlock figures
+                Reveal figures
               </Button>
             </div>
             {p.audit && (
@@ -231,7 +231,7 @@ export default function Payroll() {
                           </td>
                           <td className="py-2 pr-3 tabular-nums">{e.threshold}</td>
                           <td className="py-2 pr-3 tabular-nums" data-testid={`salary-${i}`}>
-                            {e.salary ?? "—"}
+                            {e.salary ?? "n/a"}
                           </td>
                           <td className="py-2">
                             <span

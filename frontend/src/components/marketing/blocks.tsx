@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { VerdictMark } from "@/components/StatusBadge";
 import { cn } from "@/lib/utils";
 
-// Variant A design molecules — light, spacious, card-led; section labels are small uppercase tracking.
+// Variant A design molecules: light, spacious, card-led. Section labels are small uppercase tracking.
 
 export function PageHeader({
   eyebrow,

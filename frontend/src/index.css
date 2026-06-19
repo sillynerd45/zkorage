@@ -1,4 +1,4 @@
-/* zkorage design system — "Precision Ink" (user-picked palette, 2026-06-18).
+/* zkorage design system: "Precision Ink" (user-picked palette, 2026-06-18).
    Tailwind + shadcn token model. ONE palette for both variants; variants differ in LAYOUT.
    Ink (#0F172A) primary · electric-blue (#2563EB) brand action · emerald (#059669) verified.
    Fonts loaded via <link> in index.html (Inter + JetBrains Mono). */
@@ -74,7 +74,7 @@
     @apply bg-background text-foreground font-sans antialiased;
     min-height: 100vh;
   }
-  /* Keyboard focus: solid 2px ring (>=3:1, not glow-only — WCAG 2.4.7/2.4.11). */
+  /* Keyboard focus: solid 2px ring (>=3:1, not glow-only, WCAG 2.4.7/2.4.11). */
   :focus-visible {
     outline: 2px solid hsl(var(--ring));
     outline-offset: 2px;
@@ -92,7 +92,7 @@
   }
 }
 
-/* Build stamp chip (VersionBadge) — fixed bottom-right, below modals. */
+/* Build stamp chip (VersionBadge), fixed bottom-right, below modals. */
 @layer components {
   .vbadge {
     @apply fixed right-2.5 bottom-2.5 z-30 rounded-md border bg-card/80 px-2 py-1 text-[11px] font-normal leading-none text-muted-foreground backdrop-blur;

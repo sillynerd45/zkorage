@@ -24,12 +24,12 @@ import DataroomAnchor from "./pages/app/dataroom/Anchor";
 import DataroomAuthenticity from "./pages/app/dataroom/Authenticity";
 
 // One unified app, two shells:
-//   PUBLIC  marketing top-bar site at "/"      — Landing, Documentation, Verify, Explorer
-//   APP     sidebar app at "/app/*"            — the ZK operations + Data Room
+//   PUBLIC  marketing top-bar site at "/"      : Landing, Documentation, Verify, Explorer
+//   APP     sidebar app at "/app/*"            : the ZK operations + Data Room
 export default function App() {
   return (
     <Routes>
-      {/* PUBLIC — marketing shell (top-bar) */}
+      {/* PUBLIC: marketing shell (top-bar) */}
       <Route element={<MarketingShell />}>
         <Route path="/" element={<Landing />} />
         <Route path="/docs" element={<Docs />} />
@@ -40,7 +40,7 @@ export default function App() {
         <Route path="*" element={<Landing />} />
       </Route>
 
-      {/* APP — sidebar shell */}
+      {/* APP: sidebar shell */}
       <Route path="/app" element={<AppShell />}>
         <Route index element={<Home />} />
         <Route path="reserves" element={<Reserves />} />

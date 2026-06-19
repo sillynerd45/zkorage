@@ -11,9 +11,9 @@ import { SectionCard, DataRow } from "@/components/marketing/blocks";
 
 // ── Overview / concepts ───────────────────────────────────────────────────────
 const ENGINE = [
-  { icon: FileSignature, t: "Attest", d: "A trusted source signs the private data with an ed25519 claim envelope — a custodian, KYC provider, or bank. The signature is the data-authenticity anchor; without it a proof would be hollow." },
-  { icon: Cpu, t: "Prove (self-hosted)", d: "A RISC Zero zkVM you run verifies the signed claim and asserts the predicate (e.g. reserves ≥ supply), then wraps the result to a Groth16 proof. The private data never leaves the prover you control — ZK protects the verifier, not the prover." },
-  { icon: BadgeCheck, t: "Verify (on-chain)", d: "A bare Groth16 verifier on Soroban checks the proof via native BN254 host functions; a policy contract binds it to on-chain facts and records the result. Anyone re-checks it — no account, no trust in our server." },
+  { icon: FileSignature, t: "Attest", d: "A trusted source signs the private data with an ed25519 claim envelope. That source is a custodian, KYC provider, or bank. The signature is the data-authenticity anchor; without it a proof would be hollow." },
+  { icon: Cpu, t: "Prove (self-hosted)", d: "A RISC Zero zkVM you run verifies the signed claim and asserts the predicate (e.g. reserves ≥ supply), then wraps the result to a Groth16 proof. The private data never leaves the prover you control, because ZK protects the verifier, not the prover." },
+  { icon: BadgeCheck, t: "Verify (on-chain)", d: "A bare Groth16 verifier on Soroban checks the proof via native BN254 host functions; a policy contract binds it to on-chain facts and records the result. Anyone re-checks it, with no account and no need to trust our server." },
 ];
 
 export function DocsOverview() {
@@ -22,8 +22,8 @@ export function DocsOverview() {
       <SectionCard label="What zkorage is">
         <p className="text-[15px] leading-relaxed text-muted-foreground">
           zkorage is a programmable-compliance engine on Stellar. A data owner proves a quantitative or
-          boolean fact about private, attested data — "reserves ≥ circulating supply", "KYC passed and not
-          sanctioned", "income ≥ a threshold" — <b className="text-foreground">without revealing the data</b>,
+          boolean fact about private, attested data (for example "reserves ≥ circulating supply", "KYC passed and not
+          sanctioned", or "income ≥ a threshold") <b className="text-foreground">without revealing the data</b>,
           and a verifier trusts it via an on-chain Soroban verifier.
         </p>
       </SectionCard>
@@ -49,13 +49,13 @@ export function DocsOverview() {
       <SectionCard label="ZK is load-bearing">
         <p className="text-sm leading-relaxed text-muted-foreground">
           The zero-knowledge proof is the only thing that lets a verifier be certain of a fact without seeing
-          the data or trusting our server. If an access list plus encryption — or just reading the public
-          chain — would do the same job, ZK would be theatre. Here it isn't: the verifier learns one fact and
+          the data or trusting our server. If an access list plus encryption (or just reading the public
+          chain) would do the same job, ZK would be theatre. Here it isn't: the verifier learns one fact and
           nothing else, and re-checks it independently.
         </p>
         <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
           This is a hackathon demo on Stellar testnet. The verifier is the bare Groth16 verifier (no
-          governance stack) and is <b className="text-foreground">unaudited</b> — not for production funds.
+          governance stack) and is <b className="text-foreground">unaudited</b>, so it is not for production funds.
         </p>
       </SectionCard>
     </div>
@@ -125,10 +125,10 @@ export function DocsCapabilities() {
 export function DocsVerify() {
   return (
     <div className="space-y-5">
-      <SectionCard label="Don't trust — verify">
+      <SectionCard label="Don't trust. Verify.">
         <p className="text-[15px] leading-relaxed text-muted-foreground">
-          Every claim zkorage publishes is checkable by anyone, directly on the public ledger — no wallet, no
-          account, no trust in our server. The verify page recomputes the journal hash, checks the proving
+          Every claim zkorage publishes is checkable by anyone, directly on the public ledger. There is no
+          wallet, no account, and no need to trust our server. The verify page recomputes the journal hash, checks the proving
           program is the pinned one, and asks the <b className="text-foreground">public</b> Soroban contracts
           to confirm the Groth16 proof and the on-chain binding. Private inputs are never revealed in any of it.
         </p>
@@ -139,7 +139,7 @@ export function DocsVerify() {
 
       <SectionCard label="Reproduce it from the command line">
         <p className="text-sm leading-relaxed text-muted-foreground">
-          The verify page also prints the exact CLI recipe — read the persisted result on-chain, list the
+          The verify page also prints the exact CLI recipe. You can read the persisted result on-chain, list the
           verified-results history, and re-verify the Groth16 proof against the public RPC, with no zkorage
           server in the trust path. Open a specific claim at <code className="font-mono text-xs">/verify/&lt;issuer&gt;</code>{" "}
           or browse them all in the <Link to="/explorer" className="text-brand hover:underline">Explorer</Link>.
@@ -191,9 +191,9 @@ export function DocsDevelopers() {
     <div className="space-y-5">
       <SectionCard label="Build on zkorage">
         <p className="text-[15px] leading-relaxed text-muted-foreground">
-          A read-only TypeScript SDK and an MCP server let any developer — or any AI agent — query and{" "}
+          A read-only TypeScript SDK and an MCP server let any developer (or any AI agent) query and{" "}
           <b className="text-foreground">re-verify</b> a claim straight against the public chain, with no keys
-          and no trust in our server. The demo below runs the SDK <b className="text-foreground">in this
+          and no need to trust our server. The demo below runs the SDK <b className="text-foreground">in this
           browser</b>.
         </p>
       </SectionCard>

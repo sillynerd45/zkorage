@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 
-// ProofStatusBadge — renders the zkorage claim-state machine. Color-independence (WCAG 1.4.1): terminal
-// states get a distinct SHAPE (check/cross) in addition to color + the always-present text label.
+// ProofStatusBadge renders the zkorage claim-state machine. Color-independence (WCAG 1.4.1): terminal
+// states get a distinct SHAPE (check/cross) in addition to color, plus the always-present text label.
 export type ClaimState =
   | "draft"
   | "attested"
@@ -37,7 +37,7 @@ function Mark({ kind }: { kind: "check" | "cross" }) {
   );
 }
 
-// The check/cross mark for big verdict pills — same crisp SVG, on-palette across OSes. Decorative.
+// The check/cross mark for big verdict pills. Same crisp SVG, on-palette across OSes. Decorative.
 export function VerdictMark({ ok }: { ok: boolean }) {
   return ok ? (
     <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" className="size-5">
@@ -80,7 +80,7 @@ function proverLabel(by?: string | null): { human: string; slow: boolean } | nul
   return { human: slow ? "backup prover (CPU)" : "fast prover (GPU)", slow };
 }
 
-// The async proof-job wait (UX research §4): honest + indeterminate + "safe to leave" — never a fake
+// The async proof-job wait (UX research §4): honest, indeterminate, and "safe to leave". Never a fake
 // progress bar. Renders only while a job is in flight.
 export function ProveWait({
   state,
@@ -94,7 +94,7 @@ export function ProveWait({
   if (state !== "proving" && state !== "verifying") return null;
   const p = proverLabel(proveBy);
   const note =
-    privacy ?? "Your private inputs stay on the self-hosted prover — only the public proof goes on-chain.";
+    privacy ?? "Your private inputs stay on the self-hosted prover. Only the public proof goes on-chain.";
   return (
     <p
       className="mt-2 text-xs leading-relaxed text-muted-foreground"
@@ -103,10 +103,10 @@ export function ProveWait({
       data-testid="prove-wait"
     >
       {state === "verifying"
-        ? "Checking your proof on the public ledger — almost done."
+        ? "Checking your proof on the public ledger. Almost done."
         : p?.slow
-          ? "Building your proof on the backup prover — this can take a few minutes. That's normal. You can leave this page; we'll keep working."
-          : "Building your proof — usually just a few seconds. You can leave this page; we'll keep working."}
+          ? "Building your proof on the backup prover. This can take a few minutes, which is normal. You can leave this page; we'll keep working."
+          : "Building your proof. This usually takes a few seconds. You can leave this page; we'll keep working."}
       {p ? ` · ${p.human}` : ""} {note}
     </p>
   );

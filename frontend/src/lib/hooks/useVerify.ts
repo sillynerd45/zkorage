@@ -25,7 +25,7 @@ export const CHECKS: { key: keyof AuditChecklist; label: string }[] = [
   { key: "supplyBoundMatches", label: "Bound supply equals the live token total_supply" },
 ];
 
-// "Verify it yourself" data layer (extracted from the legacy VerifyPage). Re-checks a proof against the
+// "Verify it yourself" data layer (extracted from the legacy VerifyPage). It re-checks a proof against the
 // public RPC via the same SDK a developer would use, falling back to the backend's public reads if the
 // browser can't reach the RPC (CORS).
 export function useVerify(issuer?: string) {
@@ -64,7 +64,7 @@ export function useVerify(issuer?: string) {
         apiBaseUrl: "/api",
       });
       try {
-        await z.getConfig(); // connectivity probe — throws if the public RPC is unreachable
+        await z.getConfig(); // connectivity probe (throws if the public RPC is unreachable)
         const r = await z.verifyBundle(proof);
         setChecklist(r.checklist);
         setRecomputed(r.recomputedDigest);

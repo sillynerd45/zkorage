@@ -24,10 +24,10 @@ export interface GroupMeta {
 }
 
 export const GROUPS: GroupMeta[] = [
-  { key: "prove", label: "Prove a fact", blurb: "Prove something true about private data — without revealing the data." },
-  { key: "dataroom", label: "Data Room", blurb: "Share sealed documents and control who can open them — anonymously." },
+  { key: "prove", label: "Prove a fact", blurb: "Prove something true about private data without revealing the data." },
+  { key: "dataroom", label: "Data Room", blurb: "Share sealed documents and control who can open them, anonymously." },
   { key: "verify", label: "Verify & explore", blurb: "Re-check any proof yourself, or browse every record on the public ledger." },
-  { key: "developer", label: "Developer", blurb: "Use zkorage from your own code — SDK, MCP server, REST API." },
+  { key: "developer", label: "Developer", blurb: "Use zkorage from your own code. There is an SDK, an MCP server, and a REST API." },
 ];
 
 export interface Capability {
@@ -48,7 +48,7 @@ export const CAPABILITIES: Capability[] = [
     to: "/app/reserves",
     group: "prove",
     icon: Landmark,
-    blurb: "Prove reserves cover the circulating supply — the reserve figure stays private.",
+    blurb: "Prove reserves cover the circulating supply. The reserve figure stays private.",
     proves: "reserves ≥ supply",
     cta: "Open Proof-of-Reserves",
   },
@@ -58,7 +58,7 @@ export const CAPABILITIES: Capability[] = [
     to: "/app/identity",
     group: "prove",
     icon: UserCheck,
-    blurb: "Prove you passed KYC to unlock access — without revealing who you are.",
+    blurb: "Prove you passed KYC to gain access, without revealing who you are.",
     proves: "KYC passed · identity hidden",
     cta: "Open Identity",
   },
@@ -68,7 +68,7 @@ export const CAPABILITIES: Capability[] = [
     to: "/app/compliance",
     group: "prove",
     icon: ShieldCheck,
-    blurb: "Prove KYC passed AND you're not on a sanctions list — in one proof.",
+    blurb: "Prove KYC passed AND you're not on a sanctions list, in one proof.",
     proves: "KYC ∧ not-sanctioned",
     cta: "Open Compliance",
   },
@@ -108,7 +108,7 @@ export const CAPABILITIES: Capability[] = [
     to: "/verify",
     group: "verify",
     icon: BadgeCheck,
-    blurb: "Re-check any proof against the public ledger and get the same answer — no account needed.",
+    blurb: "Re-check any proof against the public ledger and get the same answer. No account needed.",
     proves: "independent re-check",
     cta: "Verify a proof",
   },
@@ -128,7 +128,7 @@ export const CAPABILITIES: Capability[] = [
     to: "/docs/developers",
     group: "developer",
     icon: Terminal,
-    blurb: "Read-only TypeScript SDK, MCP server, and REST API — no key custody.",
+    blurb: "Read-only TypeScript SDK, MCP server, and REST API. No key custody.",
     proves: "SDK · MCP · REST",
     cta: "Open Developer",
   },
@@ -193,7 +193,7 @@ export interface DocsSection {
 
 export const DOCS_SECTIONS: DocsSection[] = [
   { slug: "", label: "Overview", blurb: "What zkorage is and how the engine works." },
-  { slug: "capabilities", label: "Capabilities", blurb: "What each proof does — and what stays private." },
+  { slug: "capabilities", label: "Capabilities", blurb: "What each proof does, and what stays private." },
   { slug: "verify", label: "Verify it yourself", blurb: "Re-check any proof against the public chain." },
   { slug: "developers", label: "Developers", blurb: "SDK, MCP server, and REST API." },
   { slug: "glossary", label: "Glossary", blurb: "Plain-language definitions." },

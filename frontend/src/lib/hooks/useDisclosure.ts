@@ -3,8 +3,8 @@ import { DEMO_DATAROOM_TEASER, TEASER_IMAGE_ID, type Teaser } from "zkorage-sdk"
 import { sdk, DEMO_AUDITOR_SECRET } from "@/lib/sdk";
 import { isHex32 } from "@/lib/format";
 
-// DR5 — faithful disclosure / data-side teaser. A teaser proves a public fact about a SEALED document
-// (e.g. "revenue ≥ $1M") vouched by an allowlisted appraiser, without revealing the figure; a designated
+// DR5 (faithful disclosure / data-side teaser). A teaser proves a public fact about a SEALED document
+// (e.g. "revenue ≥ $1M") vouched by an allowlisted appraiser, without revealing the figure. A designated
 // auditor separately gets a provably-faithful redacted view. No new guest.
 export function useDisclosure() {
   const [teaser, setTeaser] = useState<Teaser | null>(null);
@@ -31,7 +31,7 @@ export function useDisclosure() {
     loadTeaser(DEMO_DATAROOM_TEASER.roomId, DEMO_DATAROOM_TEASER.fullDocId);
   }, [loadTeaser]);
 
-  // DR5 — re-verify the TEASER's provenance entirely in-browser via the SDK (public RPC): the teaser exists
+  // DR5: re-verify the TEASER's provenance entirely in-browser via the SDK (public RPC). The teaser exists
   // on-chain (so the bare Groth16 verifier accepted the generic value≥threshold proof BEFORE it was stored),
   // the teaser image == the pinned generic guest, the appraiser is allowlisted, and the record carries NO
   // figure (only the predicate). "A fact about a sealed document, verifiable without ever seeing it."
@@ -44,7 +44,7 @@ export function useDisclosure() {
       ]);
       setTeaser(t);
       setTeaserValid(await sdk.isTeaserValid(dr5Room.trim(), dr5Doc.trim()));
-      if (!t) { setDr5Err("No teaser anchored for this (room, document) — it hasn't been attested yet."); return; }
+      if (!t) { setDr5Err("No teaser anchored for this (room, document). It hasn't been attested yet."); return; }
       const appraiserAllowlisted = await sdk.isTeaserAttesterAllowed(t.attester);
       setDr5Verify({
         teaserOnChain: true,
@@ -59,10 +59,10 @@ export function useDisclosure() {
     }
   }
 
-  // DR5 — KEY-FREE auditor open of the redacted view, running ENTIRELY IN THE BROWSER via the SDK. Recovers
+  // DR5: KEY-FREE auditor open of the redacted view, running ENTIRELY IN THE BROWSER via the SDK. Recovers
   // the doc key with the auditor's x25519 secret (never transmitted), verifies the faithful tag, fetches the
   // ciphertext via the backend's public /dataroom/blob, AES-GCM-decrypts, and parses the redacted disclosure
-  // (PCI/HIPAA/GDPR-masked private fields). A wrong key → not faithful (no plaintext).
+  // (PCI/HIPAA/GDPR-masked private fields). A wrong key gives a not-faithful result (no plaintext).
   async function onAuditorOpen() {
     setOpenBusyDr5(true); setOpenErrDr5(null); setRedacted(null);
     try {

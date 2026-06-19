@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 import { PageHeader, Panel, DataRow } from "@/components/app/blocks";
 
 // Fundraise figures are plain USD, so the page uses this dollar formatter (not the base-unit fmtAmount).
-const fmtUsd = (v?: string) => (v ? "$" + BigInt(v).toLocaleString("en-US") : "—");
+const fmtUsd = (v?: string) => (v ? "$" + BigInt(v).toLocaleString("en-US") : "n/a");
 
 const SELECT_CLS = "h-9 rounded-md border border-input bg-background px-3 text-sm";
 
@@ -38,10 +38,10 @@ export default function Fundraise() {
         title="Fundraising"
         lead={
           <>
-            A fundraise an investor can access <b>only by proving BOTH</b> — (a) they are an <b>accredited
-            investor</b> (their identity stays hidden) AND (b) the fundraise has <b>revenue ≥ X</b> (the real
-            revenue stays hidden). Two independent <b>private proofs</b> about two different parties, <b>checked
-            together on the public record</b>.
+            An investor can access this fundraise <b>only by proving BOTH</b> facts. First, they are an{" "}
+            <b>accredited investor</b> (their identity stays hidden). Second, the fundraise has{" "}
+            <b>revenue ≥ X</b> (the real revenue stays hidden). These are two separate <b>private proofs</b>{" "}
+            about two parties, and both are <b>checked together on the public record</b>.
           </>
         }
       />
@@ -74,7 +74,7 @@ export default function Fundraise() {
 
         {/* right: composition banner + the two proofs + history */}
         <div className="space-y-4">
-          {/* COMPOSITION banner — the headline */}
+          {/* COMPOSITION banner: the headline */}
           <Panel
             title={<>Investor access</>}
             aside={
@@ -146,12 +146,12 @@ export default function Fundraise() {
                 </span>
                 <span>
                   {f.canAccess
-                    ? "ACCESS GRANTED — both proofs hold"
+                    ? "ACCESS GRANTED: both proofs hold"
                     : f.accredited
-                      ? "ACCESS DENIED — fundraise revenue not proven"
+                      ? "ACCESS DENIED: fundraise revenue not proven"
                       : f.revVerified
-                        ? "ACCESS DENIED — investor not accredited"
-                        : "ACCESS DENIED — neither proof holds"}
+                        ? "ACCESS DENIED: investor not accredited"
+                        : "ACCESS DENIED: neither proof holds"}
                 </span>
               </div>
 
@@ -173,10 +173,10 @@ export default function Fundraise() {
           </Panel>
 
           {/* company: prove revenue ≥ X */}
-          <Panel title={<>Company — prove revenue ≥ X</>} aside={<ProofStatusBadge state={f.revState} />}>
+          <Panel title={<>Company: prove revenue ≥ X</>} aside={<ProofStatusBadge state={f.revState} />}>
             <p className="text-sm text-muted-foreground">
-              The company's auditor signs the real (private) revenue; the zkVM proves it clears the public
-              floor X. Only "≥ X" is revealed.
+              The company's auditor signs the real revenue, which stays private. The zkVM then proves it
+              clears the public floor X. Only "≥ X" is revealed.
             </p>
             <div className="mt-4 flex flex-wrap items-end gap-2.5">
               <div className="flex flex-col gap-1.5">
@@ -196,14 +196,14 @@ export default function Fundraise() {
             </div>
             {!validRevenue(f.revenue) && (
               <p className="mt-2 text-sm text-muted-foreground">
-                Enter a positive whole-number revenue (private — only "≥ X" is revealed).
+                Enter a positive whole-number revenue. It stays private, and only "≥ X" is revealed.
               </p>
             )}
             <ProveWait state={f.revState} proveBy={f.revBy} privacy="The real revenue figure never leaves the prover." />
             {f.revJournal && (
               <div className="mt-4">
                 <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                  Public journal — the revenue itself is absent
+                  Public journal: the revenue itself is absent
                 </div>
                 <DataRow k="claim" mono={false}>
                   {f.revJournal.claimType === 6 ? "Revenue ≥ X" : `type ${f.revJournal.claimType}`}
@@ -212,7 +212,7 @@ export default function Fundraise() {
                   {fmtUsd(f.revJournal.threshold)}
                 </DataRow>
                 <DataRow k="revenue" variant="private">
-                  private — never revealed
+                  private, never revealed
                 </DataRow>
               </div>
             )}
@@ -220,9 +220,9 @@ export default function Fundraise() {
           </Panel>
 
           {/* investor: prove accredited */}
-          <Panel title={<>Investor — prove accredited</>} aside={<ProofStatusBadge state={f.accState} />}>
+          <Panel title={<>Investor: prove accredited</>} aside={<ProofStatusBadge state={f.accState} />}>
             <p className="text-sm text-muted-foreground">
-              An allow-listed accreditation provider signs the investor's credential; the zkVM proves
+              An allow-listed accreditation provider signs the investor's credential. The zkVM then proves
               "accredited = yes" while the investor's identity stays private, bound to a public accessor.
             </p>
             <div className="mt-4 flex flex-wrap items-end gap-2.5">
@@ -275,14 +275,14 @@ export default function Fundraise() {
             {f.accJournal && (
               <div className="mt-4">
                 <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                  Public journal — the identity is absent
+                  Public journal: the identity is absent
                 </div>
                 <DataRow k="claim" mono={false}>
                   {f.accJournal.claimType === 7 ? "Accredited investor" : `type ${f.accJournal.claimType}`}
                 </DataRow>
                 <DataRow k="accessor (granted)">{short(f.accJournal.accessor, 8)}</DataRow>
                 <DataRow k="identity" variant="private" testId="identity-private">
-                  private — never revealed
+                  private, never revealed
                 </DataRow>
               </div>
             )}

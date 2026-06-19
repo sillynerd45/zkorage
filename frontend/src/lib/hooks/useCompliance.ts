@@ -15,10 +15,10 @@ import { decodeComplianceJournal } from "@/lib/journal";
 import { type ClaimState } from "@/components/StatusBadge";
 import { useTxSigner } from "@/lib/wallet/WalletContext";
 
-// Deterministic demo "user wallet" — the public accessor the compliance proof grants access to.
+// Deterministic demo "user wallet": the public accessor the compliance proof grants access to.
 export const DEMO_USER_G = "GABF456WZDNHKUVWA6BBAYLACD3QTMZA745AVRSBK7IYOBQ5NQJ3HGRC";
 
-// Compliance (KYC ∧ not-sanctioned) data layer — extracted verbatim from the legacy CompliancePage.
+// Compliance (KYC ∧ not-sanctioned) data layer, extracted verbatim from the legacy CompliancePage.
 export function useCompliance() {
   const [info, setInfo] = useState<Info | null>(null);
   const [subject, setSubject] = useState("alice");
@@ -31,7 +31,7 @@ export function useCompliance() {
   const [resp, setResp] = useState<ComplianceGrantResp | null>(null);
   const [busy, setBusy] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const signer = useTxSigner(); // connected wallet → user signs + pays; undefined → backend relays
+  const signer = useTxSigner(); // connected wallet means the user signs and pays; undefined means the backend relays
 
   // relying-party panel
   const [checkAccessor, setCheckAccessor] = useState(DEMO_USER_G);
@@ -50,8 +50,8 @@ export function useCompliance() {
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [refreshHistory]);
 
-  // Connecting a wallet means "prove for my own account": fill the accessor with the wallet address,
-  // but only while it's still the untouched demo default (never clobber what the user typed).
+  // Connecting a wallet means "prove for my own account": fill the accessor with the wallet address.
+  // Do this only while it's still the untouched demo default (never clobber what the user typed).
   useEffect(() => {
     if (signer && accessor === DEMO_USER_G) {
       setAccessor(signer.address);
@@ -99,7 +99,7 @@ export function useCompliance() {
     setState("proving");
     try {
       const pr = await proveCompliance(subject, accessor, kycPassed ? 1 : 0);
-      // A sanctioned subject can't prove non-membership — short-circuit to the ✗ case (no proving job).
+      // A sanctioned subject can't prove non-membership, so short-circuit to the ✗ case (no proving job).
       if (pr.sanctioned) {
         setResp({ ok: false, error: pr.message || "Subject is on the sanctions deny-list.", complianceId: info?.complianceId ?? "" });
         setState("failed");
@@ -119,10 +119,10 @@ export function useCompliance() {
             onGrant(s.bundle);
           } else if (s.status === "error") {
             if (pollRef.current) clearInterval(pollRef.current);
-            // A FAILED KYC makes the guest panic → no receipt → proving "fails" by design.
+            // A FAILED KYC makes the guest panic, so there is no receipt, and proving "fails" by design.
             setResp({
               ok: false,
-              error: kycPassed ? (s.error || "proving failed") : "KYC not passed — the guest produced no receipt (nothing to verify).",
+              error: kycPassed ? (s.error || "proving failed") : "KYC not passed, so the guest produced no receipt (nothing to verify).",
               complianceId: "",
             });
             setState("failed");

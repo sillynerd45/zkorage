@@ -41,7 +41,7 @@ test("payroll: auditor view-key unlocks figures; public sees salaries hidden; wr
   // --- AUDITOR with a WRONG view key → NOT faithful, salaries withheld ---
   await page.getByTestId("view-key").fill(WRONG_KEY);
   await page.getByTestId("unlock").click();
-  await expect(page.getByTestId("salary-0")).toHaveText("—", { timeout: 30_000 });
+  await expect(page.getByTestId("salary-0")).toHaveText("n/a", { timeout: 30_000 });
   await expect(auditTable).toContainText("✗");
 
   await page.screenshot({ path: "tests/payroll-page.png", fullPage: true });

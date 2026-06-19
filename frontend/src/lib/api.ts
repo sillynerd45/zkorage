@@ -20,7 +20,7 @@ export interface Info {
   denyRoot: string;
   denyDepth: number;
   denySize: number;
-  // Week 8 — fundraising (composition)
+  // Week 8: fundraising (composition)
   accreditedId?: string | null;
   fundraiseId?: string | null;
   accreditedImageId?: string;
@@ -343,7 +343,7 @@ export const getPayrollHistory = (start = 0, limit = 50) =>
 
 /** AUDITOR: open EVERY grant → per-employee salaries + the payroll total (deduped by accessor).
  * The backend `/payroll/open/:accessor` (single open) also exists; the SDK exposes a key-free
- * `openPayrollDisclosure` for programmatic use — the dashboard only needs the aggregate audit. */
+ * `openPayrollDisclosure` for programmatic use. The dashboard only needs the aggregate audit. */
 export const auditPayroll = (viewKey?: string) =>
   post<PayrollAuditResp>("/payroll/audit", viewKey ? { viewKey } : {});
 
@@ -397,7 +397,7 @@ export function fmtAmount(base: string | bigint, decimals = 7): string {
   return whole.toLocaleString("en-US");
 }
 
-// ─────────────────────────── Week 8 — Fundraising (composition) ───────────────────────────
+// ─────────────────────────── Week 8: Fundraising (composition) ───────────────────────────
 
 export interface RevenueRecord {
   threshold: string;
@@ -493,7 +493,7 @@ export const requestFundraiseAccess = (accessor: string, signer?: TxSigner): Pro
 export const getFundraiseHistory = (start = 0, limit = 50) =>
   fetch(`${BASE}/fundraise/history?start=${start}&limit=${limit}`).then(j<{ count: number; results: InvestorAccess[]; fundraiseId: string }>);
 
-// ─────────────────────────── DR1 — Confidential Data Room (data plane) ───────────────────────────
+// ─────────────────────────── DR1: Confidential Data Room (data plane) ───────────────────────────
 
 export interface DataroomConfig {
   admin: string;
@@ -596,7 +596,7 @@ export const getDataroomDocument = (roomId: string, docId: string) =>
     j<{ roomId: string; docId: string; document: DataroomDoc | null; dataroomId: string }>,
   );
 
-// ── DR2 — anonymous eligibility (membership + nullifier) ──
+// ── DR2: anonymous eligibility (membership + nullifier) ──
 
 export interface MembershipInfoResp {
   dataroomId: string;
@@ -690,7 +690,7 @@ export const proveAccess = (
 export const requestAccess = (bundle: Bundle) =>
   post<RequestAccessResp>("/dataroom/membership/request-access", bundle);
 
-// ── DR3 — threshold-ECIES committee (key release) ──
+// ── DR3: threshold-ECIES committee (key release) ──
 
 export interface CommitteeKeyper {
   endpoint: string;
@@ -724,7 +724,7 @@ export interface CommitteeDoc {
 export const getCommitteeInfo = () =>
   fetch(`${BASE}/dataroom/committee/info`).then(j<CommitteeInfoResp>);
 
-// ── DR4 — document-authenticity (signed-PDF / zkPDF: third-party truth) ──
+// ── DR4: document-authenticity (signed-PDF / zkPDF: third-party truth) ──
 
 export interface DocauthInfoResp {
   dataroomId: string;

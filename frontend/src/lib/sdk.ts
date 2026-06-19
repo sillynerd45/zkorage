@@ -7,7 +7,7 @@ const API_BASE = (import.meta.env.VITE_BACKEND_URL as string | undefined) || "/a
 
 export const sdk = new ZkorageClient({ apiBaseUrl: API_BASE });
 
-// Demo secrets, derived exactly as the backend/SDK derive them — prefills so the key-free openers
+// Demo secrets, derived exactly as the backend/SDK derive them. Prefills so the key-free openers
 // round-trip out of the box. A real recipient/auditor holds their own.
 export const DEMO_RECIPIENT_SECRET = sha256Hex(new TextEncoder().encode("zkorage-demo-dataroom-recipient-key"));
 export const DEMO_AUDITOR_SECRET = sha256Hex(new TextEncoder().encode("zkorage-demo-auditor-payroll-view-key"));

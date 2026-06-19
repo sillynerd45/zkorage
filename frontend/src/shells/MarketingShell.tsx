@@ -3,7 +3,7 @@ import { TopBar } from "./marketing/TopBar";
 import { Footer } from "./marketing/Footer";
 import VersionBadge from "@/components/VersionBadge";
 
-// Public marketing shell (top-bar, fhenix/Obolos pattern) — wraps the landing, docs, verify, and
+// Public marketing shell (top-bar, fhenix/Obolos pattern) wraps the landing, docs, verify, and
 // explorer routes. Layout route: renders <Outlet/> for the matched child page.
 export default function MarketingShell() {
   return (

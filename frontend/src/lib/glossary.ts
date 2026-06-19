@@ -9,7 +9,7 @@ export const GLOSSARY: Record<string, string> = {
   "private proof": "Math that proves one fact while hiding everything else.",
   "one-time pass": "A stamp that lets your pass work only once per room, so no one enters twice.",
   "fingerprint":
-    "A short code made from a file. Change one character and the code changes — proof the file wasn't altered. It can't be turned back into the file.",
+    "A short code made from a file. Change one character and the code changes, which proves the file wasn't altered. It can't be turned back into the file.",
   "stand-in ID":
     "A placeholder shown on the public record instead of your real name. It hides who you are, but actions under it can be linked together.",
   "split key":
@@ -18,7 +18,7 @@ export const GLOSSARY: Record<string, string> = {
     "The public blockchain (Stellar) where zkorage posts fingerprints and proofs anyone can check.",
   "approved list":
     "The list of who's allowed into a room. A short fingerprint of it is posted so anyone can confirm it wasn't changed.",
-  "masked copy": "A copy of a document with private fields blacked out — and it's provably the genuine file.",
+  "masked copy": "A copy of a document with private fields blacked out. It is provably the genuine file.",
   "verified preview":
     "A small, publicly checkable claim about a sealed document (e.g. \"revenue ≥ $1M\"), vouched for by a reviewer (not independently audited).",
 };

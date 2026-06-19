@@ -7,8 +7,8 @@ import { Button } from "@/components/ui/button";
 export type ConfirmTone = "cost" | "outward" | "irreversible";
 
 const TONE_NOTE: Record<ConfirmTone, string> = {
-  cost: "This runs the self-hosted prover (a few minutes) and then writes on-chain — it can't be undone once it starts.",
-  outward: "This writes to a public ledger — anyone will be able to see the record, and it can't be unpublished.",
+  cost: "This runs the self-hosted prover (a few minutes) and then writes on-chain. It can't be undone once it starts.",
+  outward: "This writes to a public ledger. Anyone will be able to see the record, and it can't be unpublished.",
   irreversible: "This can't be undone.",
 };
 

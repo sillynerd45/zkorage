@@ -2,7 +2,7 @@
 //  1. It narrows the SDK's response shapes to exactly what the app uses, so the context stays clean.
 //  2. It provides ONE seam (`window.__freighterMock`) so Playwright can drive connected / wrong-network
 //     states without the real browser extension (which a headless Chrome can't load). In production the
-//     mock branch is never taken — the real extension messaging is used.
+//     mock branch is never taken: the real extension messaging is used.
 import {
   isConnected as fiIsConnected,
   isAllowed as fiIsAllowed,
@@ -19,7 +19,7 @@ export interface FreighterClient {
   isAllowed(): Promise<{ isAllowed: boolean }>;
   /** Prompt the user and return the granted address. */
   requestAccess(): Promise<{ address: string; error?: { message: string } }>;
-  /** Current address — "" until the site has been granted access. */
+  /** Current address, which is "" until the site has been granted access. */
   getAddress(): Promise<{ address: string; error?: { message: string } }>;
   /** The network the wallet is pointed at (e.g. "TESTNET"). */
   getNetwork(): Promise<{ network: string; networkPassphrase: string; error?: { message: string } }>;
@@ -39,7 +39,7 @@ const real: FreighterClient = {
   signTransaction: (xdr, opts) => fiSignTransaction(xdr, opts),
 };
 
-/** Returns the active Freighter client — the real extension, or a Playwright-injected mock if present. */
+/** Returns the active Freighter client: the real extension, or a Playwright-injected mock if present. */
 export function freighter(): FreighterClient {
   if (typeof window !== "undefined") {
     const mock = (window as unknown as { __freighterMock?: FreighterClient }).__freighterMock;

@@ -37,7 +37,7 @@ export default function Reserves() {
         lead={
           <>
             An issuer proves <b>reserves ≥ circulating supply</b> without revealing the reserve figure. The
-            supply is tied to a real token's total supply; the proof is checked and recorded on the public
+            supply is tied to a real token's total supply. The proof is checked and recorded on the public
             record. Reserves never leave the prover you run.
           </>
         }
@@ -84,7 +84,7 @@ export default function Reserves() {
               <>
                 <DataRow k="claim" mono={false}>{j.claimType === 2 ? "Proof-of-Reserves" : `type ${j.claimType}`}</DataRow>
                 <DataRow k="proven supply (bound)" mono={false}>{fmtAmount(j.threshold, DECIMALS)} zUSD</DataRow>
-                <DataRow k="reserves" variant="private" testId="reserves-private">private — never revealed</DataRow>
+                <DataRow k="reserves" variant="private" testId="reserves-private">private, never revealed</DataRow>
                 <DataRow k="issuer (custodian)">{short(j.issuerId, 8)}</DataRow>
                 <DataRow k="image_id">{short(r.bundle!.image_id, 8)}</DataRow>
               </>
@@ -121,7 +121,7 @@ export default function Reserves() {
             <div data-testid="verdict-card">
               {r.resp.ok ? (
                 <Panel>
-                  <Verdict ok>Reserves ≥ Supply — verified on Stellar</Verdict>
+                  <Verdict ok>Reserves ≥ Supply, verified on Stellar</Verdict>
                   <div className="mt-3">
                     {r.resp.txHash && (
                       <DataRow k="tx">
@@ -192,7 +192,7 @@ export default function Reserves() {
         }}
       >
         <p>
-          This changes the demo token's on-chain <code className="font-mono">total_supply</code> — the live
+          This changes the demo token's on-chain <code className="font-mono">total_supply</code>, the live
           liability the proof is bound to. {r.pending === "mint" ? "Minting raises" : "Burning lowers"} it by{" "}
           {r.demoWhole} zUSD, so a previously-verified proof will stop matching until you change it back.
         </p>

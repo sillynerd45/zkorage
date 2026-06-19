@@ -24,8 +24,8 @@ import { type ClaimState } from "@/components/StatusBadge";
 import { humanError } from "@/lib/errors";
 import { useTxSigner } from "@/lib/wallet/WalletContext";
 
-// The demo investor wallet — the public accessor the accreditation proof binds to (already admitted
-// on-chain, so the composition banner reads GRANTED on first load).
+// The demo investor wallet. This is the public accessor the accreditation proof binds to. It is
+// already admitted on-chain, so the composition banner reads GRANTED on first load.
 export const DEMO_USER_G = "GABF456WZDNHKUVWA6BBAYLACD3QTMZA745AVRSBK7IYOBQ5NQJ3HGRC";
 
 export function friendlyError(e?: string): string {
@@ -132,7 +132,7 @@ export function useFundraise() {
             setRevBundle(s.bundle); setRevState("proved"); setRevBusy(false); onSubmitRevenue(s.bundle);
           } else if (s.status === "error") {
             if (revPoll.current) clearInterval(revPoll.current);
-            setRevResp({ ok: false, error: s.error || "revenue below X — the guest produced no receipt.", fundraiseId: "" });
+            setRevResp({ ok: false, error: s.error || "revenue below X, so the guest produced no receipt.", fundraiseId: "" });
             setRevState("failed"); setRevBusy(false);
           }
         } catch { /* keep polling */ }
@@ -173,7 +173,7 @@ export function useFundraise() {
             setAccBundle(s.bundle); setAccState("proved"); setAccBusy(false); onGrantAccredited(s.bundle);
           } else if (s.status === "error") {
             if (accPoll.current) clearInterval(accPoll.current);
-            setAccResp({ ok: false, error: accStatus ? (s.error || "proving failed") : "not accredited — the guest produced no receipt.", gateId: "" });
+            setAccResp({ ok: false, error: accStatus ? (s.error || "proving failed") : "not accredited, so the guest produced no receipt.", gateId: "" });
             setAccState("failed"); setAccBusy(false);
           }
         } catch { /* keep polling */ }

@@ -32,12 +32,12 @@ export default function Identity() {
     <>
       <PageHeader
         icon={UserCheck}
-        title="Identity — KYC"
+        title="Identity (KYC)"
         lead={
           <>
-            A user proves they are <b>ID-checked by an approved provider</b> — <b>without revealing
-            their identity</b> — and the proof grants access to a chosen account. The provider signs a
-            credential about the person; the proof shows "ID check passed, by an approved source" while their
+            A user proves they are <b>ID-checked by an approved provider</b>, <b>without revealing
+            their identity</b>, and the proof grants access to a chosen account. The provider signs a
+            credential about the person. The proof shows "ID check passed, by an approved source" while their
             identity stays private. The proof is tied to a public account (the one that gets access).
           </>
         }
@@ -119,7 +119,7 @@ export default function Identity() {
 
             <div className="mt-4">
               <Button onClick={i.onProve} disabled={i.busy} data-testid="prove">
-                {i.state === "proving" ? "Proving…" : "Generate proof & grant access"}
+                {i.state === "proving" ? "Proving…" : "Generate proof and grant access"}
               </Button>
             </div>
 
@@ -128,7 +128,7 @@ export default function Identity() {
             {j && (
               <div className="mt-4">
                 <p className="mb-2 text-[11px] uppercase tracking-wide text-muted-foreground">
-                  Public journal (what goes on-chain) — note the identity is absent
+                  Public journal (what goes on-chain). Note the identity is absent.
                 </p>
                 <DataRow k="claim" mono={false}>
                   {j.claimType === 3 ? "Identity / KYC" : `type ${j.claimType}`}
@@ -137,7 +137,7 @@ export default function Identity() {
                 <DataRow k="KYC provider (issuer)">{short(j.issuerId, 8)}</DataRow>
                 <DataRow k="accessor (granted)">{short(j.accessor, 8)}</DataRow>
                 <DataRow k="subject / identity" variant="private" testId="subject-private">
-                  private — never revealed
+                  private (never revealed)
                 </DataRow>
               </div>
             )}
@@ -148,7 +148,7 @@ export default function Identity() {
             <div data-testid="grant-verdict-card">
               {resp.ok ? (
                 <Panel>
-                  <Verdict ok>KYC verified — access granted on Stellar</Verdict>
+                  <Verdict ok>KYC verified. Access granted on Stellar.</Verdict>
                   <div className="mt-3">
                     {resp.txHash && (
                       <DataRow k="tx">
@@ -189,7 +189,7 @@ export default function Identity() {
             }
           >
             <p className="text-sm text-muted-foreground">
-              A relying party checks whether an account has a valid KYC access grant — without ever learning who
+              A relying party checks whether an account has a valid KYC access grant, without ever learning who
               the account belongs to.
             </p>
             <div className="mt-3 flex flex-wrap items-end gap-2.5">
@@ -207,7 +207,7 @@ export default function Identity() {
             {i.granted !== null && (
               <div className="mt-3" data-testid="access-verdict" data-granted={i.granted}>
                 <Verdict ok={i.granted}>
-                  {i.granted ? "ACCESS GRANTED — KYC-verified" : "ACCESS DENIED — no valid KYC proof"}
+                  {i.granted ? "ACCESS GRANTED (KYC-verified)" : "ACCESS DENIED (no valid KYC proof)"}
                 </Verdict>
               </div>
             )}

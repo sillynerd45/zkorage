@@ -23,16 +23,16 @@ import { type ClaimState } from "@/components/StatusBadge";
 import { sdk, DEMO_RECIPIENT_SECRET } from "@/lib/sdk";
 import { isHex32 } from "@/lib/format";
 
-// DR1 — the data plane: encrypt a document (fresh per-doc key K, AES-256-GCM), store the ciphertext
+// DR1 (the data plane): encrypt a document (fresh per-doc key K, AES-256-GCM), store the ciphertext
 // off-chain, prove the faithful seal of K to a recipient's x25519 key (bound to the content hash), and
-// anchor only a sha256(ciphertext) commitment + the sealed-key disclosure on-chain. The recipient later
-// recovers K with their key — entirely in the browser; the key never leaves it.
+// anchor only a sha256(ciphertext) commitment plus the sealed-key disclosure on-chain. The recipient later
+// recovers K with their key. This happens entirely in the browser, and the key never leaves it.
 export function useAnchor() {
   const [info, setInfo] = useState<DataroomInfoResp | null>(null);
 
   // --- upload / encrypt / anchor (the slow path: real proof) ---
   const [roomLabel, setRoomLabel] = useState("zkorage-dataroom-demo");
-  const [content, setContent] = useState("Confidential term sheet — Series A, $4M at $20M pre. 🔒");
+  const [content, setContent] = useState("Confidential term sheet. Series A, $4M at $20M pre. 🔒");
   const [recipientPub, setRecipientPub] = useState(DEMO_RECIPIENT_PUB);
   const [state, setState] = useState<ClaimState>("draft");
   const [proveBy, setProveBy] = useState<string | null>(null);
@@ -95,16 +95,16 @@ export function useAnchor() {
     if (pollRef.current) clearInterval(pollRef.current);
     setBusy(true); setResp(null); setBundle(null); setProveBy(null); setState("proving");
     try {
-      // 1. ensure the room exists (create it if not — owned + paid for by the demo server key).
-      setStep("Ensuring room exists…");
+      // 1. ensure the room exists (create it if not; it is owned and paid for by the demo server key).
+      setStep("Making sure the room exists…");
       const room = await getDataroomRoom(roomLabel).catch(() => null);
       if (!room?.room) await createRoom(roomLabel).catch(() => {});
-      // 2. encrypt (fresh K, AES-256-GCM) + upload the ciphertext + enqueue the seal proof.
-      setStep("Encrypting + uploading ciphertext, enqueuing the seal proof…");
+      // 2. encrypt (fresh K, AES-256-GCM), upload the ciphertext, and enqueue the seal proof.
+      setStep("Encrypting and uploading the ciphertext, then queuing the seal proof…");
       const pr = await proveSeal(roomLabel, content, recipientPub);
       if (!pr.jobId) throw new Error(pr.error || "prove-seal failed");
       const { jobId, roomId, docId, blobPointer } = pr;
-      setStep("Proving (STARK → Groth16) on the self-hosted prover…");
+      setStep("Proving (STARK then Groth16) on the self-hosted prover…");
       // 3. poll for the proof, then anchor.
       pollRef.current = setInterval(async () => {
         try {
@@ -130,8 +130,8 @@ export function useAnchor() {
 
   async function onOpen() {
     setOpenErr(null); setOpened(null);
-    // The open panel needs raw 32-byte hex room/doc ids (not labels) — guard up front so a typo yields a
-    // clean message instead of a cryptic RPC error from a truncated `Bytes`.
+    // The open panel needs raw 32-byte hex room/doc ids (not labels), so guard up front. That way a typo
+    // yields a clean message instead of a cryptic RPC error from a truncated `Bytes`.
     if (!isHex32(openRoom) || !isHex32(openDoc)) {
       setOpenErr("room and doc must each be 32-byte hex (64 hex chars)");
       return;

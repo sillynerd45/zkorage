@@ -19,7 +19,7 @@ export function ThemeToggle() {
     try {
       localStorage.setItem("zkorage-theme", dark ? "dark" : "light");
     } catch {
-      /* storage blocked — no-op */
+      /* storage blocked, no-op */
     }
   }, [dark]);
   return (

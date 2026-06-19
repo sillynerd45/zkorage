@@ -17,7 +17,7 @@ import { type ClaimState } from "@/components/StatusBadge";
 import { sdk } from "@/lib/sdk";
 import { isHex32 } from "@/lib/format";
 
-// DR2 — the marquee: anonymous eligibility + nullifier (the load-bearing ZK).
+// DR2 (the marquee): anonymous eligibility plus nullifier (the load-bearing ZK).
 export const DR2_DEMO_ROOM = DEMO_DATAROOM.roomId;
 export const DR2_DEMO_ACCESSOR = "ed4928c628d1c2c6eae90338905995612959273a5c63f93636c14614ac8737d1";
 
@@ -57,8 +57,8 @@ export function useEligibility() {
   }, []);
 
   // The full anonymous-eligibility ZK flow: mint an identity into a FRESH room's eligible set (anonymity
-  // set of 2), pin the root, prove membership worker-first, request_access for the pseudonymous accessor —
-  // then re-submitting the SAME proof must be rejected #NullifierUsed.
+  // set of 2), pin the root, prove membership worker-first, request_access for the pseudonymous accessor.
+  // Re-submitting the SAME proof must then be rejected #NullifierUsed.
   async function onRequestAccess() {
     setBusy(true);
     setErr(null);
@@ -76,7 +76,7 @@ export function useEligibility() {
       setStep("Pinning the eligible-set Merkle root on-chain…");
       const sr = await setEligibleRoot(room);
       if (!sr.ok) throw new Error(sr.error || "set-root failed");
-      setStep("Proving membership (sha256-Merkle + nullifier + holder sig) — worker-first, a few minutes…");
+      setStep("Proving membership (sha256-Merkle, nullifier, holder sig), worker-first. This takes a few minutes…");
       const pa = await proveAccess(room, me.minted.idSecret, me.minted.idTrapdoor, me.minted.holderSeed);
       if (!pa.jobId) throw new Error(pa.error || "prove-access failed");
       let bundle: Bundle | null = null;
@@ -94,12 +94,12 @@ export function useEligibility() {
       }
       if (!bundle) throw new Error("proof timed out");
       setState("verifying");
-      setStep("Submitting the proof — request_access…");
+      setStep("Submitting the proof (request_access)…");
       const ra = await requestAccess(bundle);
       if (!ra.ok) throw new Error(ra.error || "request_access rejected");
       setGrant({ accessor: pa.accessor, nullifier: pa.nullifier });
       setState("verified");
-      setStep("Re-submitting the same proof to demonstrate the nullifier…");
+      setStep("Re-submitting the same proof to show the nullifier in action…");
       const ra2 = await requestAccess(bundle);
       setGrant({
         accessor: pa.accessor,
