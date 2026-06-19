@@ -12,7 +12,7 @@ test("dataroom: recipient opens the sealed doc in-browser (faithful); wrong key 
   const consoleErrors: string[] = [];
   page.on("console", (m) => { if (m.type() === "error") consoleErrors.push(m.text()); });
 
-  await page.goto("/app/dataroom/anchor");
+  await page.goto("/app/dataroom/documents");
 
   // engine resolves the DataRoom contract + storage backend (shared layout Engine card)
   await expect(page.getByText("DataRoom contract")).toBeVisible({ timeout: 30_000 });
@@ -51,4 +51,27 @@ test("dataroom: recipient opens the sealed doc in-browser (faithful); wrong key 
   const appErrors = consoleErrors.filter((e) => !/Failed to load resource/i.test(e));
   if (appErrors.length) console.log("CONSOLE ERRORS:", appErrors);
   expect(appErrors, appErrors.join("\n")).toHaveLength(0);
+});
+
+test("dataroom overview: task-oriented cards route to the right place; guided-demo tab removed", async ({ page }) => {
+  await page.goto("/app/dataroom");
+  await expect(page.getByRole("heading", { name: "What do you want to do?" })).toBeVisible();
+
+  // the document tasks that used to be buried under "Store a document" are now first-class + discoverable
+  await expect(page.getByTestId("task-store")).toBeVisible();
+  await expect(page.getByTestId("task-open")).toBeVisible();
+  await expect(page.getByTestId("task-browse")).toBeVisible();
+  await expect(page.getByTestId("task-eligibility")).toBeVisible();
+
+  // the passive "Guided demo" is no longer a dataroom tab
+  await expect(page.getByRole("link", { name: "Guided demo" })).toHaveCount(0);
+
+  // "Open a document" deep-links straight into the Documents page's open section
+  await page.getByTestId("task-open").click();
+  await expect(page).toHaveURL(/\/dataroom\/documents#open$/);
+  await expect(page.getByRole("heading", { name: "Open a document" })).toBeVisible();
+
+  // and that one page exposes all three document tasks as sections
+  await expect(page.getByRole("heading", { name: "Store a document" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Browse documents" })).toBeVisible();
 });

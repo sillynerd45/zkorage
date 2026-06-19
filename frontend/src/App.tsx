@@ -55,7 +55,8 @@ export default function App() {
           <Route path="release" element={<DataroomRelease />} />
           <Route path="disclosure" element={<DataroomDisclosure />} />
           <Route path="policy" element={<DataroomPolicy />} />
-          <Route path="anchor" element={<DataroomAnchor />} />
+          {/* "documents" = store + open + browse (the page is still implemented in Anchor.tsx) */}
+          <Route path="documents" element={<DataroomAnchor />} />
           <Route path="authenticity" element={<DataroomAuthenticity />} />
         </Route>
         <Route path="*" element={<Home />} />

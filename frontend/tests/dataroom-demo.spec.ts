@@ -7,9 +7,9 @@ test("dataroom guided demo: Overview CTA → 4-step tour reads the live grant (a
   const consoleErrors: string[] = [];
   page.on("console", (m) => { if (m.type() === "error") consoleErrors.push(m.text()); });
 
-  // the Overview "See it work →" CTA lands on the guided demo
-  await page.goto("/app/dataroom");
-  await page.getByTestId("overview-see-it-work").click();
+  // the guided demo is no longer linked from the overview (it will move to a dedicated Tutorial); the
+  // route still exists and works, so reach it directly.
+  await page.goto("/app/dataroom/demo");
   await expect(page).toHaveURL(/\/dataroom\/demo$/);
 
   // step 1 (the scenario) → start

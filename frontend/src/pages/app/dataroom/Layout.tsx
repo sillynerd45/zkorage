@@ -28,9 +28,8 @@ export default function DataRoomLayout() {
         title="Data Room"
         lead={
           <>
-            A sealed room for sensitive documents. You prove you're <b>allowed in without revealing who you
-            are</b>, files stay encrypted, and only a tamper-evident fingerprint goes on the public record.
-            Every claim is <b>checkable by anyone</b>. Pick a capability — each is its own step.
+            Keep sensitive files private and control exactly <b>who can open them</b> — proven on-chain and{" "}
+            <b>checkable by anyone</b>. New here? Start with <b>Overview</b>.
           </>
         }
       />
@@ -55,7 +54,10 @@ export default function DataRoomLayout() {
         ))}
       </div>
 
-      <Panel title="Engine" className="mb-5">
+      <Outlet />
+
+      {/* Engine / contract details — moved below the task content so a new user sees what to DO first. */}
+      <Panel title="Engine" className="mt-6">
         <DataRow k="Network">testnet</DataRow>
         {info?.dataroomId && <DataRow k="DataRoom contract"><Ex id={info.dataroomId} /></DataRow>}
         {info?.config?.verifier && <DataRow k="Groth16 verifier"><Ex id={info.config.verifier} /></DataRow>}
@@ -66,8 +68,6 @@ export default function DataRoomLayout() {
         )}
         {info && <DataRow k="Rooms" testId="room-count">{info.roomCount}</DataRow>}
       </Panel>
-
-      <Outlet />
     </>
   );
 }

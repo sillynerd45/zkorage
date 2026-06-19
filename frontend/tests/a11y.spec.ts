@@ -30,7 +30,7 @@ test("a11y: no horizontal scroll on lean routes across 375/768/1024/1440 (WCAG 1
 // The wide-input prove routes must fit tablet→desktop (the realistic demo range); the <560px rule shrinks
 // their monospace inputs, and any data table is reflow-exempt (WCAG 1.4.10) so we don't pin those at 375.
 test("a11y: no horizontal scroll on wide-input routes across 768/1024/1440", async ({ page }) => {
-  for (const route of ["/app/dataroom/anchor", "/app/dataroom/release", "/app/dataroom/disclosure"]) {
+  for (const route of ["/app/dataroom/documents", "/app/dataroom/release", "/app/dataroom/disclosure"]) {
     for (const width of [768, 1024, 1440]) {
       await page.setViewportSize({ width, height: 1200 });
       await page.goto(route);
@@ -40,8 +40,8 @@ test("a11y: no horizontal scroll on wide-input routes across 768/1024/1440", asy
   }
 });
 
-test("a11y: every form control on the anchor route has an accessible name (WCAG 4.1.2 / 3.3.2)", async ({ page }) => {
-  await page.goto("/app/dataroom/anchor");
+test("a11y: every form control on the documents route has an accessible name (WCAG 4.1.2 / 3.3.2)", async ({ page }) => {
+  await page.goto("/app/dataroom/documents");
   await expect(page.getByTestId("room-label")).toBeVisible();
   const controls = page.locator("input, textarea, select");
   const n = await controls.count();

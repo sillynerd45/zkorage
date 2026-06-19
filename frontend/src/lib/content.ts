@@ -147,8 +147,12 @@ export interface DataroomTab {
 }
 
 export const DATAROOM_TABS: DataroomTab[] = [
-  { slug: "", label: "Overview", blurb: "What a confidential data room is, and what you can do here." },
-  { slug: "demo", label: "Guided demo", blurb: "A 2-minute guided tour of the whole flow — no wallet needed." },
+  { slug: "", label: "Overview", blurb: "What you can do here — pick a task." },
+  {
+    slug: "documents",
+    label: "Documents",
+    blurb: "Store, open, and browse the room's encrypted files.",
+  },
   {
     slug: "eligibility",
     label: "Get in anonymously",
@@ -169,11 +173,6 @@ export const DATAROOM_TABS: DataroomTab[] = [
     slug: "policy",
     label: "Meet all conditions",
     blurb: "Admit someone only if they meet every condition at once — without revealing who they are.",
-  },
-  {
-    slug: "anchor",
-    label: "Store a document",
-    blurb: "Encrypt a document, keep the file private, and post only a tamper-evident fingerprint on-chain.",
   },
   {
     slug: "authenticity",

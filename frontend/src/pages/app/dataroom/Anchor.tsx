@@ -1,3 +1,5 @@
+import { useEffect } from "react";
+import { useLocation } from "react-router-dom";
 import { useAnchor } from "@/lib/hooks/useAnchor";
 import { short, explorer } from "@/lib/format";
 import { humanError } from "@/lib/errors";
@@ -12,10 +14,24 @@ import { DataRow, Verdict } from "@/components/app/blocks";
 
 export default function Anchor() {
   const a = useAnchor();
+  const { hash } = useLocation();
+  // Deep links from the overview (#store / #open / #browse) scroll to the matching section.
+  useEffect(() => {
+    const id = hash.replace("#", "");
+    if (!id) return;
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [hash]);
+
   return (
     <div className="space-y-5">
+      <p className="max-w-2xl text-sm text-muted-foreground">
+        Everything for this room's files in one place: <b className="text-foreground">store</b> a new one,{" "}
+        <b className="text-foreground">open</b> one you can decrypt, or <b className="text-foreground">browse</b>{" "}
+        what's on the record.
+      </p>
+
       {/* upload / encrypt / anchor */}
-      <Card className="rounded-2xl p-6">
+      <Card id="store" className="scroll-mt-20 rounded-2xl p-6">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h2 className="text-base font-semibold tracking-tight">Store a document</h2>
           <ProofStatusBadge state={a.state} />
@@ -188,7 +204,7 @@ export default function Anchor() {
       )}
 
       {/* recipient open (key-free, client-side) */}
-      <Card className="rounded-2xl p-6">
+      <Card id="open" className="scroll-mt-20 rounded-2xl p-6">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h2 className="text-base font-semibold tracking-tight">Open a document</h2>
           <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
@@ -292,9 +308,9 @@ export default function Anchor() {
       </Card>
 
       {/* public document browser */}
-      <Card className="rounded-2xl p-6">
+      <Card id="browse" className="scroll-mt-20 rounded-2xl p-6">
         <div className="mb-3 flex items-center justify-between gap-3">
-          <h2 className="text-base font-semibold tracking-tight">Documents</h2>
+          <h2 className="text-base font-semibold tracking-tight">Browse documents</h2>
           <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
             anyone can read the record · contents hidden
           </span>
