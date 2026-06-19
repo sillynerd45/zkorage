@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { DataRow, Verdict } from "@/components/app/blocks";
+import { DecryptedFile } from "@/components/app/DecryptedFile";
 
 // Pattern 2 — prove a document's policy, get the key, open it (the self-serve reader flow). The room owner
 // attaches a policy to a document; whoever proves they meet it (anonymously) has the key released to them by
@@ -182,13 +183,9 @@ export default function OpenShared() {
                   Rebuilt the key from {s.opened.faithfulShares} parts (any 2 of 3) and the file matched its
                   fingerprint
                 </Verdict>
-                <div className="mt-3 text-[11px] uppercase tracking-wide text-muted-foreground">Decrypted document</div>
-                <pre
-                  data-testid="access-plaintext"
-                  className="mt-2 overflow-x-auto whitespace-pre-wrap rounded-lg border bg-muted/40 px-3.5 py-3 font-mono text-xs"
-                >
-                  {s.opened.plaintextUtf8 ?? `(binary, ${s.opened.plaintext?.length ?? 0} bytes)`}
-                </pre>
+                <div data-testid="access-plaintext">
+                  <DecryptedFile plaintext={s.opened.plaintext} plaintextUtf8={s.opened.plaintextUtf8} />
+                </div>
               </>
             ) : (
               <Verdict ok={false}>

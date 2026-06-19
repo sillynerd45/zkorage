@@ -36,6 +36,7 @@ test("dataroom: recipient opens the sealed doc in-browser (faithful); wrong key 
   await expect(page.getByTestId("seal-image")).toBeVisible();
   // upload controls render (we do NOT trigger the ~minutes-long proof in a UI test)
   await expect(page.getByTestId("doc-content")).toBeVisible();
+  await expect(page.getByTestId("doc-file")).toBeVisible(); // store a file (PDF/image/any) too, not just text
   await expect(page.getByTestId("upload")).toBeVisible();
 
   // BROWSE sub-tab: with no wallet, it asks you to connect — Browse shows the rooms YOU own, so a fresh
@@ -52,6 +53,9 @@ test("dataroom: recipient opens the sealed doc in-browser (faithful); wrong key 
   await expect(result).toBeVisible({ timeout: 60_000 });
   await expect(result).toHaveAttribute("data-faithful", "true", { timeout: 60_000 });
   await expect(page.getByTestId("open-plaintext")).toContainText(DEMO_CONTENT_SNIPPET);
+  // the decrypted document offers a download, and the text demo doc renders as a text preview
+  await expect(page.getByTestId("download-decrypted")).toBeVisible();
+  await expect(page.getByTestId("decrypted-text")).toContainText(DEMO_CONTENT_SNIPPET);
 
   // --- WRONG recipient key → NOT faithful, no plaintext recovered ---
   await page.getByTestId("open-secret").fill(WRONG_KEY);
@@ -65,6 +69,25 @@ test("dataroom: recipient opens the sealed doc in-browser (faithful); wrong key 
   const appErrors = consoleErrors.filter((e) => !/Failed to load resource/i.test(e));
   if (appErrors.length) console.log("CONSOLE ERRORS:", appErrors);
   expect(appErrors, appErrors.join("\n")).toHaveLength(0);
+});
+
+test("dataroom store: choosing a file shows a chip and disables the text box", async ({ page }) => {
+  // The file path (PDF/image/any) is exercised without the multi-minute proof: pick a file, assert the UI
+  // state, then remove it. setInputFiles takes an in-memory buffer, so no fixture file is needed.
+  await page.goto("/app/dataroom/documents#store");
+  await expect(page.getByTestId("doc-content")).toBeVisible({ timeout: 30_000 });
+
+  await page.getByTestId("doc-file").setInputFiles({
+    name: "sample.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.from("%PDF-1.4\n%demo small pdf\n"),
+  });
+  await expect(page.getByTestId("doc-file-chip")).toContainText("sample.pdf");
+  await expect(page.getByTestId("doc-content")).toBeDisabled(); // a chosen file overrides the text box
+
+  await page.getByTestId("doc-file-clear").click();
+  await expect(page.getByTestId("doc-file-chip")).toHaveCount(0);
+  await expect(page.getByTestId("doc-content")).toBeEnabled();
 });
 
 test("dataroom Browse: a fresh connected wallet sees only its own rooms (empty), not a seeded doc", async ({ page }) => {
