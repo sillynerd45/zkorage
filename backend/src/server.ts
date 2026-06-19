@@ -2815,6 +2815,59 @@ app.get("/dataroom/policy/:roomId", async (req, res) => {
   }
 });
 
+// ── Pattern 2: PER-DOCUMENT access policy (prove-a-policy self-serve committee-key release) ──
+// The owner attaches a policy to a committee document; a reader who proves it (anonymously) gets the doc key
+// released by the keypers (which gate on is_doc_admitted). set_doc_policy is a room-owner op, relay-signed
+// like set_room_policy (the demo rooms are deployer-owned). The committee doc must already exist. A reader
+// discovers the policy with GET /dataroom/doc-policy/:room/:doc and checks their live admission (the exact
+// keyper share-release gate) with GET /dataroom/doc-admitted/:room/:doc/:accessor.
+app.post("/dataroom/doc-policy/set", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  let roomIdHex: string, docIdHex: string, requireMembership: boolean, complianceGate: string | null, accreditedGate: string | null;
+  try {
+    roomIdHex = toBytes32(req.body?.roomId);
+    docIdHex = toBytes32(req.body?.docId);
+    requireMembership = req.body?.requireMembership !== false; // default true (key release needs a recipient_pub)
+    complianceGate = parseGateArg(req.body?.complianceGate, COMPLIANCE_ID, "compliance");
+    accreditedGate = parseGateArg(req.body?.accreditedGate, ACCREDITED_ID, "accredited");
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const out = await invokeContract(DATAROOM_ID, "set_doc_policy", [
+      scBytes(roomIdHex), scBytes(docIdHex), scBool(requireMembership), scOptAddress(complianceGate), scOptAddress(accreditedGate),
+    ]);
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, roomId: roomIdHex, docId: docIdHex, requireMembership, complianceGate, accreditedGate, dataroomId: DATAROOM_ID });
+  } catch (e) {
+    res.json({ ok: false, error: err(e), roomId: roomIdHex, docId: docIdHex, dataroomId: DATAROOM_ID });
+  }
+});
+
+app.get("/dataroom/doc-policy/:roomId/:docId", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  try {
+    const roomIdHex = toBytes32(req.params.roomId);
+    const docIdHex = toBytes32(req.params.docId);
+    const { value } = await readContract(DATAROOM_ID, "get_doc_policy", [scBytes(roomIdHex), scBytes(docIdHex)]);
+    res.json({ roomId: roomIdHex, docId: docIdHex, policy: value ? jsonSafe(value) : null, dataroomId: DATAROOM_ID });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+app.get("/dataroom/doc-admitted/:roomId/:docId/:accessor", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  try {
+    const roomIdHex = toBytes32(req.params.roomId);
+    const docIdHex = toBytes32(req.params.docId);
+    const accessorHex = accessorToHex(req.params.accessor);
+    const { value } = await readContract(DATAROOM_ID, "is_doc_admitted", [scBytes(roomIdHex), scBytes(docIdHex), scBytes(accessorHex)]);
+    res.json({ roomId: roomIdHex, docId: docIdHex, accessor: accessorHex, isDocAdmitted: Boolean(value) });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
 // Submit the composite-policy admission (PERMISSIONLESS — each leg was already gated on a verified proof;
 // the membership leg's NEW-5 holder sig carries the accessor's consent). Admit, or a specific leg error
 // (#21 RoomPolicyNotSet / #22 MembershipRequired / #23 NotCompliant / #24 NotAccredited / #25 AccessRevoked).

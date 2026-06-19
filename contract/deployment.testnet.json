@@ -440,7 +440,16 @@
     "new_methods": "set_doc_policy(room, doc, require_membership, compliance_gate, accredited_gate) [room-owner auth; committee doc must exist (CommitteeDocNotFound #26); reject empty (EmptyPolicy #27)] emits DocPolicySet. Reads: is_doc_admitted(room, doc, accessor) [effective policy = DocPolicy else RoomPolicy else bare membership is_granted; then the same leg AND as is_admitted] + get_doc_policy(room, doc).",
     "keyper_gate": "the DR3 keypers gate /share on is_doc_admitted (was is_granted); recipient_pub still from the DR2 grant. Backward-compatible (no-policy committee docs fall back to membership).",
     "cargo_tests": "100/100 (+10 Pattern-2: full composite, doc-overrides-room, fallback-to-room, fallback-to-membership, revoke drops + restore, gate-only revoke drops, owner-auth, requires-committee-doc #26, empty #27, totality).",
-    "acceptance_testnet": "Upgrade tx 1b8a2cf0 preserved all DR1-DR6 storage (room_count=20, is_admitted(db16742c, ed4928c6)=true). New reads live: get_doc_policy(demo doc)=null (no doc policy yet); is_doc_admitted(demo room/doc/accessor)=true (falls back to the DR6 room policy).",
-    "status": "contract DEPLOYED + verified 2026-06-19; keyper/backend/SDK/frontend Pattern-2 build IN PROGRESS (branch dataroom-selfserve-access)."
+    "acceptance_testnet": "Upgrade tx 1b8a2cf0 preserved all DR1-DR6 storage (room_count=20, is_admitted(db16742c, ed4928c6)=true). Then set_doc_policy live (tx 172fcef0, DocPolicySet event: require_membership+has_compliance+has_accredited all true) on the demo committee doc; get_doc_policy returns {member, compliance CDSA3PUL, accredited CCLSXZBO}; is_doc_admitted(demo accessor ed4928c6)=true, is_doc_admitted(random 1111..)=false. The keyper gates /share on this.",
+    "stable_demo": {
+      "note": "Pattern 2 reuses the DR6 demo (no new proofs): the already-admitted demo member opens a committee doc whose per-document policy is member AND compliance AND accredited. Set with set_doc_policy; read live with get_doc_policy / is_doc_admitted; the key releases via the keypers (gated on is_doc_admitted) to the proof-bound recipient.",
+      "room": "db16742cf50b4443db1336b65ece5a532515487d7d4f7b6feab87bbb87396489",
+      "committee_doc": "8b041fe3998194a15fab4bf9d32db0cc528ef12eec9a6b521ec5124ad66508a6",
+      "doc_policy": "member AND compliance (CDSA3PUL) AND accredited (CCLSXZBO)",
+      "set_doc_policy_tx": "172fcef0486ab4d1d79372166df4300f44cd897d149245627dd5efcade92fd41",
+      "admitted_accessor": "ed4928c628d1c2c6eae90338905995612959273a5c63f93636c14614ac8737d1",
+      "recipient_pub": "97a6b925 (demo x25519; secret = sha256('zkorage-demo-dataroom-recipient-key'))"
+    },
+    "status": "contract DEPLOYED + verified + demo doc-policy live 2026-06-19; SDK/frontend Pattern-2 build IN PROGRESS (branch dataroom-selfserve-access)."
   }
 }
