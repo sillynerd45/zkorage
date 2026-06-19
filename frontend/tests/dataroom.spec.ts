@@ -5,6 +5,7 @@ import { test, expect } from "@playwright/test";
 // sha256(ciphertext) commitment + the sealed-key disclosure go on-chain. The recipient opens it KEY-FREE
 // in the browser (the SDK opener recovers K with their x25519 secret + AES-decrypts; it custodies nothing).
 // Uses the SEEDED demo document (room/doc already anchored on testnet) to avoid the multi-minute proof.
+// The page is now a Store / Open / Browse submenu (one sub-tab at a time).
 const DEMO_CONTENT_SNIPPET = "opened faithfully"; // appears in the seeded demo document's plaintext
 const WRONG_KEY = "11".repeat(32); // a non-recipient secret → the faithful tag won't match
 
@@ -14,23 +15,24 @@ test("dataroom: recipient opens the sealed doc in-browser (faithful); wrong key 
 
   await page.goto("/app/dataroom/documents");
 
-  // the seal guest + demo recipient are demoted behind a "Verify details" expander (UX pass) — expand them
+  // STORE sub-tab is the default. The seal guest + demo recipient are demoted behind a "Verify details" expander.
   await expect(page.getByTestId("room-label")).toBeVisible({ timeout: 30_000 });
   await page.getByTestId("anchor-engine-details").click();
   await expect(page.getByTestId("recipient-pub")).toContainText("x25519");
   await expect(page.getByTestId("seal-image")).toBeVisible();
-
   // upload controls render (we do NOT trigger the ~minutes-long proof in a UI test)
-  await expect(page.getByTestId("room-label")).toBeVisible();
   await expect(page.getByTestId("doc-content")).toBeVisible();
   await expect(page.getByTestId("upload")).toBeVisible();
 
-  // public document browser lists the seeded demo doc — the plaintext is HIDDEN (encrypted)
+  // BROWSE sub-tab: the public log lists the seeded demo doc. There is no "contents" column — every document
+  // is encrypted by default (the caption says so), so a per-row "encrypted" cell would be noise.
+  await page.getByTestId("doc-subtab-browse").click();
   const docs = page.getByTestId("dataroom-docs");
   await expect(docs).toBeVisible({ timeout: 30_000 });
-  await expect(docs).toContainText("encrypted");
+  await expect(page.getByText("everything here is encrypted")).toBeVisible();
 
-  // --- RECIPIENT OPEN (prefilled demo doc + demo recipient secret) → faithful + decrypted plaintext ---
+  // OPEN sub-tab — RECIPIENT OPEN (prefilled demo doc + demo recipient secret) → faithful + decrypted plaintext
+  await page.getByTestId("doc-subtab-open").click();
   await page.getByTestId("open-btn").click();
   const result = page.getByTestId("open-result");
   await expect(result).toBeVisible({ timeout: 60_000 });
@@ -69,12 +71,13 @@ test("dataroom overview: task-oriented cards route to the right place; guided-de
   await expect(page.getByText("DataRoom contract")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("storage")).toContainText(/Cloudflare R2|local/);
 
-  // "Open a document" deep-links straight into the Documents page's open section
+  // "Open a document" deep-links straight into the Documents page's Open sub-tab
   await page.getByTestId("task-open").click();
   await expect(page).toHaveURL(/\/dataroom\/documents#open$/);
   await expect(page.getByRole("heading", { name: "Open a document" })).toBeVisible();
 
-  // and that one page exposes all three document tasks as sections
-  await expect(page.getByRole("heading", { name: "Store a document" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Browse documents" })).toBeVisible();
+  // and that one page exposes Store / Open / Browse as a submenu
+  await expect(page.getByTestId("doc-subtab-store")).toBeVisible();
+  await expect(page.getByTestId("doc-subtab-open")).toBeVisible();
+  await expect(page.getByTestId("doc-subtab-browse")).toBeVisible();
 });
