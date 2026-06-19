@@ -8,7 +8,7 @@ import { DataRow, Verdict } from "@/components/app/blocks";
 import { cn } from "@/lib/utils";
 
 // A seeded ~2-minute guided walkthrough to the "aha", driven by the LIVE instant read path against the
-// seeded DR2 grant (no multi-minute proof). Presentational only — all state/effects live in useGuidedDemo.
+// seeded DR2 grant (no multi-minute proof). Presentational only. All state/effects live in useGuidedDemo.
 export default function Demo() {
   const d = useGuidedDemo();
   const { step, result } = d;
@@ -57,7 +57,7 @@ export default function Demo() {
         {step === 1 && (
           <div data-testid="demo-step-1" className="space-y-3">
             <p className="text-sm leading-relaxed text-muted-foreground">
-              Picture a <b className="text-foreground">sealed data room</b> of sensitive documents — a whistleblower drop, an anonymous
+              Picture a <b className="text-foreground">sealed data room</b> of sensitive documents: a whistleblower drop, an anonymous
               due-diligence room, a sealed-bid auction. To get in, you must prove you're <b className="text-foreground">on the approved list</b>.
             </p>
             <p className="text-sm leading-relaxed text-muted-foreground">
@@ -73,7 +73,7 @@ export default function Demo() {
         {step === 2 && (
           <div data-testid="demo-step-2" className="space-y-3">
             <p className="text-sm leading-relaxed text-muted-foreground">
-              Here's a <b className="text-foreground">real member</b> who proved they belong in the live demo room — anonymously. Let's read
+              Here's a <b className="text-foreground">real member</b> who proved they belong in the live demo room, anonymously. Let's read
               what the public record actually shows about them. (This is a live, read-only lookup; nothing to sign,
               no wallet.)
             </p>
@@ -94,7 +94,7 @@ export default function Demo() {
           <div data-testid="demo-step-3" className="space-y-3">
             <div data-testid="demo-verdict" data-granted={String(result.granted)}>
               <Verdict ok={result.granted}>
-                {result.granted ? "You're in — and the public record shows only a stand-in ID" : "Not in"}
+                {result.granted ? "You're in, and the public record shows only a stand-in ID" : "Not in"}
               </Verdict>
             </div>
             {result.grant && (
@@ -102,12 +102,12 @@ export default function Demo() {
                 <DataRow k={<>one-time pass<GlossaryTip term="one-time pass" /></>}>{short(result.grant.nullifier, 8)}</DataRow>
                 <DataRow k="approved-list fingerprint">{short(result.grant.eligible_root, 8)}</DataRow>
                 <DataRow k="identity / which member" variant="private" testId="demo-identity-absent">
-                  absent — the record never reveals who this is
+                  absent. The record never reveals who this is
                 </DataRow>
               </div>
             )}
             <p className="text-sm leading-relaxed text-muted-foreground">
-              That's the whole idea. The room is <b className="text-foreground">certain</b> this person belongs — yet has <b className="text-foreground">no idea who
+              That's the whole idea. The room is <b className="text-foreground">certain</b> this person belongs, yet has <b className="text-foreground">no idea who
               they are</b>. And that <b className="text-foreground">one-time pass</b> is the catch a login can't reproduce: the same member
               gets in <b className="text-foreground">once</b>. Try to re-enter and the room turns them away.
             </p>
@@ -121,7 +121,7 @@ export default function Demo() {
           <div data-testid="demo-step-4" className="space-y-3">
             <p className="text-sm leading-relaxed text-muted-foreground">
               <b className="text-foreground">Don't take our word for any of it.</b> Everything you just saw is on the public record and
-              checkable by anyone — <b className="text-foreground">no wallet, no account, no trusting our server</b>.
+              checkable by anyone. <b className="text-foreground">No wallet, no account, no trusting our server</b>.
             </p>
             <div className="flex flex-wrap items-center gap-3 pt-1">
               {d.dataroomId && (

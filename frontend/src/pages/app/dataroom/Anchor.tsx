@@ -43,13 +43,13 @@ export default function Anchor() {
           clear; creating the proof takes a few minutes on the prover you run.
         </p>
 
-        {/* DR1 engine rows (the sealing program + demo recipient key) — demoted behind a "Verify details"
+        {/* DR1 engine rows (the sealing program + demo recipient key), demoted behind a "Verify details"
             expander (UX research §12); you don't need them to store a document. */}
         <Disclosure
           toggleTestId="anchor-engine-details"
           summary={
             <>
-              The cryptographic engine — the <b>pinned sealing program</b> and the <b>demo recipient key</b>.
+              The cryptographic engine: the <b>pinned sealing program</b> and the <b>demo recipient key</b>.
               Expand to check them.
             </>
           }
@@ -115,8 +115,8 @@ export default function Anchor() {
         >
           <p>
             The document is encrypted and the key sealed to the recipient on the prover you run (the file
-            never leaves it in the clear). Only an encrypted file + a tamper-evident fingerprint are posted —
-            never the contents.
+            never leaves it in the clear). Only an encrypted file and a tamper-evident fingerprint are posted.
+            The contents are never posted.
           </p>
         </ConfirmModal>
 
@@ -128,7 +128,7 @@ export default function Anchor() {
         <ProveWait
           state={a.state}
           proveBy={a.proveBy}
-          privacy="The document plaintext stays on the self-hosted prover — only an encrypted blob + a tamper-evident commitment go on-chain."
+          privacy="The document plaintext stays on the self-hosted prover. Only an encrypted blob and a tamper-evident commitment go on-chain."
         />
 
         {a.journal && (
@@ -138,7 +138,7 @@ export default function Anchor() {
               detailsLabel="Inspect the public journal"
               summary={
                 <>
-                  Posted — and note <b>the document key is absent</b>: only a fingerprint of the file + the
+                  Posted. Note that <b>the document key is absent</b>. Only a fingerprint of the file and the
                   sealed key go on the public record, never the contents or the key in the clear.
                 </>
               }
@@ -156,7 +156,7 @@ export default function Anchor() {
                 <Hex value={a.journal.ct} label="ct" chars={8} />
               </DataRow>
               <DataRow k="document key" variant="private" testId="k-private">
-                private — sealed to the recipient; never on the public record in the clear
+                private (sealed to the recipient; never on the public record in the clear)
               </DataRow>
             </Disclosure>
           </div>
@@ -168,7 +168,7 @@ export default function Anchor() {
         <Card className="rounded-2xl p-6" data-testid="anchor-verdict-card">
           {a.resp.ok ? (
             <>
-              <Verdict ok>Document posted to the public record — encrypted, sealed to the recipient</Verdict>
+              <Verdict ok>Document posted to the public record (encrypted and sealed to the recipient)</Verdict>
               <div className="mt-3">
                 {a.resp.txHash && (
                   <DataRow k="record entry">
@@ -208,15 +208,15 @@ export default function Anchor() {
         <div className="mb-3 flex items-center justify-between gap-3">
           <h2 className="text-base font-semibold tracking-tight">Open a document</h2>
           <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
-            the recipient unlocks it with their key — in your browser
+            the recipient opens it with their key, in your browser
           </span>
         </div>
         <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
-          The recipient unlocks the document <b className="text-foreground">with their private key</b>. The
+          The recipient opens the document <b className="text-foreground">with their private key</b>. The
           proof guarantees the key really is for <i>this</i> document, the encrypted file is fetched and
-          re-checked against its fingerprint, and it's decrypted —{" "}
+          re-checked against its fingerprint, and then it's decrypted{" "}
           <b className="text-foreground">all in your browser</b> (your key never leaves it). The field is
-          prefilled with the demo recipient's key; paste a different key to see it{" "}
+          prefilled with the demo recipient's key. Paste a different key to see it{" "}
           <b className="text-foreground">refuse to open</b>.
         </p>
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -259,9 +259,9 @@ export default function Anchor() {
           </Button>
         </div>
         <p className="mt-2 text-xs leading-relaxed text-muted-foreground" data-testid="open-secret-note">
-          <span aria-hidden="true">🔑</span> Your private key stays in this browser — we never see it and{" "}
+          <span aria-hidden="true">🔑</span> Your private key stays in this browser. We never see it and{" "}
           <b className="text-foreground">can't recover it for you</b>. The field is prefilled with the demo
-          key; paste your own to open as yourself.
+          key. Paste your own to open as yourself.
         </p>
         {a.sealedToYou && (
           <p className="mt-1 text-xs text-muted-foreground">
@@ -279,7 +279,7 @@ export default function Anchor() {
               <Verdict ok={false}>Document not found on the public record</Verdict>
             ) : a.opened.faithful ? (
               <>
-                <Verdict ok>Unlocked — this is provably the right file (it matched its fingerprint)</Verdict>
+                <Verdict ok>Opened. This is provably the right file (it matched its fingerprint)</Verdict>
                 <div className="mt-3 text-[11px] uppercase tracking-wide text-muted-foreground">
                   Decrypted document
                 </div>
@@ -294,7 +294,7 @@ export default function Anchor() {
             ) : (
               <Verdict ok={false}>
                 <span data-testid="open-unfaithful">
-                  Won't open — wrong key (this document isn't sealed to you).
+                  Won't open: wrong key (this document isn't sealed to you).
                 </span>
               </Verdict>
             )}

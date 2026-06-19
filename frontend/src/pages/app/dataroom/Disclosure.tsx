@@ -8,18 +8,18 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { DataRow, Verdict } from "@/components/app/blocks";
 
-// DR5 — faithful disclosure / data-side teaser. A teaser proves a public fact about a SEALED document
+// DR5: faithful disclosure / data-side teaser. A teaser proves a public fact about a SEALED document
 // (e.g. "revenue ≥ $1M") vouched by an allowlisted appraiser, without revealing the figure; a designated
 // auditor separately gets a provably-faithful redacted view. No new guest.
 export default function DisclosureRoute() {
   const d = useDisclosure();
   return (
     <div data-testid="dr5-card" className="space-y-5">
-      {/* marquee card — brand-accented */}
+      {/* marquee card (brand-accented) */}
       <Card className="rounded-2xl border-brand/40 p-6">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h2 className="text-base font-semibold tracking-tight">
-            Share an unaltered copy — plus a verified preview
+            Share an unaltered copy, plus a verified preview
           </h2>
           <span className="text-[11px] uppercase tracking-wide text-brand">
             prove a fact about a sealed file; share a masked copy <span aria-hidden="true">🪪</span>
@@ -28,22 +28,22 @@ export default function DisclosureRoute() {
         <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
           A <b className="text-foreground">verified preview</b>
           <GlossaryTip term="verified preview" /> proves a public fact about a{" "}
-          <b className="text-foreground">sealed</b> document — e.g.{" "}
-          <b className="text-foreground">"revenue ≥ $1M"</b> — vouched for by an approved{" "}
+          <b className="text-foreground">sealed</b> document (for example,{" "}
+          <b className="text-foreground">"revenue ≥ $1M"</b>), vouched for by an approved{" "}
           <b className="text-foreground">reviewer</b>,{" "}
           <b className="text-foreground">without revealing the document or the exact figure</b>. A named{" "}
           <b className="text-foreground">auditor</b> separately gets a{" "}
           <b className="text-foreground">masked copy</b>
-          <GlossaryTip term="masked copy" /> (private fields blacked out, HIPAA/PCI/GDPR-style) — and it's{" "}
-          <b className="text-foreground">provably the real, unaltered file</b>.
+          <GlossaryTip term="masked copy" /> with private fields blacked out, HIPAA/PCI/GDPR-style. You can also prove it is{" "}
+          <b className="text-foreground">the real, unaltered file</b>.
         </p>
 
-        {/* engine machinery — demoted behind a "Verify details" expander (UX research §12) */}
+        {/* engine machinery: demoted behind a "Verify details" expander (UX research §12) */}
         <Disclosure
           toggleTestId="dr5-engine-details"
           summary={
             <>
-              The cryptographic engine — the <b>pinned proving program</b> and the{" "}
+              The cryptographic engine: the <b>pinned proving program</b> and the{" "}
               <b>approved reviewer</b> who vouches for the figure. Expand to check them.
             </>
           }
@@ -65,7 +65,7 @@ export default function DisclosureRoute() {
           </span>
         </div>
         <p className="text-sm text-muted-foreground">
-          The public record shows only the fact (figure ≥ X) — never the figure.
+          The public record shows only the fact (figure ≥ X). It never shows the figure itself.
         </p>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <label className="flex flex-col gap-1.5 text-[13px] text-muted-foreground">
@@ -104,7 +104,7 @@ export default function DisclosureRoute() {
                   {d.teaser.field_tag === 1 ? "revenue" : `field ${d.teaser.field_tag}`} ≥{" "}
                   {Number(d.teaser.threshold).toLocaleString()}
                 </b>{" "}
-                — proven about the sealed file, exact figure hidden
+                (proven about the sealed file, exact figure hidden)
               </span>
             </Verdict>
             <div className="mt-3">
@@ -151,7 +151,7 @@ export default function DisclosureRoute() {
             </DataRow>
             {d.dr5Verify.teaserOnChain && d.dr5Verify.imagePinned && d.dr5Verify.appraiserAllowlisted && d.dr5Verify.figureHidden ? (
               <div className="mt-3" data-testid="dr5-verdict-ok">
-                <Verdict ok>A reviewer-vouched fact, proven privately — the document was never revealed.</Verdict>
+                <Verdict ok>A reviewer-vouched fact, proven privately. The document was never revealed.</Verdict>
               </div>
             ) : (
               <div className="mt-3">
@@ -167,7 +167,7 @@ export default function DisclosureRoute() {
         )}
       </Card>
 
-      {/* auditor's masked copy — key-free, in-browser open */}
+      {/* auditor's masked copy: key-free, in-browser open */}
       <Card className="rounded-2xl p-6">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h3 className="text-base font-semibold tracking-tight">Auditor's masked copy</h3>
@@ -176,10 +176,10 @@ export default function DisclosureRoute() {
           </span>
         </div>
         <p className="text-sm text-muted-foreground">
-          The auditor opens a <b className="text-foreground">masked copy</b> of the same statement (private
-          fields blacked out, HIPAA/PCI/GDPR-style), provably the{" "}
-          <b className="text-foreground">real, unaltered file</b>. It opens entirely in your browser; a wrong
-          key → it won't open.
+          The auditor opens a <b className="text-foreground">masked copy</b> of the same statement, with private
+          fields blacked out, HIPAA/PCI/GDPR-style. You can prove it is the{" "}
+          <b className="text-foreground">real, unaltered file</b>. It opens entirely in your browser. A wrong
+          key means it won't open.
         </p>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <label className="flex flex-col gap-1.5 text-[13px] text-muted-foreground">
@@ -209,7 +209,7 @@ export default function DisclosureRoute() {
           </Button>
         </div>
         <p className="mt-2 text-xs text-muted-foreground" data-testid="dr5-secret-note">
-          <span aria-hidden="true">🔑</span> Your auditor read key stays in this browser — we never see it and{" "}
+          <span aria-hidden="true">🔑</span> Your auditor read key stays in this browser. We never see it and{" "}
           <b className="text-foreground">can't recover it for you</b>. Prefilled with the demo key.
         </p>
         {d.redacted && (
@@ -217,7 +217,7 @@ export default function DisclosureRoute() {
             {d.redacted.faithful && d.redacted.document ? (
               <>
                 <div data-testid="dr5-faithful">
-                  <Verdict ok>Unaltered masked copy — provably the real file's contents</Verdict>
+                  <Verdict ok>Unaltered masked copy, provably the real file's contents</Verdict>
                 </div>
                 <pre
                   data-testid="dr5-redacted-json"
@@ -231,7 +231,7 @@ export default function DisclosureRoute() {
                     <ul className="mt-1 list-disc pl-5 text-xs text-muted-foreground">
                       {d.redacted.log.map((e) => (
                         <li key={e.field}>
-                          <b className="text-foreground">{e.field}</b>: {e.mask} — {e.basis}
+                          <b className="text-foreground">{e.field}</b>: {e.mask} ({e.basis})
                         </li>
                       ))}
                     </ul>
@@ -240,7 +240,7 @@ export default function DisclosureRoute() {
               </>
             ) : (
               <div data-testid="dr5-not-faithful">
-                <Verdict ok={false}>Won't open — wrong read key (or tampered). Nothing released.</Verdict>
+                <Verdict ok={false}>Won't open: wrong read key, or the file was tampered with. Nothing released.</Verdict>
               </div>
             )}
           </div>

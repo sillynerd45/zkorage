@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { DataRow, Verdict } from "@/components/app/blocks";
 
-// DR4 — document authenticity (signed-PDF / zkPDF: third-party truth on self-uploaded data). A third party
+// DR4: document authenticity (signed-PDF / zkPDF: third-party truth on self-uploaded data). A third party
 // (a bank) RSA-signs a statement; the docauth guest re-verifies that real RSA-2048 signature in-zkVM and
 // proves a fact about it (e.g. "balance ≥ X") without revealing the statement or the exact value.
 export default function Authenticity() {
@@ -18,34 +18,34 @@ export default function Authenticity() {
 
   return (
     <div data-testid="dr4-card" className="space-y-5">
-      {/* marquee card — brand-accented */}
+      {/* marquee card: brand-accented */}
       <Card className="rounded-2xl border-brand/40 p-6">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h2 className="text-base font-semibold tracking-tight">
             Prove a signed fact <span aria-hidden="true">🏦</span>
           </h2>
           <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
-            a fact a bank signed — without showing the document
+            a fact a bank signed, without showing the document
           </span>
         </div>
         <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
-          Prove a fact from a document someone else signed — like a bank statement —{" "}
+          Prove a fact from a document someone else signed, such as a bank statement,{" "}
           <b className="text-foreground">without showing the whole file</b>. zkorage re-checks the real{" "}
           <b className="text-foreground">digital signature</b> inside a{" "}
           <b className="text-foreground">private proof</b>
-          <GlossaryTip term="private proof" /> and proves a fact about it — e.g.{" "}
-          <b className="text-foreground">"balance ≥ X"</b> —{" "}
+          <GlossaryTip term="private proof" /> and proves a fact about it (for example,{" "}
+          <b className="text-foreground">"balance ≥ X"</b>){" "}
           <b className="text-foreground">without revealing the statement or the exact value</b>. Without
           this, self-uploaded data is just your word for it. Only a{" "}
           <b className="text-foreground">recognized bank's signature</b> is accepted, so you can't fake one.
         </p>
 
-        {/* engine machinery — demoted behind a "Verify details" expander (UX research §12) */}
+        {/* engine machinery: demoted behind a "Verify details" expander (UX research §12) */}
         <Disclosure
           toggleTestId="dr4-engine-details"
           summary={
             <>
-              The cryptographic engine — the <b>pinned signature-checking program</b> and the{" "}
+              The cryptographic engine: the <b>pinned signature-checking program</b> and the{" "}
               <b>recognized bank's signing key</b> (a made-up key is rejected). Expand to check them.
             </>
           }
@@ -59,7 +59,7 @@ export default function Authenticity() {
             {docauth?.issuerAllowlisted ? " · allowlisted ✓" : ""}
           </div>
           <div className="text-xs text-muted-foreground">
-            Kind of fact: {docauth?.claimType ?? "—"} (document authenticity)
+            Kind of fact: {docauth?.claimType ?? "n/a"} (document authenticity)
           </div>
         </Disclosure>
       </Card>
@@ -71,7 +71,7 @@ export default function Authenticity() {
           <span className="text-[11px] uppercase tracking-wide text-muted-foreground">read-only · runs in your browser</span>
         </div>
         <p className="text-sm text-muted-foreground">
-          The public record shows only the fact — never the statement or the exact balance.
+          The public record shows only the fact. It never shows the statement or the exact balance.
         </p>
 
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -106,8 +106,8 @@ export default function Authenticity() {
           <div data-testid="dr4-fact" className="mt-4">
             <Verdict ok>
               <span data-testid="dr4-fact-claim">
-                A bank vouched: <b>balance ≥ {Number(docFact.threshold).toLocaleString()}</b> — proven, the
-                exact value stays hidden
+                A bank vouched: <b>balance ≥ {Number(docFact.threshold).toLocaleString()}</b>. Proven, and the
+                exact value stays hidden.
               </span>
             </Verdict>
             <div className="mt-3">
@@ -151,7 +151,7 @@ export default function Authenticity() {
             {allPass ? (
               <div data-testid="dr4-verdict-ok">
                 <Verdict ok>
-                  A bank's signature, re-checked inside a private proof — the document was never revealed.
+                  A bank's signature, re-checked inside a private proof. The document was never revealed.
                 </Verdict>
               </div>
             ) : (

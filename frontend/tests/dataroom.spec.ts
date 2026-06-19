@@ -14,10 +14,8 @@ test("dataroom: recipient opens the sealed doc in-browser (faithful); wrong key 
 
   await page.goto("/app/dataroom/documents");
 
-  // engine resolves the DataRoom contract + storage backend (shared layout Engine card)
-  await expect(page.getByText("DataRoom contract")).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByTestId("storage")).toContainText(/Cloudflare R2|local/);
   // the seal guest + demo recipient are demoted behind a "Verify details" expander (UX pass) — expand them
+  await expect(page.getByTestId("room-label")).toBeVisible({ timeout: 30_000 });
   await page.getByTestId("anchor-engine-details").click();
   await expect(page.getByTestId("recipient-pub")).toContainText("x25519");
   await expect(page.getByTestId("seal-image")).toBeVisible();
@@ -65,6 +63,11 @@ test("dataroom overview: task-oriented cards route to the right place; guided-de
 
   // the passive "Guided demo" is no longer a dataroom tab
   await expect(page.getByRole("link", { name: "Guided demo" })).toHaveCount(0);
+
+  // the on-chain trust anchor lives here once (explained, collapsed), not unexplained on every tab
+  await page.getByTestId("overview-onchain").click();
+  await expect(page.getByText("DataRoom contract")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("storage")).toContainText(/Cloudflare R2|local/);
 
   // "Open a document" deep-links straight into the Documents page's open section
   await page.getByTestId("task-open").click();

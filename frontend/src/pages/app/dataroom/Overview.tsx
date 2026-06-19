@@ -1,11 +1,14 @@
 import { Link } from "react-router-dom";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, ExternalLink } from "lucide-react";
 import { GlossaryTip } from "@/components/GlossaryTip";
 import { Disclosure } from "@/components/Disclosure";
+import { DataRow } from "@/components/app/blocks";
+import { useDataroomInfo } from "@/lib/hooks/useDataroomInfo";
+import { short, explorer } from "@/lib/format";
 
 // Task-oriented landing: lead with "what do you want to do?", grouped by the user's actual goals, each
 // linking straight to the right page (the document tasks deep-link to sections of /dataroom/documents).
-// The conceptual "what is this?" is demoted behind an expander — available, but not what greets a user.
+// The concept and the on-chain addresses are demoted behind expanders, not what greets a new user.
 interface Task {
   to: string;
   label: string;
@@ -25,7 +28,7 @@ const GROUPS: Group[] = [
       {
         to: "/app/dataroom/documents#store",
         label: "Store a document",
-        blurb: "Encrypt a file and post only a tamper-evident fingerprint — the contents never leave the prover you run.",
+        blurb: "Encrypt a file and post only a tamper-evident fingerprint. The contents never leave the prover you run.",
         testid: "task-store",
       },
       {
@@ -48,14 +51,14 @@ const GROUPS: Group[] = [
       {
         to: "/app/dataroom/eligibility",
         label: "Get in anonymously",
-        blurb: "Prove you're on the approved list without revealing who you are — and only once.",
+        blurb: "Prove you're on the approved list without revealing who you are. Each pass works once.",
         testid: "task-eligibility",
         star: true,
       },
       {
         to: "/app/dataroom/policy",
         label: "Meet all conditions",
-        blurb: "Be admitted only if you satisfy every rule at once (e.g. member, KYC'd, and accredited).",
+        blurb: "Be admitted only if you satisfy every rule at once (for example: member, KYC'd, and accredited).",
         testid: "task-policy",
       },
     ],
@@ -66,13 +69,13 @@ const GROUPS: Group[] = [
       {
         to: "/app/dataroom/release",
         label: "Release the key",
-        blurb: "No single server holds a file's key — it takes 2 of 3 separate keepers to release it.",
+        blurb: "No single server holds a file's key. It takes 2 of 3 separate keepers to release it.",
         testid: "task-release",
       },
       {
         to: "/app/dataroom/disclosure",
         label: "Share a masked copy",
-        blurb: "Prove a fact about a sealed file and share a redacted copy that's provably the real document.",
+        blurb: "Prove a fact about a sealed file, then share a redacted copy that's provably the real document.",
         testid: "task-disclosure",
       },
     ],
@@ -83,21 +86,35 @@ const GROUPS: Group[] = [
       {
         to: "/app/dataroom/authenticity",
         label: "Prove a signed fact",
-        blurb: 'Prove a fact a third party signed for you (e.g. "balance ≥ X") without showing the statement.',
+        blurb: 'Prove a fact a third party signed for you (for example "balance ≥ X") without showing the statement.',
         testid: "task-authenticity",
       },
     ],
   },
 ];
 
+function ExLink({ id }: { id: string }) {
+  return (
+    <a
+      href={explorer("contract", id)}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex items-center gap-1 text-brand hover:underline"
+    >
+      {short(id, 8)} <ExternalLink className="size-3" />
+    </a>
+  );
+}
+
 export default function DataRoomOverview() {
+  const info = useDataroomInfo();
   return (
     <div data-testid="dataroom-overview" className="space-y-6">
       <div>
         <h2 className="text-lg font-semibold tracking-tight">What do you want to do?</h2>
         <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-          A private place to keep sensitive files and control exactly who can open them. Pick a task — each
-          one is its own page.
+          A private place to keep sensitive files and decide who can open them. Pick a task. Each one is its
+          own page.
         </p>
       </div>
 
@@ -132,7 +149,7 @@ export default function DataRoomOverview() {
         ))}
       </div>
 
-      {/* The concept, demoted — there when you want it, not blocking the tasks. */}
+      {/* The concept, demoted: there when you want it, not blocking the tasks. */}
       <Disclosure
         toggleTestId="overview-what-is"
         summary={
@@ -143,24 +160,56 @@ export default function DataRoomOverview() {
       >
         <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
           It's a shared room of <b className="text-foreground">encrypted</b> documents. The files themselves
-          never go on the public record — only a tamper-evident{" "}
-          <b className="text-foreground">fingerprint</b>
+          never go on the public record. Only a tamper-evident <b className="text-foreground">fingerprint</b>
           <GlossaryTip term="fingerprint" /> of each does, so anyone can confirm a document wasn't swapped
-          out, while the contents stay private.
+          out while the contents stay private.
         </p>
         <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted-foreground">
-          The hard part is <b className="text-foreground">who gets in</b>. Here you prove you're{" "}
-          <b className="text-foreground">allowed to enter — without revealing who you are</b>, and each pass
-          works <b className="text-foreground">once</b>. That's the one thing only a{" "}
-          <b className="text-foreground">private proof</b>
-          <GlossaryTip term="private proof" /> can give you, and it's what this room is built around.
+          The hard part is <b className="text-foreground">who gets in</b>. Here you prove you're allowed to
+          enter <b className="text-foreground">without revealing who you are</b>, and each pass works once.
+          That is the one thing a normal login can't give you, and it's what this room is built around.
         </p>
       </Disclosure>
 
+      {/* The trust anchor: the live contracts, so a skeptic can re-check everything. One place, explained. */}
+      <Disclosure
+        toggleTestId="overview-onchain"
+        summary={
+          <>
+            Check it on-chain: <b className="text-foreground">the contracts behind this room</b>
+          </>
+        }
+      >
+        <p className="mb-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+          These are the live contracts this room runs on. Look them up on the public ledger to re-check any
+          result here yourself.
+        </p>
+        <DataRow k="Network">testnet</DataRow>
+        {info?.dataroomId && (
+          <DataRow k="DataRoom contract">
+            <ExLink id={info.dataroomId} />
+          </DataRow>
+        )}
+        {info?.config?.verifier && (
+          <DataRow k="Proof verifier">
+            <ExLink id={info.config.verifier} />
+          </DataRow>
+        )}
+        {info && (
+          <DataRow k="Document storage" mono={false} testId="storage">
+            {info.storage === "r2" ? "Cloudflare R2" : "local stand-in"}
+          </DataRow>
+        )}
+        {info && (
+          <DataRow k="Rooms" testId="room-count">
+            {info.roomCount}
+          </DataRow>
+        )}
+      </Disclosure>
+
       <p className="text-sm text-muted-foreground" data-testid="overview-verify-note">
-        Don't take our word for it: every result here is{" "}
-        <b className="text-foreground">checkable by anyone</b>, directly on the public record — no wallet, no
-        account.{" "}
+        Every result here is <b className="text-foreground">checkable by anyone</b>, directly on the public
+        record. No wallet, no account.{" "}
         <Link to="/verify" className="text-brand hover:underline">
           Verify it yourself →
         </Link>

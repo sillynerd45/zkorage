@@ -6,8 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { DataRow, Verdict } from "@/components/app/blocks";
 
-// DR3 — threshold-ECIES committee (key release). A per-doc key K is Shamir-split 2-of-3 across an
-// independent keyper committee; the recipient collects ≥ 2 sealed shares and reconstructs K + decrypts
+// DR3: threshold-ECIES committee (key release). A per-doc key K is Shamir-split 2-of-3 across an
+// independent keyper committee; the recipient collects >= 2 sealed shares and reconstructs K + decrypts
 // entirely in the browser. The recipient secret never leaves it.
 export default function Release() {
   const r = useRelease();
@@ -25,17 +25,17 @@ export default function Release() {
         <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
           A document's key is <b className="text-foreground">split into 3 parts</b>
           <GlossaryTip term="split key" /> held by separate
-          <b className="text-foreground"> keepers</b> —{" "}
-          <b className="text-foreground">no single keeper can open the file; any 2 together can</b>. Each keeper
+          <b className="text-foreground"> keepers</b>.{" "}
+          <b className="text-foreground">No single keeper can open the file; any 2 together can</b>. Each keeper
           watches the public record and releases its part{" "}
           <b className="text-foreground">only to whoever won anonymous entry</b>, locked to that person's key.
-          You collect 2 parts, <b className="text-foreground">rebuild the key and decrypt — entirely in your
+          You collect 2 parts, then <b className="text-foreground">rebuild the key and decrypt entirely in your
           browser</b> (your private key never leaves it; the keepers only ever pass <i>sealed</i> parts).
-          Remove this and you'd be back to one server holding the whole key; the private proof still decides{" "}
+          Remove this layer and you'd be back to one server holding the whole key. The private proof still decides{" "}
           <i>who</i> gets in.
         </p>
 
-        {/* committee status + doc commitments — demoted behind a "Verify details" expander (UX research §12) */}
+        {/* committee status + doc commitments: demoted behind a "Verify details" expander (UX research §12) */}
         <Disclosure
           toggleTestId="dr3-engine-details"
           summary={
@@ -48,7 +48,7 @@ export default function Release() {
           <DataRow k="Keepers" mono={false} testId="dr3-committee">
             {r.committee
               ? `${r.committee.online}/${r.committee.n} keepers online · threshold ${r.committee.threshold}`
-              : "—"}
+              : "not loaded"}
           </DataRow>
           {r.committee?.keypers?.map((kp) => (
             <DataRow
@@ -61,7 +61,7 @@ export default function Release() {
             </DataRow>
           ))}
           <DataRow k="Demo doc file fingerprint" testId="dr3-content-hash">
-            {r.committeeDoc?.content_hash ? <Hex value={r.committeeDoc.content_hash} chars={8} /> : "—"}
+            {r.committeeDoc?.content_hash ? <Hex value={r.committeeDoc.content_hash} chars={8} /> : "not loaded"}
           </DataRow>
           <DataRow k="Demo doc key fingerprint" testId="dr3-k-commitment">
             {r.committeeDoc?.k_commitment ? (
@@ -69,7 +69,7 @@ export default function Release() {
                 sha256(K) <Hex value={r.committeeDoc.k_commitment} chars={8} />
               </>
             ) : (
-              "—"
+              "not loaded"
             )}
           </DataRow>
         </Disclosure>
@@ -129,7 +129,7 @@ export default function Release() {
           </Button>
         </div>
         <p className="mt-2 text-sm text-muted-foreground" data-testid="dr3-secret-note">
-          <span aria-hidden="true">🔑</span> Your private key stays in this browser — the keepers only ever pass{" "}
+          <span aria-hidden="true">🔑</span> Your private key stays in this browser. The keepers only ever pass{" "}
           <i>sealed</i> parts, and we <b>can't recover it for you</b>. Prefilled with the demo key.
         </p>
 
@@ -145,7 +145,7 @@ export default function Release() {
             ) : !r.dr3Opened.released ? (
               <Verdict ok={false}>
                 <span data-testid="dr3-not-released">
-                  Not admitted — the keepers released no parts (fewer than 2). Someone without access can't
+                  Not admitted. The keepers released no parts (fewer than 2), so someone without access can't
                   rebuild the key.
                 </span>
               </Verdict>
@@ -159,7 +159,7 @@ export default function Release() {
                   <DataRow k="rebuilt from keepers" mono={false} testId="dr3-pair">
                     {r.dr3Opened.reconstructedFromPair
                       ? `#${r.dr3Opened.reconstructedFromPair[0]} + #${r.dr3Opened.reconstructedFromPair[1]}`
-                      : "—"}
+                      : "not loaded"}
                   </DataRow>
                 </div>
                 <div className="mt-4 text-[11px] uppercase tracking-wide text-muted-foreground">
@@ -175,8 +175,8 @@ export default function Release() {
             ) : (
               <Verdict ok={false}>
                 <span data-testid="dr3-unfaithful">
-                  Parts released, but {r.dr3Opened.faithfulShares} opened correctly — wrong private key, so the
-                  key can't be rebuilt.
+                  Parts released, but only {r.dr3Opened.faithfulShares} opened correctly. The private key is
+                  wrong, so the key can't be rebuilt.
                 </span>
               </Verdict>
             )}

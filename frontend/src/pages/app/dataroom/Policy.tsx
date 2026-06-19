@@ -6,25 +6,25 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { DataRow, Verdict } from "@/components/app/blocks";
 
-// DR6 — private-policy composition + revocation/rotation (the finale). A requester is admitted only by
+// DR6: private-policy composition + revocation/rotation (the finale). A requester is admitted only by
 // satisfying a composite policy (member ∧ KYC ∧ accredited ∧ not-sanctioned), each an independent ZK
-// proof bound to one pseudonymous accessor, AND'd on-chain. No new guest — the AND is the cross-call.
+// proof bound to one pseudonymous accessor, AND'd on-chain. No new guest; the AND is the cross-call.
 export default function Policy() {
   const p = usePolicy();
   return (
     <div data-testid="dr6-card" className="space-y-5">
-      {/* marquee card — brand-accented */}
+      {/* marquee card (brand-accented) */}
       <Card className="rounded-2xl border-brand/40 p-6">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h2 className="text-base font-semibold tracking-tight">
             Meet all conditions <span aria-hidden="true">🧩</span>
           </h2>
           <span className="text-[11px] uppercase tracking-wide text-brand">
-            get in only if you meet every condition — anonymously
+            get in only if you meet every condition, anonymously
           </span>
         </div>
         <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
-          You're let in <b className="text-foreground">only if you meet every condition at once</b> — you're a{" "}
+          You're let in <b className="text-foreground">only if you meet every condition at once</b>. You're a{" "}
           <b className="text-foreground">member</b>, <b className="text-foreground">ID-checked</b>,
           <b className="text-foreground"> accredited</b>, and{" "}
           <b className="text-foreground">not on a sanctions list</b>. Each is a separate{" "}
@@ -33,16 +33,16 @@ export default function Policy() {
           <GlossaryTip term="stand-in ID" />, and the room checks them all together. Nothing reveals{" "}
           <b className="text-foreground">which member</b> you are or any of your details. A member can be{" "}
           <b className="text-foreground">removed</b> at any time, and the document key{" "}
-          <b className="text-foreground">rotated</b> so their old parts are useless.
+          <b className="text-foreground">rotated</b> so their old parts no longer work.
         </p>
 
-        {/* the policy machinery (the on-chain AND + the gate addresses) — demoted behind a "Verify details"
+        {/* the policy machinery (the on-chain AND + the gate addresses): demoted behind a "Verify details"
             expander (UX research §12); the plain admission verdict below is what most people need */}
         <Disclosure
           toggleTestId="dr6-engine-details"
           summary={
             <>
-              The rule checks <b>all conditions at once</b> — member <b>and</b> ID-checked <b>and</b> accredited{" "}
+              The rule checks <b>all conditions at once</b>: member <b>and</b> ID-checked <b>and</b> accredited{" "}
               <b>and</b> not-sanctioned. Expand to see the exact contract each condition is checked against.
             </>
           }
@@ -56,14 +56,14 @@ export default function Policy() {
                 {p.dr6Access.policy.compliance_gate ? (
                   <Hex value={p.dr6Access.policy.compliance_gate} chars={8} />
                 ) : (
-                  "— (not required)"
+                  "(not required)"
                 )}
               </DataRow>
               <DataRow k="Accredited contract" testId="dr6-accredited-gate">
                 {p.dr6Access.policy.accredited_gate ? (
                   <Hex value={p.dr6Access.policy.accredited_gate} chars={8} />
                 ) : (
-                  "— (not required)"
+                  "(not required)"
                 )}
               </DataRow>
             </>
@@ -71,7 +71,7 @@ export default function Policy() {
         </Disclosure>
       </Card>
 
-      {/* who gets in — read-only, in-browser */}
+      {/* who gets in (read-only, in-browser) */}
       <Card className="rounded-2xl p-6">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h3 className="text-base font-semibold tracking-tight">Who gets in</h3>
@@ -80,7 +80,7 @@ export default function Policy() {
           </span>
         </div>
         <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
-          The public record shows only the stand-in ID — never your name, which member you are, or any of your
+          The public record shows only the stand-in ID, never your name, which member you are, or any of your
           details.
         </p>
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -119,14 +119,14 @@ export default function Policy() {
           >
             {p.dr6Access.admitted ? (
               <div data-testid="dr6-verdict-ok">
-                <Verdict ok>ADMITTED — every condition is met, proven anonymously</Verdict>
+                <Verdict ok>ADMITTED: every condition is met, proven anonymously</Verdict>
               </div>
             ) : (
               <div data-testid="dr6-verdict-deny">
                 <Verdict ok={false}>
                   {p.dr6Access.revoked
-                    ? "DENIED — access was removed"
-                    : "DENIED — one of the required checks didn't pass"}
+                    ? "DENIED: access was removed"
+                    : "DENIED: one of the required checks didn't pass"}
                 </Verdict>
               </div>
             )}
@@ -135,10 +135,10 @@ export default function Policy() {
                 {p.dr6Access.membership ? "✓" : "✗"}
               </DataRow>
               <DataRow k="ID-checked and not sanctioned" mono={false} testId="dr6-leg-compliance">
-                {p.dr6Access.compliance === null ? "— (not required)" : p.dr6Access.compliance ? "✓" : "✗"}
+                {p.dr6Access.compliance === null ? "(not required)" : p.dr6Access.compliance ? "✓" : "✗"}
               </DataRow>
               <DataRow k="Accredited investor" mono={false} testId="dr6-leg-accredited">
-                {p.dr6Access.accredited === null ? "— (not required)" : p.dr6Access.accredited ? "✓" : "✗"}
+                {p.dr6Access.accredited === null ? "(not required)" : p.dr6Access.accredited ? "✓" : "✗"}
               </DataRow>
               <DataRow k="Access removed" mono={false} testId="dr6-revoked">
                 {p.dr6Access.revoked ? "yes" : "no"}
@@ -156,7 +156,7 @@ export default function Policy() {
         )}
       </Card>
 
-      {/* how fast, how private — live numbers */}
+      {/* how fast, how private (live numbers) */}
       <Card className="rounded-2xl p-6">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h3 className="text-base font-semibold tracking-tight">How fast, how private</h3>

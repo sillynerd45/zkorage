@@ -1,26 +1,10 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { ExternalLink, FolderLock } from "lucide-react";
+import { FolderLock } from "lucide-react";
 import { DATAROOM_TABS } from "@/lib/content";
-import { useDataroomInfo } from "@/lib/hooks/useDataroomInfo";
-import { short, explorer } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { PageHeader, Panel, DataRow } from "@/components/app/blocks";
-
-function Ex({ id }: { id: string }) {
-  return (
-    <a
-      href={explorer("contract", id)}
-      target="_blank"
-      rel="noreferrer"
-      className="inline-flex items-center gap-1 text-brand hover:underline"
-    >
-      {short(id, 8)} <ExternalLink className="size-3" />
-    </a>
-  );
-}
+import { PageHeader } from "@/components/app/blocks";
 
 export default function DataRoomLayout() {
-  const info = useDataroomInfo();
   return (
     <>
       <PageHeader
@@ -28,8 +12,7 @@ export default function DataRoomLayout() {
         title="Data Room"
         lead={
           <>
-            Keep sensitive files private and control exactly <b>who can open them</b> — proven on-chain and{" "}
-            <b>checkable by anyone</b>. New here? Start with <b>Overview</b>.
+            Keep sensitive files private and decide who can open them. New here? Start with Overview.
           </>
         }
       />
@@ -55,19 +38,6 @@ export default function DataRoomLayout() {
       </div>
 
       <Outlet />
-
-      {/* Engine / contract details — moved below the task content so a new user sees what to DO first. */}
-      <Panel title="Engine" className="mt-6">
-        <DataRow k="Network">testnet</DataRow>
-        {info?.dataroomId && <DataRow k="DataRoom contract"><Ex id={info.dataroomId} /></DataRow>}
-        {info?.config?.verifier && <DataRow k="Groth16 verifier"><Ex id={info.config.verifier} /></DataRow>}
-        {info && (
-          <DataRow k="Blob storage" mono={false} testId="storage">
-            {info.storage === "r2" ? "Cloudflare R2" : "local stand-in"} · content-addressed
-          </DataRow>
-        )}
-        {info && <DataRow k="Rooms" testId="room-count">{info.roomCount}</DataRow>}
-      </Panel>
     </>
   );
 }

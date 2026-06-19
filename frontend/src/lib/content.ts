@@ -147,7 +147,7 @@ export interface DataroomTab {
 }
 
 export const DATAROOM_TABS: DataroomTab[] = [
-  { slug: "", label: "Overview", blurb: "What you can do here — pick a task." },
+  { slug: "", label: "Overview", blurb: "What you can do here. Pick a task." },
   {
     slug: "documents",
     label: "Documents",
@@ -156,23 +156,23 @@ export const DATAROOM_TABS: DataroomTab[] = [
   {
     slug: "eligibility",
     label: "Get in anonymously",
-    blurb: "Prove you're allowed in without revealing who you are — and only once.",
+    blurb: "Prove you're allowed in without revealing who you are. Each pass works once.",
     star: true,
   },
   {
     slug: "release",
     label: "Release the key",
-    blurb: "No single server holds a document's key — it takes 2 of 3 separate keepers to release it.",
+    blurb: "No single server holds a document's key. It takes 2 of 3 separate keepers to release it.",
   },
   {
     slug: "disclosure",
     label: "Share a masked copy",
-    blurb: "Prove a fact about a sealed document and share a masked copy with an auditor — provably the real file.",
+    blurb: "Prove a fact about a sealed document, then share a masked copy with an auditor that's provably the real file.",
   },
   {
     slug: "policy",
     label: "Meet all conditions",
-    blurb: "Admit someone only if they meet every condition at once — without revealing who they are.",
+    blurb: "Admit someone only if they meet every condition at once, without revealing who they are.",
   },
   {
     slug: "authenticity",
