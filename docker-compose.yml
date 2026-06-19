@@ -1,15 +1,24 @@
-# zkorage Frontend + Backend, containerized for durable internet exposure (Cloudflare Tunnel).
-# Mirrors the prover's Docker model. Runs in the WSL2 Docker engine; published ports forward to
-# Windows localhost, so `cloudflared` (on Windows) reaches them:
+# zkorage Frontend + Backend + the 3-keeper threshold committee, containerized for durable internet
+# exposure (Cloudflare Tunnel). Runs on the prover VM (<vm-host>). The VM's cloudflared routes to the
+# FE/BE over localhost:
 #   zkorage.wazowsky.id -> http://localhost:4173   (frontend)
 #   apizk.wazowsky.id   -> http://localhost:8787   (backend)
 #
-# Usage (from the repo root in WSL2):
-#   docker compose up -d --build      # build + start both, detached
+# The 3 keepers (keyper1/2/3) are VM-INTERNAL ONLY: no published host ports, no Cloudflare route. Only the
+# backend aggregator reaches them, by compose service-name DNS (http://keyper1:8801, ...). The public key-
+# release path stays apizk.../dataroom/committee/collect. Each keeper holds ONE Shamir share and reads its
+# OWN RPC, so no single process can reconstruct a document key K (2-of-3 threshold).
+#
+# Secrets/config that vary per box live in ./.env (compose interpolation, NOT shipped by the deploy tar):
+#   KEYPER_DEAL_TOKEN=...        # shared by the backend dealer + all 3 keepers; gates /deal
+#   DATAROOM_CONTRACT_ID=C...    # the live DataRoom contract (also in backend/.env)
+#   SIM_SOURCE_PUBKEY=G...       # a funded testnet account; the keepers' read-only simulation source
+#
+# Usage (from the deploy dir on the VM):
+#   docker compose up -d --build      # build + start everything, detached
 #   docker compose ps                 # status + health
-#   docker compose logs -f backend    # tail logs
-#   docker compose down               # stop + remove
-# restart: unless-stopped -> both survive a reboot (with Docker set to start on boot) and session end.
+#   docker compose logs -f keyper1    # tail one keeper
+#   docker compose down               # stop + remove (named volumes + the <user>-* stacks are untouched)
 
 services:
   backend:
@@ -20,6 +29,13 @@ services:
     restart: unless-stopped
     env_file:
       - ./backend/.env
+    environment:
+      # The committee aggregator: reach the 3 keepers by compose DNS, share their deal token, threshold 2.
+      # `:?` fails the up loudly if ./.env is missing the token (no silent fall back to the demo default,
+      # which would mismatch the keepers and 401 every /deal).
+      KEYPER_ENDPOINTS: "http://keyper1:8801,http://keyper2:8802,http://keyper3:8803"
+      KEYPER_DEAL_TOKEN: "${KEYPER_DEAL_TOKEN:?set KEYPER_DEAL_TOKEN in ./.env}"
+      COMMITTEE_THRESHOLD: "2"
     ports:
       - "8787:8787"
     volumes:
@@ -37,3 +53,71 @@ services:
       - backend
     ports:
       - "4173:4173"
+
+  # ── The 3-keeper threshold-ECIES committee (DR3). Each is one Shamir share + its OWN RPC. VM-internal:
+  #    no `ports:` (unreachable from outside the compose network), no Cloudflare route. Distinct RPC per
+  #    keeper (SDF / Gateway.fm) so the committee does not trust a single shared oracle. With 3 keepers over
+  #    2 providers one provider serves 2 keepers (= threshold); a 3rd independent provider would close that.
+  keyper1:
+    container_name: zkorage-keyper1
+    build:
+      context: .
+      dockerfile: deploy/keyper.Dockerfile
+    restart: unless-stopped
+    environment:
+      KEYPER_INDEX: "1"
+      KEYPER_PORT: "8801"
+      DATAROOM_CONTRACT_ID: "${DATAROOM_CONTRACT_ID:?set DATAROOM_CONTRACT_ID in ./.env}"
+      DEAL_TOKEN: "${KEYPER_DEAL_TOKEN:?set KEYPER_DEAL_TOKEN in ./.env}"
+      SIM_SOURCE_PUBKEY: "${SIM_SOURCE_PUBKEY:?set SIM_SOURCE_PUBKEY in ./.env}"
+      STELLAR_RPC_URL: "https://soroban-testnet.stellar.org"
+      SHARE_STORE_PATH: "/app/keyper/data/keyper-1.json"
+      SHARE_RATE_PER_MIN: "120"
+      KEYPER_ALLOWED_ORIGINS: "https://zkorage.wazowsky.id"
+    volumes:
+      - keyper1-data:/app/keyper/data
+
+  keyper2:
+    container_name: zkorage-keyper2
+    build:
+      context: .
+      dockerfile: deploy/keyper.Dockerfile
+    restart: unless-stopped
+    environment:
+      KEYPER_INDEX: "2"
+      KEYPER_PORT: "8802"
+      DATAROOM_CONTRACT_ID: "${DATAROOM_CONTRACT_ID:?set DATAROOM_CONTRACT_ID in ./.env}"
+      DEAL_TOKEN: "${KEYPER_DEAL_TOKEN:?set KEYPER_DEAL_TOKEN in ./.env}"
+      SIM_SOURCE_PUBKEY: "${SIM_SOURCE_PUBKEY:?set SIM_SOURCE_PUBKEY in ./.env}"
+      STELLAR_RPC_URL: "https://soroban-rpc.testnet.stellar.gateway.fm"
+      SHARE_STORE_PATH: "/app/keyper/data/keyper-2.json"
+      SHARE_RATE_PER_MIN: "120"
+      KEYPER_ALLOWED_ORIGINS: "https://zkorage.wazowsky.id"
+    volumes:
+      - keyper2-data:/app/keyper/data
+
+  keyper3:
+    container_name: zkorage-keyper3
+    build:
+      context: .
+      dockerfile: deploy/keyper.Dockerfile
+    restart: unless-stopped
+    environment:
+      KEYPER_INDEX: "3"
+      KEYPER_PORT: "8803"
+      DATAROOM_CONTRACT_ID: "${DATAROOM_CONTRACT_ID:?set DATAROOM_CONTRACT_ID in ./.env}"
+      DEAL_TOKEN: "${KEYPER_DEAL_TOKEN:?set KEYPER_DEAL_TOKEN in ./.env}"
+      SIM_SOURCE_PUBKEY: "${SIM_SOURCE_PUBKEY:?set SIM_SOURCE_PUBKEY in ./.env}"
+      STELLAR_RPC_URL: "https://soroban-testnet.stellar.org"
+      SHARE_STORE_PATH: "/app/keyper/data/keyper-3.json"
+      SHARE_RATE_PER_MIN: "120"
+      KEYPER_ALLOWED_ORIGINS: "https://zkorage.wazowsky.id"
+    volumes:
+      - keyper3-data:/app/keyper/data
+
+volumes:
+  # Per-keeper Shamir share stores. Persist across redeploys + VM reboot; survive `docker compose up
+  # --build` (only `down -v` wipes them). Each keeper writes only its OWN share, so these are independent.
+  keyper1-data:
+  keyper2-data:
+  keyper3-data:
