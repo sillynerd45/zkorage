@@ -243,9 +243,15 @@ member you are, and only once** (a per-room nullifier). DataRoom contract
 - **DR6 — meet all conditions:** admit someone only if they satisfy a composite policy
   (member ∧ KYC ∧ accredited ∧ not-sanctioned), each an independent proof AND'd on-chain; plus surgical
   per-accessor revocation and committee key rotation.
+- **Pattern 2, open a shared document (per-document self-serve access):** an owner attaches a per-document
+  policy (member, KYC, accredited) to a committee document; a reader proves it anonymously, the 2-of-3
+  keepers release the key to their proof-bound key, and they decrypt in-browser. On-chain `set_doc_policy` /
+  `is_doc_admitted` / `get_doc_policy` (additive upgrade, no new guest); the keepers gate share release on
+  `is_doc_admitted`. The owner side also gained a Documents submenu, a "Browse = rooms your wallet owns"
+  view (on-chain ownership), and dropped the redundant contents column.
 
-The SDK/MCP gained the read-only Data Room surface (no key custody); the frontend `/app/dataroom` drives all
-of it. Reviewed clean across the slices (adversarial SOUND + code-review Ship-it).
+The SDK/MCP gained the read-only Data Room surface (no key custody); the frontend `/app/dataroom` (v0.7.0)
+drives all of it. Reviewed clean across the slices (adversarial SOUND + code-review Ship-it).
 
 ## Run the Week-2 slice
 ```bash
