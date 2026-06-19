@@ -1,9 +1,11 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ChevronRight, ExternalLink } from "lucide-react";
 import { GlossaryTip } from "@/components/GlossaryTip";
 import { Disclosure } from "@/components/Disclosure";
 import { DataRow } from "@/components/app/blocks";
 import { useDataroomInfo } from "@/lib/hooks/useDataroomInfo";
+import { getCommitteeInfo, type CommitteeInfoResp } from "@/lib/api";
 import { short, explorer } from "@/lib/format";
 
 // Task-oriented landing: lead with "what do you want to do?", grouped by the user's actual goals, each
@@ -87,6 +89,28 @@ const GROUPS: Group[] = [
   },
 ];
 
+// Live key-release readiness: the 2-of-3 keeper committee that hands a document's key to a reader who
+// proves they qualify. Shown here so a visitor can see the "Open a shared document" path is up before they
+// try it. Quiet by design; the per-keeper detail stays on the Open page.
+function CommitteeStatus({ c }: { c: CommitteeInfoResp }) {
+  const allUp = c.online >= c.n;
+  const someUp = c.online > 0;
+  const dot = allUp ? "bg-emerald-500" : someUp ? "bg-amber-500" : "bg-muted-foreground/40";
+  return (
+    <div
+      data-testid="overview-committee"
+      data-online={c.online}
+      title={`any ${c.threshold} of ${c.n} keepers release a document's key; ${c.online} reachable now`}
+      className="flex shrink-0 items-center gap-2 self-start rounded-full border bg-card px-3 py-1.5 text-xs"
+    >
+      <span className={`size-2 rounded-full ${dot}`} aria-hidden="true" />
+      <span className="text-muted-foreground">
+        Key committee: <b className="text-foreground">{c.online} of {c.n}</b> keepers online
+      </span>
+    </div>
+  );
+}
+
 function ExLink({ id }: { id: string }) {
   return (
     <a
@@ -102,14 +126,21 @@ function ExLink({ id }: { id: string }) {
 
 export default function DataRoomOverview() {
   const info = useDataroomInfo();
+  const [committee, setCommittee] = useState<CommitteeInfoResp | null>(null);
+  useEffect(() => {
+    getCommitteeInfo().then(setCommittee).catch(() => {});
+  }, []);
   return (
     <div data-testid="dataroom-overview" className="space-y-6">
-      <div>
-        <h2 className="text-lg font-semibold tracking-tight">What do you want to do?</h2>
-        <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-          A private place to keep sensitive files and decide who can open them. Pick a task. Each one is its
-          own page.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold tracking-tight">What do you want to do?</h2>
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+            A private place to keep sensitive files and decide who can open them. Pick a task. Each one is its
+            own page.
+          </p>
+        </div>
+        {committee && <CommitteeStatus c={committee} />}
       </div>
 
       <div className="space-y-5">
