@@ -19,6 +19,10 @@ self-hosted box, with a CPU fallback). The frontend is a single unified app — 
 (`/` — landing, documentation, verify, explorer) plus a **sidebar app** (`/app/*` — the five proofs + the
 Data Room) in the "Precision Ink" design system.
 
+**Live demo:** the app runs at **https://zkorage.wazowsky.id** (API at `https://apizk.wazowsky.id`), on
+Stellar testnet. Connect **Freighter** (top right) to sign and submit your own proof transactions and pay
+your own gas. Without a wallet, the backend relays every flow. Verification needs no wallet either way.
+
 - **Bare Groth16 verifier (current):** `CBAPC663PTWIWDLYNCG5WAD5MIZF4SKY43U6L2NM5ZUU5XFOS4JDYAFW`
   (selector `ef6cb709`, RISC0 `5.0.0-rc.1`). The Week-1 ID below (`CB75PMLN…`, params 3.0.0) was the
   original — during the **3.0.5 → 5.0.0-rc.1 migration** (to unblock GPU proving) all 8 guests were rebuilt
