@@ -1,5 +1,7 @@
 import { test, expect } from "@playwright/test";
-import { Keypair, TransactionBuilder, Networks } from "@stellar/stellar-sdk";
+// NOTE: @stellar/stellar-sdk is imported dynamically inside the test (not at the top level). A top-level
+// import of this large package trips Playwright's collection-time bundling when the whole suite loads
+// together (a misleading "two versions of @playwright/test" error); a runtime import avoids it.
 
 // End-to-end test of the CLIENT-SIGNED (Freighter) write path through the real React app, on testnet.
 // Playwright can't drive the actual extension popup, so we inject window.__freighterMock (the seam in
@@ -8,6 +10,7 @@ import { Keypair, TransactionBuilder, Networks } from "@stellar/stellar-sdk";
 // This exercises useTxSigner → api.writeViaWallet → backend /submit?source → sign → /tx/submit → chain.
 test("PoR via wallet: a connected wallet signs + submits the verify tx on-chain", async ({ page }) => {
   test.setTimeout(120_000);
+  const { Keypair, TransactionBuilder, Networks } = await import("@stellar/stellar-sdk");
   const kp = Keypair.random();
   const fb = await fetch(`https://friendbot.stellar.org/?addr=${kp.publicKey()}`);
   expect(fb.status).toBe(200);

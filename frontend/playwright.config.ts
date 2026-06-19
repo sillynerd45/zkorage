@@ -7,6 +7,9 @@ export default defineConfig({
   timeout: 120_000,
   expect: { timeout: 60_000 },
   fullyParallel: false,
+  // These are LIVE testnet integration tests sharing on-chain state (the token supply that por.spec
+  // mints/burns, the relay signer's sequence number). Run them one at a time so files don't race.
+  workers: 1,
   reporter: [["list"]],
   use: {
     baseURL: process.env.BASE_URL || "http://localhost:5174",
