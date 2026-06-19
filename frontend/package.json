@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "serve": "serve -c serve.json -l 4173"
+    "serve": "serve -c serve.json -l 4173",
+    "test:itest": "playwright test -c playwright.itest.config.ts"
   },
   "dependencies": {
     "@stellar/freighter-api": "^6.0.1",

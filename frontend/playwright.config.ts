@@ -4,6 +4,9 @@ import { defineConfig } from "@playwright/test";
 // Servers are expected to be already running (vite on BASE_URL, backend proxied at /api).
 export default defineConfig({
   testDir: "./tests",
+  // *.itest.ts = live on-chain integration tests (friendbot + backend; pull @stellar/stellar-sdk). They
+  // run via playwright.itest.config.ts, never in the default suite (the SDK graph trips the collector).
+  testIgnore: "**/*.itest.ts",
   timeout: 120_000,
   expect: { timeout: 60_000 },
   fullyParallel: false,
