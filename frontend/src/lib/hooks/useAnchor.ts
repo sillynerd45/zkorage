@@ -7,11 +7,14 @@ import {
   submitDocument,
   getProveStatus,
   getDataroomDocuments,
+  getMyRooms,
   type DataroomInfoResp,
   type DataroomDoc,
+  type MyRoom,
   type SubmitDocResp,
   type Bundle,
 } from "@/lib/api";
+import { useTxSigner, useWallet } from "@/lib/wallet/WalletContext";
 import {
   DEMO_DATAROOM,
   DEMO_RECIPIENT_PUB,
@@ -51,20 +54,33 @@ export function useAnchor() {
   const [openErr, setOpenErr] = useState<string | null>(null);
   const [openBusy, setOpenBusy] = useState(false);
 
-  // --- public document browser ---
-  const [browseRoom, setBrowseRoom] = useState(DEMO_DATAROOM.roomId);
+  // --- "my documents" browser: rooms the connected wallet owns ON-CHAIN ---
+  const signer = useTxSigner();
+  const { address, connected } = useWallet();
+  const [browseRoom, setBrowseRoom] = useState("");
   const [docs, setDocs] = useState<DataroomDoc[]>([]);
+  const [myRooms, setMyRooms] = useState<MyRoom[]>([]);
+  const [roomsLoading, setRoomsLoading] = useState(false);
 
   const refreshDocs = useCallback((room: string) => {
     if (!/^[0-9a-fA-F]{64}$/.test(room.trim())) { setDocs([]); return; }
     getDataroomDocuments(room.trim(), 0, 25).then((r) => setDocs(r.documents)).catch(() => setDocs([]));
   }, []);
 
+  const loadMyRooms = useCallback((addr: string | null) => {
+    if (!addr) { setMyRooms([]); return; }
+    setRoomsLoading(true);
+    getMyRooms(addr).then((r) => setMyRooms(r.rooms)).catch(() => setMyRooms([])).finally(() => setRoomsLoading(false));
+  }, []);
+
   useEffect(() => {
     getDataroomInfo().then(setInfo).catch(() => {});
-    refreshDocs(DEMO_DATAROOM.roomId);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [refreshDocs]);
+  }, []);
+
+  // "My rooms" follows the connected wallet (cleared on disconnect). Nothing seeded is auto-loaded, so a
+  // fresh wallet starts empty: you only ever see rooms you own.
+  useEffect(() => { loadMyRooms(connected ? address : null); }, [connected, address, loadMyRooms]);
 
   const journal = bundle?.journal ? decodeDataroomSealJournal(bundle.journal) : null;
 
@@ -72,12 +88,14 @@ export function useAnchor() {
     setState("verifying");
     setStep("Anchoring on Soroban (put_document)…");
     try {
-      const r = await submitDocument(b, blobPointer);
+      const r = await submitDocument(b, blobPointer, signer);
       setResp(r);
       setState(r.ok ? "verified" : "rejected");
       if (r.ok) {
-        // Point the open panel + the browser at the freshly-anchored document.
+        // Point the open panel + the browser at the freshly-anchored document, and refresh "my rooms" so the
+        // room you just created (and own) appears in Browse.
         setOpenRoom(roomId); setOpenDoc(docId); setBrowseRoom(roomId); refreshDocs(roomId);
+        loadMyRooms(connected ? address : null);
       }
     } catch (e) {
       setResp({ ok: false, error: String((e as Error).message ?? e), dataroomId: info?.dataroomId ?? "" });
@@ -98,7 +116,12 @@ export function useAnchor() {
       // 1. ensure the room exists (create it if not; it is owned and paid for by the demo server key).
       setStep("Making sure the room exists…");
       const room = await getDataroomRoom(roomLabel).catch(() => null);
-      if (!room?.room) await createRoom(roomLabel).catch(() => {});
+      if (!room?.room) {
+        // With a wallet connected, the room is created ON-CHAIN owned by the wallet (it signs create_room),
+        // so it shows up under "your documents". No wallet → the server relay owns it.
+        const cr = await createRoom(roomLabel, signer).catch((e) => ({ ok: false, error: String((e as Error)?.message ?? e) }));
+        if (signer && !cr.ok) throw new Error(cr.error || "could not create the room (the wallet signature is needed to own it)");
+      }
       // 2. encrypt (fresh K, AES-256-GCM), upload the ciphertext, and enqueue the seal proof.
       setStep("Encrypting and uploading the ciphertext, then queuing the seal proof…");
       const pr = await proveSeal(roomLabel, content, recipientPub);
@@ -180,6 +203,11 @@ export function useAnchor() {
     setBrowseRoom,
     docs,
     refreshDocs,
+    myRooms,
+    roomsLoading,
+    loadMyRooms,
+    connected,
+    address,
     journal,
     onUpload,
     onOpen,

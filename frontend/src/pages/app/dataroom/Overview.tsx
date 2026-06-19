@@ -40,7 +40,7 @@ const GROUPS: Group[] = [
       {
         to: "/app/dataroom/documents#browse",
         label: "Browse documents",
-        blurb: "List every file in a room. Anyone can read the record; the contents stay hidden.",
+        blurb: "See the rooms you own and the documents you stored. Contents stay encrypted.",
         testid: "task-browse",
       },
     ],

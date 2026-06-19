@@ -151,7 +151,7 @@ export const DATAROOM_TABS: DataroomTab[] = [
   {
     slug: "documents",
     label: "Documents",
-    blurb: "Store, open, and browse the room's encrypted files.",
+    blurb: "Store and open encrypted files, and browse the rooms you own.",
   },
   {
     slug: "eligibility",

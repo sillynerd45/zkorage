@@ -5,9 +5,23 @@ import { test, expect } from "@playwright/test";
 // sha256(ciphertext) commitment + the sealed-key disclosure go on-chain. The recipient opens it KEY-FREE
 // in the browser (the SDK opener recovers K with their x25519 secret + AES-decrypts; it custodies nothing).
 // Uses the SEEDED demo document (room/doc already anchored on testnet) to avoid the multi-minute proof.
-// The page is now a Store / Open / Browse submenu (one sub-tab at a time).
+// The page is now a Store / Open / Browse submenu (one sub-tab at a time); Browse shows the rooms YOU own.
 const DEMO_CONTENT_SNIPPET = "opened faithfully"; // appears in the seeded demo document's plaintext
 const WRONG_KEY = "11".repeat(32); // a non-recipient secret → the faithful tag won't match
+
+// A connected-wallet seam (headless Chrome can't load the real extension). This address owns no rooms.
+const DEMO_G = "GABF456WZDNHKUVWA6BBAYLACD3QTMZA745AVRSBK7IYOBQ5NQJ3HGRC";
+const freighterMock = () => `
+  localStorage.setItem("zkorage.wallet.connected", "1");
+  window.__freighterMock = {
+    isConnected: async () => ({ isConnected: true }),
+    isAllowed: async () => ({ isAllowed: true }),
+    requestAccess: async () => ({ address: "${DEMO_G}" }),
+    getAddress: async () => ({ address: "${DEMO_G}" }),
+    getNetwork: async () => ({ network: "TESTNET", networkPassphrase: "Test SDF Network ; September 2015" }),
+    signTransaction: async (xdr) => ({ signedTxXdr: xdr, signerAddress: "${DEMO_G}" }),
+  };
+`;
 
 test("dataroom: recipient opens the sealed doc in-browser (faithful); wrong key not faithful; plaintext hidden on-chain", async ({ page }) => {
   const consoleErrors: string[] = [];
@@ -24,11 +38,11 @@ test("dataroom: recipient opens the sealed doc in-browser (faithful); wrong key 
   await expect(page.getByTestId("doc-content")).toBeVisible();
   await expect(page.getByTestId("upload")).toBeVisible();
 
-  // BROWSE sub-tab: the public log lists the seeded demo doc. There is no "contents" column — every document
-  // is encrypted by default (the caption says so), so a per-row "encrypted" cell would be noise.
+  // BROWSE sub-tab: with no wallet, it asks you to connect — Browse shows the rooms YOU own, so a fresh
+  // visitor sees nothing they didn't store (no auto-loaded seeded room). There is no "contents" column
+  // either: every document is encrypted by default (the caption says so).
   await page.getByTestId("doc-subtab-browse").click();
-  const docs = page.getByTestId("dataroom-docs");
-  await expect(docs).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("browse-connect-prompt")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("everything here is encrypted")).toBeVisible();
 
   // OPEN sub-tab — RECIPIENT OPEN (prefilled demo doc + demo recipient secret) → faithful + decrypted plaintext
@@ -51,6 +65,16 @@ test("dataroom: recipient opens the sealed doc in-browser (faithful); wrong key 
   const appErrors = consoleErrors.filter((e) => !/Failed to load resource/i.test(e));
   if (appErrors.length) console.log("CONSOLE ERRORS:", appErrors);
   expect(appErrors, appErrors.join("\n")).toHaveLength(0);
+});
+
+test("dataroom Browse: a fresh connected wallet sees only its own rooms (empty), not a seeded doc", async ({ page }) => {
+  // THE original complaint: a brand-new connected address should NOT see a document it never stored.
+  await page.addInitScript(freighterMock());
+  await page.goto("/app/dataroom/documents");
+  await page.getByTestId("doc-subtab-browse").click();
+  // Connected, but this address owns no rooms on-chain → the empty state (no auto-loaded seeded room).
+  await expect(page.getByTestId("browse-empty")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("dataroom-docs")).toHaveCount(0);
 });
 
 test("dataroom overview: task-oriented cards route to the right place; guided-demo tab removed", async ({ page }) => {

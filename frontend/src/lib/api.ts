@@ -572,8 +572,27 @@ export const getDataroomInfo = () => fetch(`${BASE}/dataroom/info`).then(j<Datar
 export const getDataroomRoom = (roomId: string) =>
   fetch(`${BASE}/dataroom/room/${roomId}`).then(j<{ roomId: string; room: Room | null; dataroomId: string }>);
 
-export const createRoom = (roomId?: string) =>
-  post<CreateRoomResp>("/dataroom/create-room", roomId ? { roomId } : {});
+// With a wallet connected, the room is created ON-CHAIN owned by the wallet (it signs create_room), so
+// "Browse = rooms your wallet owns" reads a real on-chain owner. No wallet → the server relay creates it.
+export const createRoom = (roomId?: string, signer?: TxSigner): Promise<CreateRoomResp> =>
+  signer
+    ? writeViaWallet("/dataroom/create-room", roomId ? { roomId } : {}, signer).then((r) => ({
+        ok: r.ok, txHash: r.txHash, error: r.error, roomId: roomId ?? "", dataroomId: "",
+      }))
+    : post<CreateRoomResp>("/dataroom/create-room", roomId ? { roomId } : {});
+
+export interface MyRoom {
+  roomId: string;
+  label: string | null;
+  owner: string;
+  docCount: number;
+  ledger: number | null;
+}
+/** The rooms a given owner (Stellar G-address) owns on-chain — the owner's "my documents" view. */
+export const getMyRooms = (owner: string) =>
+  fetch(`${BASE}/dataroom/rooms?owner=${encodeURIComponent(owner)}`).then(
+    j<{ owner: string; count: number; rooms: MyRoom[]; dataroomId: string }>,
+  );
 
 export const proveSeal = (roomId: string, content: string, recipientPub?: string, docId?: string) =>
   post<ProveSealResp>("/dataroom/prove-seal", {
@@ -583,8 +602,14 @@ export const proveSeal = (roomId: string, content: string, recipientPub?: string
     ...(docId ? { docId } : {}),
   });
 
-export const submitDocument = (bundle: Bundle, blobPointer?: string) =>
-  post<SubmitDocResp>("/dataroom/submit-document", { ...bundle, ...(blobPointer ? { blobPointer } : {}) });
+// With a wallet connected, the wallet is the room owner on-chain, so IT signs put_document. No wallet →
+// the server relay (owns the room) signs.
+export const submitDocument = (bundle: Bundle, blobPointer?: string, signer?: TxSigner): Promise<SubmitDocResp> =>
+  signer
+    ? writeViaWallet("/dataroom/submit-document", { ...bundle, ...(blobPointer ? { blobPointer } : {}) }, signer).then((r) => ({
+        ok: r.ok, txHash: r.txHash, error: r.error, blobPointer, dataroomId: "",
+      }))
+    : post<SubmitDocResp>("/dataroom/submit-document", { ...bundle, ...(blobPointer ? { blobPointer } : {}) });
 
 export const getDataroomDocuments = (roomId: string, start = 0, limit = 50) =>
   fetch(`${BASE}/dataroom/documents/${roomId}?start=${start}&limit=${limit}`).then(

@@ -348,57 +348,78 @@ export default function Anchor() {
         </Card>
       )}
 
-      {/* ── BROWSE: your documents ── */}
+      {/* ── BROWSE: your documents (rooms your wallet owns on-chain) ── */}
       {tab === "browse" && (
         <Card id="browse" className="rounded-2xl p-6">
           <div className="mb-3 flex items-center justify-between gap-3">
-            <h2 className="text-base font-semibold tracking-tight">Browse documents</h2>
+            <h2 className="text-base font-semibold tracking-tight">Your documents</h2>
             <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
               everything here is encrypted
             </span>
           </div>
-          <div className="flex flex-wrap items-end gap-3">
-            <label className="flex flex-1 flex-col gap-1.5 text-[13px] text-muted-foreground">
-              room
-              <Input
-                className="font-mono text-xs"
-                value={a.browseRoom}
-                onChange={(e) => a.setBrowseRoom(e.target.value)}
-                aria-label="browse room"
-                data-testid="browse-room"
-              />
-            </label>
-            <Button variant="outline" onClick={() => a.refreshDocs(a.browseRoom)} data-testid="browse-btn">
-              List documents
-            </Button>
-          </div>
-          {a.docs.length ? (
-            <div className="mt-4 overflow-x-auto rounded-lg border">
-              <table className="w-full text-left text-[13px]" data-testid="dataroom-docs">
-                <thead className="border-b bg-muted/40 text-xs text-muted-foreground">
-                  <tr>
-                    <th className="px-3 py-2 font-medium">#</th>
-                    <th className="px-3 py-2 font-medium">doc</th>
-                    <th className="px-3 py-2 font-medium">file fingerprint</th>
-                    <th className="px-3 py-2 font-medium">sealed to</th>
-                    <th className="px-3 py-2 font-medium">recorded</th>
-                  </tr>
-                </thead>
-                <tbody className="font-mono tabular-nums">
-                  {a.docs.map((d) => (
-                    <tr key={d.index} className="border-b last:border-0">
-                      <td className="px-3 py-2">{d.index}</td>
-                      <td className="px-3 py-2" title={d.doc_id}>{short(d.doc_id, 6)}</td>
-                      <td className="px-3 py-2" title={d.content_hash}>{short(d.content_hash, 6)}</td>
-                      <td className="px-3 py-2" title={d.recipient_pub}>x25519 {short(d.recipient_pub, 6)}</td>
-                      <td className="px-3 py-2">{d.ledger}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+          {!a.connected ? (
+            <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground" data-testid="browse-connect-prompt">
+              Connect your wallet to see the rooms you own and the documents you stored. This only reads the
+              on-chain owner of each room. Your address is a public key, not your name.
+            </p>
+          ) : a.roomsLoading ? (
+            <p className="text-sm text-muted-foreground">Reading the public record…</p>
+          ) : a.myRooms.length === 0 ? (
+            <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground" data-testid="browse-empty">
+              You haven't stored anything yet. Store a document and the room you own shows up here.
+            </p>
           ) : (
-            <p className="mt-3 text-sm text-muted-foreground">No documents in this room yet.</p>
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">Rooms your wallet owns. Pick one to list its documents.</p>
+              <div className="flex flex-wrap gap-2" data-testid="my-rooms">
+                {a.myRooms.map((r) => (
+                  <button
+                    key={r.roomId}
+                    onClick={() => { a.setBrowseRoom(r.roomId); a.refreshDocs(r.roomId); }}
+                    data-testid="my-room"
+                    aria-pressed={a.browseRoom === r.roomId}
+                    className={cn(
+                      "rounded-xl border px-3.5 py-2 text-left text-[13px] transition-colors hover:border-brand/30 hover:bg-accent/40",
+                      a.browseRoom === r.roomId && "border-brand/40 bg-accent/40",
+                    )}
+                  >
+                    <div className="font-medium">{r.label || short(r.roomId, 8)}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {r.docCount} document{r.docCount === 1 ? "" : "s"} · {short(r.roomId, 6)}
+                    </div>
+                  </button>
+                ))}
+              </div>
+              {a.browseRoom &&
+                (a.docs.length ? (
+                  <div className="mt-2 overflow-x-auto rounded-lg border">
+                    <table className="w-full text-left text-[13px]" data-testid="dataroom-docs">
+                      <thead className="border-b bg-muted/40 text-xs text-muted-foreground">
+                        <tr>
+                          <th className="px-3 py-2 font-medium">#</th>
+                          <th className="px-3 py-2 font-medium">doc</th>
+                          <th className="px-3 py-2 font-medium">file fingerprint</th>
+                          <th className="px-3 py-2 font-medium">sealed to</th>
+                          <th className="px-3 py-2 font-medium">recorded</th>
+                        </tr>
+                      </thead>
+                      <tbody className="font-mono tabular-nums">
+                        {a.docs.map((d) => (
+                          <tr key={d.index} className="border-b last:border-0">
+                            <td className="px-3 py-2">{d.index}</td>
+                            <td className="px-3 py-2" title={d.doc_id}>{short(d.doc_id, 6)}</td>
+                            <td className="px-3 py-2" title={d.content_hash}>{short(d.content_hash, 6)}</td>
+                            <td className="px-3 py-2" title={d.recipient_pub}>x25519 {short(d.recipient_pub, 6)}</td>
+                            <td className="px-3 py-2">{d.ledger}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="mt-2 text-sm text-muted-foreground">No documents in this room yet.</p>
+                ))}
+            </div>
           )}
         </Card>
       )}
