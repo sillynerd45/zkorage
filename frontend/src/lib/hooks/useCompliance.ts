@@ -13,6 +13,7 @@ import {
 } from "@/lib/api";
 import { decodeComplianceJournal } from "@/lib/journal";
 import { type ClaimState } from "@/components/StatusBadge";
+import { useTxSigner } from "@/lib/wallet/WalletContext";
 
 // Deterministic demo "user wallet" — the public accessor the compliance proof grants access to.
 export const DEMO_USER_G = "GABF456WZDNHKUVWA6BBAYLACD3QTMZA745AVRSBK7IYOBQ5NQJ3HGRC";
@@ -30,6 +31,7 @@ export function useCompliance() {
   const [resp, setResp] = useState<ComplianceGrantResp | null>(null);
   const [busy, setBusy] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const signer = useTxSigner(); // connected wallet → user signs + pays; undefined → backend relays
 
   // relying-party panel
   const [checkAccessor, setCheckAccessor] = useState(DEMO_USER_G);
@@ -47,6 +49,15 @@ export function useCompliance() {
     refreshHistory();
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [refreshHistory]);
+
+  // Connecting a wallet means "prove for my own account": fill the accessor with the wallet address,
+  // but only while it's still the untouched demo default (never clobber what the user typed).
+  useEffect(() => {
+    if (signer && accessor === DEMO_USER_G) {
+      setAccessor(signer.address);
+      setCheckAccessor(signer.address);
+    }
+  }, [signer, accessor]);
 
   const journal = bundle?.journal ? decodeComplianceJournal(bundle.journal) : null;
 
@@ -67,7 +78,7 @@ export function useCompliance() {
     setState("verifying");
     setResp(null);
     try {
-      const r = await grantCompliance(b);
+      const r = await grantCompliance(b, signer);
       setResp(r);
       setState(r.ok ? "verified" : "rejected");
       if (r.ok) { refreshHistory(); setCheckAccessor(accessor); onCheck(accessor); }

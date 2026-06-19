@@ -14,6 +14,7 @@ import {
 } from "@/lib/api";
 import { decodePayrollJournal } from "@/lib/journal";
 import { type ClaimState } from "@/components/StatusBadge";
+import { useTxSigner } from "@/lib/wallet/WalletContext";
 
 // Deterministic demo "employee wallet" — the public accessor the income proof grants to.
 export const DEMO_USER_G = "GABF456WZDNHKUVWA6BBAYLACD3QTMZA745AVRSBK7IYOBQ5NQJ3HGRC";
@@ -31,6 +32,7 @@ export function usePayroll() {
   const [resp, setResp] = useState<PayrollGrantResp | null>(null);
   const [busy, setBusy] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const signer = useTxSigner(); // connected wallet → user signs + pays; undefined → backend relays
 
   // auditor view-key panel
   const [viewKey, setViewKey] = useState("");
@@ -49,6 +51,12 @@ export function usePayroll() {
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [refreshHistory]);
 
+  // Connecting a wallet means "prove my income for my own account": fill the accessor with the wallet
+  // address, but only while it's still the untouched demo default.
+  useEffect(() => {
+    if (signer && accessor === DEMO_USER_G) setAccessor(signer.address);
+  }, [signer, accessor]);
+
   const journal = bundle?.journal ? decodePayrollJournal(bundle.journal) : null;
 
   const onGrant = useCallback(
@@ -58,7 +66,7 @@ export function usePayroll() {
       setState("verifying");
       setResp(null);
       try {
-        const r = await submitPayroll(b);
+        const r = await submitPayroll(b, signer);
         setResp(r);
         setState(r.ok ? "verified" : "rejected");
         if (r.ok) refreshHistory();
@@ -69,7 +77,7 @@ export function usePayroll() {
         setBusy(false);
       }
     },
-    [bundle, info, refreshHistory],
+    [bundle, info, refreshHistory, signer],
   );
 
   const onProve = useCallback(async () => {

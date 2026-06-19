@@ -22,6 +22,7 @@ import {
 import { decodeIdentityJournal, decodeJournal } from "@/lib/journal";
 import { type ClaimState } from "@/components/StatusBadge";
 import { humanError } from "@/lib/errors";
+import { useTxSigner } from "@/lib/wallet/WalletContext";
 
 // The demo investor wallet — the public accessor the accreditation proof binds to (already admitted
 // on-chain, so the composition banner reads GRANTED on first load).
@@ -40,6 +41,7 @@ export function validRevenue(v: string): boolean {
 export function useFundraise() {
   const [info, setInfo] = useState<Info | null>(null);
   const [fund, setFund] = useState<FundraiseInfo | null>(null);
+  const signer = useTxSigner(); // connected wallet → user signs + pays; undefined → backend relays
 
   // company (revenue ≥ X) panel
   const [revenue, setRevenue] = useState("1500000");
@@ -85,6 +87,16 @@ export function useFundraise() {
     };
   }, [refreshFund, refreshHistory, refreshAccess]);
 
+  // Connecting a wallet means "I'm the investor": fill the accessor with the wallet address (and check
+  // its access), but only while it's still the untouched demo default.
+  useEffect(() => {
+    if (signer && accessor === DEMO_USER_G) {
+      setAccessor(signer.address);
+      setCheckAccessor(signer.address);
+      refreshAccess(signer.address);
+    }
+  }, [signer, accessor, refreshAccess]);
+
   const revJournal = revBundle?.journal ? decodeJournal(revBundle.journal) : null;
   const accJournal = accBundle?.journal ? decodeIdentityJournal(accBundle.journal) : null;
   const X = fund?.config?.revenue_threshold ?? info?.fundraiseThreshold;
@@ -95,7 +107,7 @@ export function useFundraise() {
     setRevBusy(true);
     setRevState("verifying");
     try {
-      const r = await submitRevenue(b);
+      const r = await submitRevenue(b, signer);
       setRevResp(r);
       setRevState(r.ok ? "verified" : "rejected");
       if (r.ok) { refreshFund(); refreshAccess(checkAccessor); }
@@ -136,7 +148,7 @@ export function useFundraise() {
     if (!b) return;
     setAccBusy(true); setAccState("verifying"); setAccResp(null);
     try {
-      const r = await grantAccredited(b);
+      const r = await grantAccredited(b, signer);
       setAccResp(r);
       setAccState(r.ok ? "verified" : "rejected");
       if (r.ok) { setCheckAccessor(accessor); refreshAccess(accessor); }
@@ -175,7 +187,7 @@ export function useFundraise() {
   // ---- composition: request access + check ----
   async function onRequestAccess() {
     try {
-      const r = await requestFundraiseAccess(checkAccessor);
+      const r = await requestFundraiseAccess(checkAccessor, signer);
       setAdmitResp(r);
       if (r.ok) { refreshHistory(); }
       refreshAccess(checkAccessor);

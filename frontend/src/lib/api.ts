@@ -141,7 +141,10 @@ export const proveReserves = (reserves: string) =>
 export const getProveStatus = (jobId: string) =>
   fetch(`${BASE}/prove-status/${jobId}`).then(j<ProveStatus>);
 
-export const submit = (bundle: Bundle) => post<SubmitResp>("/submit", bundle);
+export const submit = (bundle: Bundle, signer?: TxSigner): Promise<SubmitResp> =>
+  signer
+    ? writeViaWallet("/submit", { ...bundle }, signer).then((r) => ({ ...r, policyId: "" }))
+    : post<SubmitResp>("/submit", bundle);
 export const mint = (whole: string) => post<{ ok: boolean; txHash?: string; supply: string }>("/mint", { whole });
 export const burn = (whole: string) => post<{ ok: boolean; txHash?: string; supply: string }>("/burn", { whole });
 
@@ -190,7 +193,10 @@ export interface AccessResp {
 export const proveKyc = (subject: string, accessor: string, kycStatus = 1) =>
   post<{ jobId: string; accessor: string; issuerId: string }>("/prove-kyc", { subject, accessor, kycStatus });
 
-export const grantAccess = (bundle: Bundle) => post<GrantResp>("/grant-access", bundle);
+export const grantAccess = (bundle: Bundle, signer?: TxSigner): Promise<GrantResp> =>
+  signer
+    ? writeViaWallet("/grant-access", { ...bundle }, signer).then((r) => ({ ...r, gateId: "" }))
+    : post<GrantResp>("/grant-access", bundle);
 
 export const getGateAccess = (accessor: string) =>
   fetch(`${BASE}/gate/access/${accessor}`).then(j<AccessResp>);
@@ -245,7 +251,10 @@ export interface Denylist {
 export const proveCompliance = (subject: string, accessor: string, kycStatus = 1) =>
   post<ProveComplianceResp>("/prove-compliance", { subject, accessor, kycStatus });
 
-export const grantCompliance = (bundle: Bundle) => post<ComplianceGrantResp>("/grant-compliance", bundle);
+export const grantCompliance = (bundle: Bundle, signer?: TxSigner): Promise<ComplianceGrantResp> =>
+  signer
+    ? writeViaWallet("/grant-compliance", { ...bundle }, signer).then((r) => ({ ...r, complianceId: "" }))
+    : post<ComplianceGrantResp>("/grant-compliance", bundle);
 
 export const getComplianceAccess = (accessor: string) =>
   fetch(`${BASE}/compliance/access/${accessor}`).then(j<ComplianceAccessResp>);
@@ -319,7 +328,10 @@ export interface PayrollAuditResp {
 export const provePayroll = (salary: string, threshold: string, accessor: string) =>
   post<ProvePayrollResp>("/prove-payroll", { salary, threshold, accessor });
 
-export const submitPayroll = (bundle: Bundle) => post<PayrollGrantResp>("/submit-payroll", bundle);
+export const submitPayroll = (bundle: Bundle, signer?: TxSigner): Promise<PayrollGrantResp> =>
+  signer
+    ? writeViaWallet("/submit-payroll", { ...bundle }, signer).then((r) => ({ ...r, payrollId: "" }))
+    : post<PayrollGrantResp>("/submit-payroll", bundle);
 
 export const getPayrollAccess = (accessor: string) =>
   fetch(`${BASE}/payroll/access/${accessor}`).then(j<PayrollAccessResp>);
@@ -341,6 +353,40 @@ async function post<T>(path: string, body: unknown): Promise<T> {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   }).then(j<T>);
+}
+
+// ── Client-side signing (Freighter) ─────────────────────────────────────────────────────────────
+// A signer = the connected wallet's address + a sign(xdr) function (see lib/wallet). When a write call
+// is given a signer, it routes through the wallet: backend builds unsigned XDR for the user's address →
+// Freighter signs → backend submits + confirms. The user pays their own gas. With no signer, the call
+// is the plain server-relay POST. Only the permissionless proof routes accept this; the contracts are
+// unchanged. The returned record's rich fields come from the page's on-chain re-read after success.
+export interface TxSigner {
+  address: string;
+  sign: (xdr: string) => Promise<string>;
+}
+
+export interface WalletWriteResult {
+  ok: boolean;
+  txHash?: string;
+  cost?: Cost;
+  error?: string;
+}
+
+async function writeViaWallet(
+  path: string,
+  body: Record<string, unknown>,
+  signer: TxSigner,
+): Promise<WalletWriteResult> {
+  const built = await post<WalletWriteResult & { xdr?: string }>(path, { ...body, source: signer.address });
+  if (!built.ok || !built.xdr) return { ok: false, error: built.error || "could not build the transaction" };
+  let signedXdr: string;
+  try {
+    signedXdr = await signer.sign(built.xdr);
+  } catch (e) {
+    return { ok: false, error: (e as Error)?.message || "signing was declined" };
+  }
+  return post<WalletWriteResult>("/tx/submit", { signedXdr });
 }
 
 /** Format base units (7 dp) as a human token amount. */
@@ -421,21 +467,29 @@ export interface RevenueSubmitResp {
 // --- accredited (identity leg) ---
 export const proveAccredited = (subject: string, accessor: string, accreditedStatus = 1) =>
   post<{ jobId: string; accessor: string; issuerId: string }>("/prove-accredited", { subject, accessor, accreditedStatus });
-export const grantAccredited = (bundle: Bundle) => post<GrantResp>("/grant-accredited", bundle);
+export const grantAccredited = (bundle: Bundle, signer?: TxSigner): Promise<GrantResp> =>
+  signer
+    ? writeViaWallet("/grant-accredited", { ...bundle }, signer).then((r) => ({ ...r, gateId: "" }))
+    : post<GrantResp>("/grant-accredited", bundle);
 export const getAccreditedAccess = (accessor: string) =>
   fetch(`${BASE}/accredited/access/${accessor}`).then(j<AccreditedAccessResp>);
 
 // --- revenue (financial leg) ---
 export const proveRevenue = (revenue: string) =>
   post<{ jobId: string; threshold: string; issuerId: string }>("/prove-revenue", { revenue });
-export const submitRevenue = (bundle: Bundle) => post<RevenueSubmitResp>("/fundraise/submit-revenue", bundle);
+export const submitRevenue = (bundle: Bundle, signer?: TxSigner): Promise<RevenueSubmitResp> =>
+  signer
+    ? writeViaWallet("/fundraise/submit-revenue", { ...bundle }, signer).then((r) => ({ ...r, fundraiseId: "" }))
+    : post<RevenueSubmitResp>("/fundraise/submit-revenue", bundle);
 
 // --- fundraise (the composition) ---
 export const getFundraiseInfo = () => fetch(`${BASE}/fundraise/info`).then(j<FundraiseInfo>);
 export const canAccessFundraise = (accessor: string) =>
   fetch(`${BASE}/fundraise/can-access/${accessor}`).then(j<CanAccessResp>);
-export const requestFundraiseAccess = (accessor: string) =>
-  post<FundraiseGrantResp>("/fundraise/request-access", { accessor });
+export const requestFundraiseAccess = (accessor: string, signer?: TxSigner): Promise<FundraiseGrantResp> =>
+  signer
+    ? writeViaWallet("/fundraise/request-access", { accessor }, signer).then((r) => ({ ...r, fundraiseId: "" }))
+    : post<FundraiseGrantResp>("/fundraise/request-access", { accessor });
 export const getFundraiseHistory = (start = 0, limit = 50) =>
   fetch(`${BASE}/fundraise/history?start=${start}&limit=${limit}`).then(j<{ count: number; results: InvestorAccess[]; fundraiseId: string }>);
 

@@ -1,7 +1,8 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Networks } from "@stellar/stellar-sdk";
 import { freighter } from "./client";
 import { short as shortHex } from "@/lib/format";
+import type { TxSigner } from "@/lib/api";
 
 // zkorage runs on Stellar testnet — every contract is deployed there. A wallet pointed elsewhere can
 // connect, but can't sign our transactions, so we surface a "wrong network" state instead of failing later.
@@ -169,4 +170,14 @@ export function useWallet(): WalletState {
   const v = useContext(Ctx);
   if (!v) throw new Error("useWallet must be used within <WalletProvider>");
   return v;
+}
+
+/** A stable TxSigner for the api write helpers when the wallet is connected on testnet, else undefined.
+ *  Pass it to submit()/grantAccess()/… to route a write through Freighter instead of the server relay. */
+export function useTxSigner(): TxSigner | undefined {
+  const w = useWallet();
+  return useMemo(
+    () => (w.connected && w.address ? { address: w.address, sign: w.sign } : undefined),
+    [w.connected, w.address, w.sign],
+  );
 }

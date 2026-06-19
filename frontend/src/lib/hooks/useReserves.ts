@@ -17,6 +17,7 @@ import {
 import { decodeJournal } from "@/lib/journal";
 import { toBase } from "@/lib/format";
 import { type ClaimState } from "@/components/StatusBadge";
+import { useTxSigner } from "@/lib/wallet/WalletContext";
 
 export const DECIMALS = 7;
 
@@ -34,6 +35,7 @@ export function useReserves() {
   const [resp, setResp] = useState<SubmitResp | null>(null);
   const [busy, setBusy] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const signer = useTxSigner(); // connected wallet → user signs + pays; undefined → backend relays
 
   const refreshSupply = useCallback(() => getSupply().then((s) => setSupply(s.supply)).catch(() => {}), []);
   const refreshResult = useCallback(() => getResult().then((r) => setStored(r.result)).catch(() => {}), []);
@@ -58,7 +60,7 @@ export function useReserves() {
       setState("verifying");
       setResp(null);
       try {
-        const r = await submit(b);
+        const r = await submit(b, signer);
         setResp(r);
         setState(r.ok ? "verified" : "rejected");
         if (r.ok) {
@@ -72,7 +74,7 @@ export function useReserves() {
         setBusy(false);
       }
     },
-    [bundle, info, refreshResult, refreshSupply],
+    [bundle, info, refreshResult, refreshSupply, signer],
   );
 
   const onGenerate = useCallback(async () => {
