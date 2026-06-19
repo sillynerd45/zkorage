@@ -56,22 +56,16 @@ const GROUPS: Group[] = [
         star: true,
       },
       {
-        to: "/app/dataroom/policy",
-        label: "Meet all conditions",
-        blurb: "Be admitted only if you satisfy every rule at once (for example: member, KYC'd, and accredited).",
-        testid: "task-policy",
+        to: "/app/dataroom/access",
+        label: "Open a shared document",
+        blurb: "Prove a document's conditions (member, KYC'd, accredited), then its keepers release the key to you.",
+        testid: "task-access",
       },
     ],
   },
   {
-    title: "Release & share",
+    title: "Share",
     tasks: [
-      {
-        to: "/app/dataroom/release",
-        label: "Release the key",
-        blurb: "No single server holds a file's key. It takes 2 of 3 separate keepers to release it.",
-        testid: "task-release",
-      },
       {
         to: "/app/dataroom/disclosure",
         label: "Share a masked copy",

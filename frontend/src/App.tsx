@@ -22,6 +22,7 @@ import DataroomDisclosure from "./pages/app/dataroom/Disclosure";
 import DataroomPolicy from "./pages/app/dataroom/Policy";
 import DataroomAnchor from "./pages/app/dataroom/Anchor";
 import DataroomAuthenticity from "./pages/app/dataroom/Authenticity";
+import DataroomOpenShared from "./pages/app/dataroom/OpenShared";
 
 // One unified app, two shells:
 //   PUBLIC  marketing top-bar site at "/"      : Landing, Documentation, Verify, Explorer
@@ -52,6 +53,9 @@ export default function App() {
           <Route index element={<DataRoomOverview />} />
           <Route path="demo" element={<DataroomDemo />} />
           <Route path="eligibility" element={<Eligibility />} />
+          <Route path="access" element={<DataroomOpenShared />} />
+          {/* "release" + "policy" are folded into "access" (Open a shared document) in the tab bar, but the
+              routes stay so the DR3/DR6 deep-dive pages (and their specs) remain reachable by direct URL. */}
           <Route path="release" element={<DataroomRelease />} />
           <Route path="disclosure" element={<DataroomDisclosure />} />
           <Route path="policy" element={<DataroomPolicy />} />

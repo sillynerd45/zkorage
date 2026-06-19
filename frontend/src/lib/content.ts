@@ -160,19 +160,14 @@ export const DATAROOM_TABS: DataroomTab[] = [
     star: true,
   },
   {
-    slug: "release",
-    label: "Release the key",
-    blurb: "No single server holds a document's key. It takes 2 of 3 separate keepers to release it.",
+    slug: "access",
+    label: "Open a shared document",
+    blurb: "Prove a document's conditions, then its keepers release the key to you. Anonymous, key-free in your browser.",
   },
   {
     slug: "disclosure",
     label: "Share a masked copy",
     blurb: "Prove a fact about a sealed document, then share a masked copy with an auditor that's provably the real file.",
-  },
-  {
-    slug: "policy",
-    label: "Meet all conditions",
-    blurb: "Admit someone only if they meet every condition at once, without revealing who they are.",
   },
   {
     slug: "authenticity",
