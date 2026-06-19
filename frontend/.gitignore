@@ -1,0 +1,9 @@
+*.tsbuildinfo
+test-results/
+playwright-report/
+
+# UX redesign screenshot scratch + Playwright artifacts
+.shots/
+test-results/
+playwright-report/
+tests/_shots.spec.ts

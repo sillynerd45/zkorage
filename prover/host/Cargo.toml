@@ -1,0 +1,31 @@
+[package]
+name = "host"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+# Enable on a CUDA host (e.g. WSL2 + RTX GPU): `cargo build --release -p host --features cuda`.
+# Off by default so the CPU-only VM builds unchanged.
+cuda = ["risc0-zkvm/cuda"]
+
+[dependencies]
+methods = { path = "../methods" }
+# PHASE 0 (risc0-5 GPU smoke): pinned to the only 5.x published (5.0.0-rc.1). main stays on 3.0.5.
+risc0-zkvm = { version = "=5.0.0-rc.1" }
+# Same seal encoding as the Stellar verifier expects (selector + Groth16 ABI). Used per the
+# verifier repo's own docs/verifying-risc0-proofs.md.
+# PHASE 0: risc0-ethereum-contracts has NO 5.x (latest 3.0.1 pins risc0-zkvm 3.x => conflict). Only
+# needed for encode_seal (post-proving) — irrelevant to the GPU-crash question. Disabled for the smoke;
+# restored / replaced in Phase 1.
+# risc0-ethereum-contracts = "^3.0"
+ed25519-dalek = { version = "2" }
+# `oid` feature => the SHA-256 DigestInfo OID for RSA PKCS#1 v1.5 signing in the DR4 docauth demo path.
+sha2 = { version = "0.10", features = ["oid"] }
+# Host-side RSA-2048 keygen + PKCS#1 v1.5 signing for the DR4 docauth DEMO path (the guest only VERIFIES;
+# the backend's mock-bank issuer signs in the prover-service path). Host-side only — not in any guest.
+rsa = { version = "0.9" }
+# Fresh per-proof ECIES ephemeral secret + blinding for the payroll host (host-side only, not in-guest).
+rand = "0.8"
+hex = "0.4"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = "1.0"

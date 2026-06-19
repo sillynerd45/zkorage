@@ -1,0 +1,25 @@
+{
+  "name": "zkorage-mcp",
+  "version": "0.14.0",
+  "description": "Read-only MCP server for the zkorage verifiable-claims engine (Proof-of-Reserves + KYC selective-disclosure gate + KYC∧not-sanctioned compliance gate + confidential payroll proof-of-income + fundraising composition + Confidential Data Room: DR1 data plane, DR2 anonymous eligibility, DR3 threshold committee, DR4 document-authenticity/zkPDF). Lets an AI agent query + re-verify claims on-chain. No key custody.",
+  "type": "module",
+  "bin": {
+    "zkorage-mcp": "dist/server.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "tsx src/server.ts",
+    "selftest": "tsx test/selftest.ts"
+  },
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zkorage-sdk": "file:../sdk",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

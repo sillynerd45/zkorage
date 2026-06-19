@@ -1,0 +1,38 @@
+{
+  "name": "zkorage-frontend",
+  "private": true,
+  "version": "0.4.1",
+  "type": "module",
+  "description": "zkorage Verify page (Week 1 walking skeleton).",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "serve": "serve -c serve.json -l 4173"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^15.1.0",
+    "buffer": "^6.0.3",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.469.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.17.0",
+    "tailwind-merge": "^2.6.1",
+    "zkorage-sdk": "file:../sdk"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.5.0",
+    "postcss": "^8.5.15",
+    "serve": "^14.2.4",
+    "tailwindcss": "^3.4.19",
+    "tailwindcss-animate": "^1.0.7",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11"
+  }
+}

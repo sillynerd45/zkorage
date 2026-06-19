@@ -1,0 +1,26 @@
+{
+  "name": "zkorage-keyper",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "zkorage DR3 threshold-ECIES keyper: holds one Shamir share of a per-document key K, independently watches the on-chain DR2 grant, and ECIES-seals its share to the proof-bound recipient_pub. One process per committee member; no single keyper can reconstruct K.",
+  "scripts": {
+    "keyper": "tsx src/keyper.ts",
+    "selftest": "tsx scripts/dr3-committee-selftest.ts"
+  },
+  "dependencies": {
+    "@noble/curves": "^1.6.0",
+    "@noble/hashes": "^1.5.0",
+    "@stellar/stellar-sdk": "^15.1.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

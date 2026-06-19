@@ -1,0 +1,221 @@
+openapi: 3.0.3
+info:
+  title: zkorage REST API
+  version: "0.3.0"
+  description: >
+    Orchestration + verification API for the zkorage Proof-of-Reserves engine
+    (RISC Zero → Groth16/BN254 → Soroban).
+
+    **Trust model.** The *reads* in this API are a convenience: they simulate calls against a public
+    Soroban RPC and return decoded results. The trust-minimized channels are (1) reading the policy
+    contract directly on-chain (`/count`, `/history`, `/result/{issuer}` mirror `get_*` you can call
+    yourself), and (2) re-verifying a proof against the **public** verifier contract (`/audit/verify`,
+    or the CLI recipe in every `/audit/*` response). The *writes* (`/submit`, `/mint`, `/burn`) are
+    server-signed for demo convenience and are NOT part of the verification trust path.
+servers:
+  - url: http://localhost:8787
+    description: local dev
+paths:
+  /health:
+    get:
+      summary: Liveness
+      responses: { "200": { description: ok } }
+  /info:
+    get:
+      summary: Engine config (contract IDs, network, public RPC)
+      responses:
+        "200":
+          description: config
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Info" }
+  /supply:
+    get:
+      summary: Token total_supply (on-chain read)
+      responses: { "200": { description: supply } }
+  /count:
+    get:
+      summary: Number of verified results in the on-chain append-only log
+      responses:
+        "200":
+          description: count
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { count: { type: integer }, policyId: { type: string } }
+  /history:
+    get:
+      summary: A page of the on-chain verified-results history (trust-minimized read)
+      parameters:
+        - { name: start, in: query, schema: { type: integer, default: 0 } }
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 50 } }
+      responses:
+        "200":
+          description: page
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count: { type: integer }
+                  start: { type: integer }
+                  limit: { type: integer }
+                  results:
+                    type: array
+                    items: { $ref: "#/components/schemas/VerifiedResult" }
+  /result:
+    get:
+      summary: Latest persisted verified result
+      responses: { "200": { description: latest } }
+  /result/{issuer}:
+    get:
+      summary: Persisted verified result for a specific issuer
+      parameters:
+        - { name: issuer, in: path, required: true, schema: { type: string, description: 32-byte hex issuer_id } }
+      responses:
+        "200": { description: result }
+        "404": { description: none for issuer }
+  /audit/latest:
+    get:
+      summary: Shareable audit bundle for the latest claim (everything needed to re-verify)
+      responses:
+        "200":
+          description: bundle
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditBundle" }
+  /audit/{issuer}:
+    get:
+      summary: Shareable audit bundle for a specific issuer
+      parameters:
+        - { name: issuer, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: bundle } }
+  /audit/verify:
+    post:
+      summary: Independently re-verify a proof bundle → checklist + verdict (trust-minimized)
+      requestBody:
+        required: false
+        description: A proof bundle. If omitted, the server's cached bundle is used.
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Bundle" }
+      responses:
+        "200":
+          description: verdict
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditVerifyResponse" }
+  /badge.svg:
+    get:
+      summary: Embeddable SVG badge reflecting the latest on-chain state
+      responses:
+        "200": { description: svg, content: { image/svg+xml: {} } }
+  /badge/{issuer}.svg:
+    get:
+      summary: Embeddable SVG badge for a specific issuer
+      parameters:
+        - { name: issuer, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: svg } }
+  /attest-reserves:
+    post:
+      summary: Mock custodian PoR attestation (claim_type=2; reserves stay private)
+      responses: { "200": { description: attestation } }
+  /prove-reserves:
+    post:
+      summary: Read supply → attest reserves → submit proving job to the self-hosted prover
+      responses: { "200": { description: jobId + supply } }
+  /prove-status/{id}:
+    get:
+      summary: Proving job status (proxies the prover gateway; caches the bundle on done)
+      parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
+      responses: { "200": { description: status } }
+  /submit:
+    post:
+      summary: "Server-signed: verify + supply-bind + persist the proof on the policy contract"
+      requestBody:
+        content: { application/json: { schema: { $ref: "#/components/schemas/Bundle" } } }
+      responses: { "200": { description: txHash + result + cost } }
+  /bundle/latest:
+    get:
+      summary: Most recently cached proof bundle
+      responses: { "200": { description: bundle }, "404": { description: none yet } }
+  /mint:
+    post: { summary: "Demo-only: mint zUSD (server-signed admin)", responses: { "200": { description: ok } } }
+  /burn:
+    post: { summary: "Demo-only: burn zUSD (server-signed admin)", responses: { "200": { description: ok } } }
+components:
+  schemas:
+    Info:
+      type: object
+      properties:
+        verifierId: { type: string }
+        tokenId: { type: string, nullable: true }
+        policyId: { type: string, nullable: true }
+        network: { type: string }
+        proverUrl: { type: string, nullable: true }
+        publicRpc: { type: string }
+        decimals: { type: integer }
+    Bundle:
+      type: object
+      required: [seal, image_id, journal]
+      properties:
+        seal: { type: string, description: hex }
+        image_id: { type: string, description: 32-byte hex }
+        journal: { type: string, description: raw 61-byte journal hex }
+        journal_digest: { type: string, description: hex (optional; recomputed server-side) }
+    VerifiedResult:
+      type: object
+      properties:
+        index: { type: integer }
+        result: { type: boolean }
+        supply: { type: string }
+        issuer_id: { type: string }
+        claim_type: { type: integer }
+        nonce: { type: string }
+        expiry: { type: string }
+        ledger: { type: integer }
+        timestamp: { type: string }
+    AuditBundle:
+      type: object
+      properties:
+        network: { type: string }
+        rpc: { type: string }
+        contracts:
+          type: object
+          properties:
+            verifier: { type: string }
+            token: { type: string }
+            policy: { type: string }
+        canonicalImageId: { type: string }
+        claimType: { type: integer }
+        proof: { $ref: "#/components/schemas/Bundle" }
+        onChainResult: { $ref: "#/components/schemas/VerifiedResult" }
+        currentSupply: { type: string }
+        recipe:
+          type: object
+          properties:
+            readLatestOnChain: { type: string }
+            readHistoryOnChain: { type: string }
+            reVerifyProof: { type: string }
+    AuditVerifyResponse:
+      type: object
+      properties:
+        verdict: { type: boolean }
+        checklist:
+          type: object
+          properties:
+            journalWellFormed: { type: boolean }
+            digestMatches: { type: boolean }
+            imagePinned: { type: boolean }
+            resultTrue: { type: boolean }
+            claimTypeOk: { type: boolean }
+            issuerAllowed: { type: boolean }
+            notExpired: { type: boolean }
+            proofValidOnChain: { type: boolean }
+            supplyBoundMatches: { type: boolean }
+            verdict: { type: boolean }
+        decodedJournal: { type: object }
+        recomputedDigest: { type: string }
+        liveSupply: { type: string }
+        notes: { type: array, items: { type: string } }

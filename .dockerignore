@@ -1,0 +1,40 @@
+# Both images build from the repo root (so the backend can resolve its file:../sdk dependency).
+# Keep the context lean — exclude everything the FE/BE images don't need. NOTE: do NOT blanket-exclude
+# **/dist — sdk/dist (backend dep) and frontend/dist (the served build) are both required.
+
+.git
+.gitignore
+CLAUDE.md
+README.md
+
+# Large local-only trees + other subprojects not part of the FE/BE images
+development/
+contract/
+prover/
+mcp/
+keeper/
+keyper/
+
+# Deps / build caches (re-installed inside the image)
+**/node_modules
+**/target
+**/*.tsbuildinfo
+**/*.log
+**/.cache
+
+# Backend secrets + state come in at RUNTIME (env_file + data volume), never baked into the image
+backend/.env
+backend/.env.example
+backend/data
+
+# Frontend: only dist/ + serve.json are needed by the serve image
+frontend/src
+frontend/tests
+frontend/public
+frontend/index.html
+frontend/vite.config.ts
+frontend/tsconfig*.json
+frontend/playwright.config.ts
+frontend/.env
+frontend/.env.*
+frontend/.gitignore

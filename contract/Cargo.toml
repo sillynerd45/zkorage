@@ -1,0 +1,49 @@
+[workspace]
+members = [
+    "contracts/interface",
+    "contracts/groth16-verifier",
+    "contracts/token",
+    "contracts/policy",
+    "contracts/gate",
+    "contracts/compliance",
+    "contracts/payroll",
+    "contracts/accredited",
+    "contracts/fundraise",
+    "contracts/dataroom",
+    "tools/build-utils",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+repository = "https://github.com/sillynerd45/zkorage"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+# Pinned to soroban-sdk 26.1.0 (Protocol 26 "Yardstick"; CAP-0080 BN254 MSM).
+# Upstream stellar-risc0-verifier pins 25.1.0; we rebuild on 26.1.0 per project decision.
+soroban-sdk = "26.1.0"
+ark-bn254 = "0.5.0"
+ark-ec = "0.5.0"
+ark-ff = "0.5.0"
+ark-serialize = "0.5.0"
+hex = "0.4.3"
+sha2 = "0.10.9"
+
+build-utils = { path = "tools/build-utils" }
+risc0-interface = { path = "contracts/interface" }
+
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true
+
+[profile.release-with-logs]
+inherits = "release"
+debug-assertions = true

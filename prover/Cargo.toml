@@ -1,0 +1,12 @@
+# zkorage prover workspace (RISC Zero zkVM). BUILDS ON THE x86 VM, not Windows.
+# Layout from `cargo risczero new` (cargo-risczero 3.0.5); guest is its own workspace.
+[workspace]
+resolver = "2"
+members = ["host", "methods"]
+
+[profile.dev]
+opt-level = 3
+
+[profile.release]
+debug = 1
+lto = true

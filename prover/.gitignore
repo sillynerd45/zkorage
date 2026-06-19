@@ -1,0 +1,23 @@
+/target
+/host/target
+/methods/target
+/methods/guest/target
+proof.txt
+bundle.json
+# worker docker build-context binaries (copied in at build time; do not commit — large)
+/worker/host
+/worker/r0vm
+/methods/guest-identity/target
+/methods/guest-compliance/target
+/worker/host_identity
+/worker/host_compliance
+/worker/host_payroll
+/worker/host_accredited
+/worker/host_dataroom_seal
+/worker/host_membership
+/methods/guest-payroll/target
+/methods/guest-accredited/target
+/methods/guest-dataroom-seal/target
+/methods/guest-membership/target
+# python bytecode cache (from local py_compile syntax checks of the gateway)
+/gateway/__pycache__

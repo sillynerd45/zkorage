@@ -1,0 +1,6 @@
+# core.autocrlf=true on this Windows box would otherwise hand these out as CRLF on checkout, which
+# breaks Docker .dockerignore pattern matching (trailing \r) and shell shebangs (`bash\r`). Pin LF.
+*.sh            text eol=lf
+.dockerignore   text eol=lf
+*.Dockerfile    text eol=lf
+docker-compose.yml text eol=lf

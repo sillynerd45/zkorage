@@ -1,0 +1,45 @@
+{
+  "name": "zkorage-sdk",
+  "version": "0.14.0",
+  "description": "Read-only, trust-minimized TypeScript SDK for the zkorage verifiable-claims engine on Soroban (Proof-of-Reserves + KYC selective-disclosure gate + KYC∧not-sanctioned compliance gate + confidential payroll proof-of-income with auditor view-key + fundraising composition + DR1 Confidential Data Room with a key-free recipient opener). Query + re-verify claims directly against the public chain. No keys.",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "smoke": "tsx examples/smoke.ts"
+  },
+  "keywords": [
+    "stellar",
+    "soroban",
+    "zk",
+    "proof-of-reserves",
+    "kyc",
+    "identity",
+    "selective-disclosure",
+    "risc0",
+    "groth16"
+  ],
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@noble/curves": "^1.6.0",
+    "@noble/hashes": "^1.5.0",
+    "@stellar/stellar-sdk": "^15.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

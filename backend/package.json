@@ -1,0 +1,30 @@
+{
+  "name": "zkorage-backend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "zkorage orchestration API: mock ed25519 attester + prover proxy + on-chain verify.",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "sign-demo": "tsx src/signer.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1068.0",
+    "@noble/curves": "^1.6.0",
+    "@noble/ed25519": "^2.1.0",
+    "@noble/hashes": "^1.5.0",
+    "@stellar/stellar-sdk": "^15.1.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.21.2",
+    "zkorage-sdk": "file:../sdk"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

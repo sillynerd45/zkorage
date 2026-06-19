@@ -1,0 +1,2967 @@
+// zkorage orchestration API (Weeks 1–6: Proof-of-Reserves + Identity/KYC + Compliance).
+//
+//   PoR (W1–W3): /attest /attest-reserves /prove-reserves /prove-status/:id /submit /result /supply
+//                /mint /burn /verify /bundle/latest /count /history /result/:issuer /audit/* /badge* /docs
+//   Identity/KYC (W5): /attest-kyc /prove-kyc /grant-access /gate/info /gate/count /gate/history
+//                      /gate/access/:accessor
+//   Compliance — KYC ∧ not-sanctioned (W6): /denylist /prove-compliance /grant-compliance
+//                /compliance/info /compliance/count /compliance/history /compliance/access/:accessor
+//   Confidential Data Room (DR1): /dataroom/info /dataroom/create-room /dataroom/prove-seal
+//                /dataroom/submit-document /dataroom/room/:id /dataroom/document/:room/:doc
+//                /dataroom/documents/:room /dataroom/blob/:hash /dataroom/open/:room/:doc
+//   Data Room — threshold committee (DR3): /dataroom/committee/info /dataroom/committee/seal-doc
+//                /dataroom/committee/document/:room/:doc /dataroom/committee/collect/:room/:doc
+//                /dataroom/committee/open/:room/:doc
+//   /health -> liveness ; /info -> all contract IDs + image_ids + deny-list snapshot.
+import "dotenv/config";
+import express from "express";
+import cors from "cors";
+import fs from "node:fs";
+import path from "node:path";
+import { StrKey } from "@stellar/stellar-sdk";
+import {
+  attest, attestKyc, attestPayroll, attestAccredited, attestRevenue, attestTeaser,
+  kycIssuerPubkey, payrollAttesterPubkey, accreditedIssuerPubkey, revenueAttesterPubkey, teaserAttesterPubkey,
+  demoSubjectId, demoInvestorId,
+} from "./signer.js";
+import {
+  redact, publicView, teaserFigure,
+  DEMO_FINANCIAL_DOC, DEMO_FINANCIAL_POLICY, DEMO_TEASER_FIELD, FIELD_TAG_REVENUE,
+  type DisclosurePolicy, type StructuredDoc,
+} from "./redaction.js";
+import {
+  decodeJournal,
+  decodeIdentityJournal,
+  decodeComplianceJournal,
+  decodePayrollJournal,
+  decodeDataroomSealJournal,
+  fromHex,
+  toHex,
+  type PublicClaim,
+  type PublicIdentityClaim,
+  type PublicComplianceClaim,
+  type PublicPayrollClaim,
+} from "./envelope.js";
+import { sha256 } from "@noble/hashes/sha256";
+import {
+  auditorPublicKey, auditorViewSecret, eciesOpen,
+  recipientPublicKey, recipientViewSecret, dataroomEciesOpen, aeadSeal, aeadOpen, randomKey,
+} from "./disclosure.js";
+import { getBlobStore } from "./storage.js";
+import { shamirSplit } from "./shamir.js";
+import { shareEciesOpen, reconstructWithCommitment, type SealedShare } from "./committee.js";
+import { buildMembershipJob, buildEligibleTree, idCommitment, freshIdentity } from "./membership.js";
+import { buildDocauthJob, bankIssuer } from "./docauth.js";
+import { getEligible, addEligible, indexOfCommitment } from "./eligible-store.js";
+import { demoDenyTree, DENY_DEPTH } from "./denylist.js";
+import { verifyOnChain, type Bundle } from "./verify.js";
+import { readContract, invokeContract, scBytes, scAddress, scOptAddress, scI128, scU32, scBool, jsonSafe } from "./chain.js";
+import { verifyBundle, cliRecipe, type AuditContext } from "./audit.js";
+
+const PORT = Number(process.env.PORT || 8787);
+const VERIFIER_ID =
+  process.env.VERIFIER_CONTRACT_ID || "CBAPC663PTWIWDLYNCG5WAD5MIZF4SKY43U6L2NM5ZUU5XFOS4JDYAFW";
+const TOKEN_ID = process.env.TOKEN_CONTRACT_ID || "";
+const POLICY_ID = process.env.POLICY_CONTRACT_ID || "";
+const GATE_ID = process.env.GATE_CONTRACT_ID || "";
+const COMPLIANCE_ID = process.env.COMPLIANCE_CONTRACT_ID || "";
+const PAYROLL_ID = process.env.PAYROLL_CONTRACT_ID || "";
+// Canonical payroll guest image_id (pinned by the payroll gate). Deterministic Docker build (W7).
+const PAYROLL_IMAGE_ID =
+  process.env.PAYROLL_IMAGE_ID ||
+  "2c9cc61b0dc261290209067783365842eca14b77981486eb535bbacfbd1e2785";
+// Canonical identity guest image_id (pinned by the gate). Deterministic Docker build.
+const IDENTITY_IMAGE_ID =
+  process.env.IDENTITY_IMAGE_ID ||
+  "a5198a5a359359b08dc1b0faa260e253d413dea5035c1375d19b742f7deaeb3b";
+// Canonical compliance guest image_id (pinned by the compliance gate). Deterministic Docker build.
+const COMPLIANCE_IMAGE_ID =
+  process.env.COMPLIANCE_IMAGE_ID ||
+  "54d5921c58280b63ef80905ffe6d4e506f77031b53ff2a347fe84ace423cb129";
+// Week 8 — Fundraising (composition): the accredited gate (identity leg) + the fundraise contract.
+const ACCREDITED_ID = process.env.ACCREDITED_CONTRACT_ID || "";
+const FUNDRAISE_ID = process.env.FUNDRAISE_CONTRACT_ID || "";
+// Canonical accredited guest image_id (pinned by the accredited gate). Deterministic Docker build (W8).
+const ACCREDITED_IMAGE_ID =
+  process.env.ACCREDITED_IMAGE_ID ||
+  "26d743739468287991220d6da2cb891616aa7c6b90da2eda9836395f31bcc947";
+// Revenue reuses the GENERIC claim_predicate guest (same image as PoR) — claim_type 6, value≥threshold.
+const REVENUE_IMAGE_ID =
+  process.env.REVENUE_IMAGE_ID ||
+  "973c983125ad3a9f115b2f4d8d12ec39e3f1b107f15c57643f72baf36f923502";
+// The public revenue floor X the fundraise pins (demo: $1,000,000, whole USD). Must match on-chain.
+const FUNDRAISE_THRESHOLD = BigInt(process.env.FUNDRAISE_THRESHOLD || "1000000");
+// DR1 — Confidential Data Room. The contract + the canonical seal guest image_id it pins.
+const DATAROOM_ID = process.env.DATAROOM_CONTRACT_ID || "";
+const DATAROOM_IMAGE_ID =
+  process.env.DATAROOM_IMAGE_ID ||
+  "8f24842d0647a0671ed1b898f6a42c2d104ff04b3f152067c93d9449bf65a3ce";
+// DR2 — the canonical membership guest image_id the DataRoom contract pins for request_access (claim_type 9).
+const MEMBERSHIP_IMAGE_ID =
+  process.env.MEMBERSHIP_IMAGE_ID ||
+  "9550a12e84a9b26bc3926e79e271dc0f1a740f45d86f88c19d3e3e438939011c";
+// DR4 — the canonical docauth guest image_id the DataRoom contract pins for attest_document_fact (claim_type 10).
+const DOCAUTH_IMAGE_ID =
+  process.env.DOCAUTH_IMAGE_ID ||
+  "e4f4a356cbacde61ef901500a6d396d2fa83a666b31224be2848fd69bbff8741";
+// DR5 — the teaser image the DataRoom pins for attest_teaser: the GENERIC value>=threshold guest (claim_type
+// 11), reused unchanged (no new guest). Same image as the PoR/revenue guest.
+const TEASER_IMAGE_ID =
+  process.env.TEASER_IMAGE_ID ||
+  "973c983125ad3a9f115b2f4d8d12ec39e3f1b107f15c57643f72baf36f923502";
+const ADMIN_ADDRESS =
+  process.env.ADMIN_ADDRESS || process.env.SIM_SOURCE_PUBKEY || "";
+// DR3 — the off-chain threshold-ECIES keyper committee. The backend is the DEALER: it splits each
+// document key K into shares and distributes one per keyper (bearer-token /deal), then deletes K. The
+// keypers independently watch the on-chain DR2 grant and release sealed shares to the granted recipient.
+const KEYPER_ENDPOINTS = (process.env.KEYPER_ENDPOINTS || "http://localhost:8801,http://localhost:8802,http://localhost:8803")
+  .split(",").map((s) => s.trim()).filter(Boolean);
+const KEYPER_DEAL_TOKEN = process.env.KEYPER_DEAL_TOKEN || "dr3-demo-deal-token";
+const COMMITTEE_THRESHOLD = Number(process.env.COMMITTEE_THRESHOLD || "2");
+const NETWORK = process.env.STELLAR_NETWORK || "testnet";
+const PROVER_URL = process.env.PROVER_URL || "";
+const BUNDLE_PATH = process.env.BUNDLE_PATH || path.join("data", "bundle.json");
+// Public RPC the trust-minimized "verify it yourself" channels point at (page + CLI). Not our server.
+const PUBLIC_RPC_URL = process.env.PUBLIC_RPC_URL || "https://soroban-testnet.stellar.org";
+const DECIMALS = 7;
+
+const auditCtx = (): AuditContext => ({ verifierId: VERIFIER_ID, tokenId: TOKEN_ID, policyId: POLICY_ID });
+
+function loadBundle(): Bundle | null {
+  try {
+    return JSON.parse(fs.readFileSync(BUNDLE_PATH, "utf8")) as Bundle;
+  } catch {
+    return null;
+  }
+}
+
+const app = express();
+app.use(cors());
+app.use(express.json({ limit: "2mb" }));
+
+function journalView(journalHex: string): Record<string, unknown> {
+  const j: PublicClaim = decodeJournal(fromHex(journalHex));
+  return {
+    result: j.result,
+    claimType: j.claimType,
+    issuerId: j.issuerId,
+    supply: j.threshold.toString(), // for PoR, the journal "threshold" field IS the bound supply
+    nonce: j.nonce.toString(),
+    expiry: j.expiry.toString(),
+  };
+}
+
+function identityJournalView(journalHex: string): Record<string, unknown> {
+  const j: PublicIdentityClaim = decodeIdentityJournal(fromHex(journalHex));
+  return {
+    result: j.result,
+    claimType: j.claimType,
+    issuerId: j.issuerId,
+    accessor: j.accessor,
+    nonce: j.nonce.toString(),
+    expiry: j.expiry.toString(),
+    note: "subject_id is intentionally absent — identity is hidden (selective disclosure)",
+  };
+}
+
+function complianceJournalView(journalHex: string): Record<string, unknown> {
+  const j: PublicComplianceClaim = decodeComplianceJournal(fromHex(journalHex));
+  return {
+    result: j.result,
+    claimType: j.claimType,
+    issuerId: j.issuerId,
+    denyRoot: j.denyRoot,
+    accessor: j.accessor,
+    nonce: j.nonce.toString(),
+    expiry: j.expiry.toString(),
+    note: "subject_id is intentionally absent — identity hidden; result=true ⇒ KYC passed AND not sanctioned",
+  };
+}
+
+function payrollJournalView(journalHex: string): Record<string, unknown> {
+  const j: PublicPayrollClaim = decodePayrollJournal(fromHex(journalHex));
+  return {
+    result: j.result,
+    claimType: j.claimType,
+    issuerId: j.issuerId,
+    threshold: j.threshold.toString(),
+    accessor: j.accessor,
+    auditorPub: j.auditorPub,
+    nonce: j.nonce.toString(),
+    expiry: j.expiry.toString(),
+    note: "salary is intentionally absent — paid ≥ threshold proven; the exact figure is encrypted to the auditor's view key",
+  };
+}
+
+/** Normalize an accessor input (G-address or 32-byte hex) to 64-char lowercase hex. */
+function accessorToHex(input: unknown): string {
+  const s = String(input ?? "").trim();
+  if (/^G[A-Z2-7]{55}$/.test(s)) return toHex(StrKey.decodeEd25519PublicKey(s));
+  const h = s.replace(/^0x/i, "").toLowerCase();
+  if (/^[0-9a-f]{64}$/.test(h)) return h;
+  throw new Error("accessor must be a Stellar G-address or 32-byte hex");
+}
+
+/** Validate a KYC status: only 0 (failed → no receipt) or 1 (passed) are meaningful. */
+function toKycStatus(v: unknown): bigint {
+  const n = BigInt(v as string | number | bigint);
+  if (n !== 0n && n !== 1n) throw new Error("kycStatus must be 0 or 1");
+  return n;
+}
+
+/** Convert {whole?} or {amount?} into base-unit bigint (7 dp). */
+function toBaseUnits(body: { whole?: unknown; amount?: unknown }): bigint {
+  if (body.amount !== undefined) return BigInt(body.amount as string);
+  if (body.whole !== undefined) return BigInt(body.whole as string) * 10n ** BigInt(DECIMALS);
+  throw new Error("amount (base units) or whole (tokens) required");
+}
+
+const err = (e: unknown) => String((e as Error)?.message ?? e);
+
+app.get("/health", (_req, res) => res.json({ ok: true }));
+
+app.get("/info", (_req, res) =>
+  res.json({
+    verifierId: VERIFIER_ID,
+    tokenId: TOKEN_ID || null,
+    policyId: POLICY_ID || null,
+    gateId: GATE_ID || null,
+    complianceId: COMPLIANCE_ID || null,
+    payrollId: PAYROLL_ID || null,
+    network: NETWORK,
+    proverUrl: PROVER_URL || null,
+    publicRpc: PUBLIC_RPC_URL,
+    decimals: DECIMALS,
+    kycIssuerId: toHex(kycIssuerPubkey()),
+    identityImageId: IDENTITY_IMAGE_ID,
+    complianceImageId: COMPLIANCE_IMAGE_ID,
+    payrollImageId: PAYROLL_IMAGE_ID,
+    payrollAttesterId: toHex(payrollAttesterPubkey()),
+    auditorPub: toHex(auditorPublicKey()),
+    denyRoot: demoDenyTree().rootHex(),
+    denyDepth: DENY_DEPTH,
+    denySize: demoDenyTree().size(),
+    // Week 8 — fundraising composition
+    accreditedId: ACCREDITED_ID || null,
+    fundraiseId: FUNDRAISE_ID || null,
+    accreditedImageId: ACCREDITED_IMAGE_ID,
+    accreditedIssuerId: toHex(accreditedIssuerPubkey()),
+    revenueImageId: REVENUE_IMAGE_ID,
+    revenueAttesterId: toHex(revenueAttesterPubkey()),
+    fundraiseThreshold: FUNDRAISE_THRESHOLD.toString(),
+    // DR1 — Confidential Data Room
+    dataroomId: DATAROOM_ID || null,
+    dataroomImageId: DATAROOM_IMAGE_ID,
+    dataroomRecipientPub: toHex(recipientPublicKey()),
+    blobStorage: getBlobStore().backend,
+  }),
+);
+
+app.get("/supply", async (_req, res) => {
+  if (!TOKEN_ID) return res.status(503).json({ error: "TOKEN_CONTRACT_ID not configured" });
+  try {
+    const { value } = await readContract(TOKEN_ID, "total_supply");
+    res.json({ supply: String(value), decimals: DECIMALS });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+app.post("/attest", (req, res) => {
+  const { claimType = 1, value, nonce = 1, expiry = 9_999_999_999 } = req.body ?? {};
+  if (value === undefined) return res.status(400).json({ error: "value required" });
+  try {
+    res.json(attest({ claimType: Number(claimType), value: BigInt(value), nonce: BigInt(nonce), expiry: BigInt(expiry) }));
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+// Mock custodian attestation for Proof-of-Reserves. `reserves` stays server-side (private witness).
+app.post("/attest-reserves", (req, res) => {
+  const { reserves, nonce = 1, expiry = 9_999_999_999 } = req.body ?? {};
+  if (reserves === undefined) return res.status(400).json({ error: "reserves required" });
+  try {
+    res.json(attest({ claimType: 2, value: BigInt(reserves), nonce: BigInt(nonce), expiry: BigInt(expiry) }));
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+// Read on-chain supply, bind it as the threshold, attest reserves, submit a proving job to the gateway.
+app.post("/prove-reserves", async (req, res) => {
+  if (!PROVER_URL) return res.status(503).json({ error: "PROVER_URL not configured" });
+  if (!TOKEN_ID) return res.status(503).json({ error: "TOKEN_CONTRACT_ID not configured" });
+  const { reserves, expiry = 9_999_999_999, nonce = 1 } = req.body ?? {};
+  if (reserves === undefined) return res.status(400).json({ error: "reserves required" });
+  try {
+    const { value: supplyRaw } = await readContract(TOKEN_ID, "total_supply");
+    const supply = BigInt(String(supplyRaw));
+    const a = attest({ claimType: 2, value: BigInt(reserves), nonce: BigInt(nonce), expiry: BigInt(expiry) });
+    const r = await fetch(`${PROVER_URL}/prove`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        envelope_hex: a.envelope,
+        signature_hex: a.signature,
+        issuer_pubkey_hex: a.issuer_pubkey,
+        // String, not Number — a u64 supply can exceed 2^53; the gateway + host parse it exactly.
+        threshold: supply.toString(),
+      }),
+    });
+    const j = (await r.json()) as { job_id?: string; error?: string };
+    if (!r.ok || !j.job_id) return res.status(502).json({ error: j.error || "prover submit failed" });
+    res.json({ jobId: j.job_id, supply: supply.toString(), issuerId: a.issuer_pubkey });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+app.get("/prove-status/:id", async (req, res) => {
+  if (!PROVER_URL) return res.status(503).json({ error: "PROVER_URL not configured" });
+  try {
+    const r = await fetch(`${PROVER_URL}/prove/${req.params.id}`);
+    const j = (await r.json()) as { status?: string; bundle?: Bundle };
+    if (j.status === "done" && j.bundle) {
+      // BUNDLE_PATH is the cache the PoR `/audit/latest` channel serves — cache ONLY genuine
+      // Proof-of-Reserves bundles (61-byte journal, claim_type 2). `/prove-status` is generic (it
+      // proxies KYC / compliance / payroll / accredited / revenue jobs too), so without this guard a
+      // poll of any other kind would clobber the PoR audit bundle with a non-PoR journal.
+      const bundle = j.bundle;
+      const jrnl = bundle.journal;
+      const dj = jrnl ? safe(() => decodeJournal(fromHex(jrnl))) : undefined;
+      if (dj && dj.claimType === 2) {
+        fs.mkdirSync(path.dirname(BUNDLE_PATH), { recursive: true });
+        fs.writeFileSync(BUNDLE_PATH, JSON.stringify(bundle));
+      }
+    }
+    res.status(r.status).json(j);
+  } catch (e) {
+    res.status(502).json({ error: err(e) });
+  }
+});
+
+// Server-sign + send the policy submit_proof_of_reserves tx (verify + supply-binding + persist).
+app.post("/submit", async (req, res) => {
+  if (!POLICY_ID) return res.status(503).json({ error: "POLICY_CONTRACT_ID not configured" });
+  const b = req.body as Bundle;
+  if (!b?.seal || !b?.image_id || !b?.journal) {
+    return res.status(400).json({ error: "seal, image_id, journal (raw) required" });
+  }
+  try {
+    const out = await invokeContract(POLICY_ID, "submit_proof_of_reserves", [
+      scBytes(b.seal),
+      scBytes(b.image_id),
+      scBytes(b.journal),
+    ]);
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, result: jsonSafe(out.returnValue), policyId: POLICY_ID });
+  } catch (e) {
+    res.json({ ok: false, error: err(e), policyId: POLICY_ID });
+  }
+});
+
+app.get("/result", async (_req, res) => {
+  if (!POLICY_ID) return res.status(503).json({ error: "POLICY_CONTRACT_ID not configured" });
+  try {
+    const { value } = await readContract(POLICY_ID, "get_latest_result");
+    res.json({ result: value ? jsonSafe(value) : null, policyId: POLICY_ID });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// --- demo-only supply controls (server-signed admin) ---
+app.post("/mint", async (req, res) => {
+  if (!TOKEN_ID || !ADMIN_ADDRESS) return res.status(503).json({ error: "TOKEN_CONTRACT_ID/ADMIN_ADDRESS not configured" });
+  try {
+    const amount = toBaseUnits(req.body ?? {});
+    const out = await invokeContract(TOKEN_ID, "mint", [scAddress(ADMIN_ADDRESS), scI128(amount)]);
+    const { value: supply } = await readContract(TOKEN_ID, "total_supply");
+    res.json({ ok: true, txHash: out.hash, minted: amount.toString(), supply: String(supply) });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: err(e) });
+  }
+});
+
+app.post("/burn", async (req, res) => {
+  if (!TOKEN_ID || !ADMIN_ADDRESS) return res.status(503).json({ error: "TOKEN_CONTRACT_ID/ADMIN_ADDRESS not configured" });
+  try {
+    const amount = toBaseUnits(req.body ?? {});
+    const out = await invokeContract(TOKEN_ID, "burn", [scAddress(ADMIN_ADDRESS), scI128(amount)]);
+    const { value: supply } = await readContract(TOKEN_ID, "total_supply");
+    res.json({ ok: true, txHash: out.hash, burned: amount.toString(), supply: String(supply) });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: err(e) });
+  }
+});
+
+// W1: bare-verifier simulate (kept for the tamper/adversarial demo).
+app.post("/verify", async (req, res) => {
+  const b = req.body as Bundle;
+  if (!b?.seal || !b?.image_id || !b?.journal_digest) {
+    return res.status(400).json({ error: "seal, image_id, journal_digest required" });
+  }
+  try {
+    const result = await verifyOnChain(VERIFIER_ID, b);
+    const journal = b.journal ? safe(() => journalView(b.journal!)) : undefined;
+    res.json({ ...result, contractId: VERIFIER_ID, journal });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: err(e) });
+  }
+});
+
+app.get("/bundle/latest", (_req, res) => {
+  const b = loadBundle();
+  if (!b) return res.status(404).json({ error: "no bundle yet" });
+  res.json(b);
+});
+
+// ---------------------------------------------------------------------------------------------------
+// Week 3 — verification channels: on-chain history listing + shareable audit bundle + independent
+// re-verify + embeddable badge + API docs. All reads are trust-minimized (simulate, no signer).
+// ---------------------------------------------------------------------------------------------------
+
+// Total number of verified results in the on-chain append-only log.
+app.get("/count", async (_req, res) => {
+  if (!POLICY_ID) return res.status(503).json({ error: "POLICY_CONTRACT_ID not configured" });
+  try {
+    const { value } = await readContract(POLICY_ID, "get_count");
+    res.json({ count: Number(value ?? 0), policyId: POLICY_ID });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// A page of the on-chain verified-results history. ?start=0&limit=50 (limit clamped to 50 on-chain).
+app.get("/history", async (req, res) => {
+  if (!POLICY_ID) return res.status(503).json({ error: "POLICY_CONTRACT_ID not configured" });
+  const start = Math.max(0, Number(req.query.start ?? 0) | 0);
+  const limit = Math.min(50, Math.max(1, Number(req.query.limit ?? 50) | 0));
+  try {
+    const [{ value: countRaw }, { value: rows }] = await Promise.all([
+      readContract(POLICY_ID, "get_count"),
+      readContract(POLICY_ID, "get_history", [scU32(start), scU32(limit)]),
+    ]);
+    res.json({
+      count: Number(countRaw ?? 0),
+      start,
+      limit,
+      results: rows ? (jsonSafe(rows) as unknown[]) : [],
+      policyId: POLICY_ID,
+    });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// The persisted result for a specific issuer (hex 32-byte issuer_id).
+app.get("/result/:issuer", async (req, res) => {
+  if (!POLICY_ID) return res.status(503).json({ error: "POLICY_CONTRACT_ID not configured" });
+  const issuer = String(req.params.issuer || "").replace(/^0x/, "");
+  if (!/^[0-9a-fA-F]{64}$/.test(issuer)) return res.status(400).json({ error: "issuer must be 32-byte hex" });
+  try {
+    const { value } = await readContract(POLICY_ID, "get_result", [scBytes(issuer)]);
+    if (!value) return res.status(404).json({ error: "no result for issuer", issuer });
+    res.json({ result: jsonSafe(value), policyId: POLICY_ID });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// Shareable audit bundle: everything a third party needs to re-verify a claim independently.
+async function buildAudit(issuer?: string) {
+  const method = issuer ? "get_result" : "get_latest_result";
+  const args = issuer ? [scBytes(issuer)] : [];
+  const [{ value: stored }, { value: cfg }, { value: supply }] = await Promise.all([
+    readContract(POLICY_ID, method, args),
+    readContract(POLICY_ID, "get_config"),
+    TOKEN_ID ? readContract(TOKEN_ID, "total_supply") : Promise.resolve({ value: null, cost: {} }),
+  ]);
+  const config = cfg ? (jsonSafe(cfg) as Record<string, unknown>) : null;
+  const proof = loadBundle();
+  return {
+    network: NETWORK,
+    rpc: PUBLIC_RPC_URL,
+    contracts: { verifier: VERIFIER_ID, token: TOKEN_ID || null, policy: POLICY_ID || null },
+    canonicalImageId: (config?.image_id as string) ?? null,
+    claimType: (config?.claim_type as number) ?? null,
+    proof, // most recent proof bundle (seal, image_id, journal, journal_digest)
+    decodedJournal: proof?.journal ? safe(() => journalView(proof.journal!)) : null,
+    onChainResult: stored ? jsonSafe(stored) : null,
+    currentSupply: supply != null ? String(supply) : null,
+    decimals: DECIMALS,
+    recipe: cliRecipe(auditCtx(), proof),
+  };
+}
+
+app.get("/audit/latest", async (_req, res) => {
+  if (!POLICY_ID) return res.status(503).json({ error: "POLICY_CONTRACT_ID not configured" });
+  try {
+    res.json(await buildAudit());
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+app.get("/audit/verify", (_req, res) =>
+  res.status(405).json({ error: "use POST /audit/verify with a bundle, or GET /audit/:issuer" }),
+);
+
+app.get("/audit/:issuer", async (req, res) => {
+  if (!POLICY_ID) return res.status(503).json({ error: "POLICY_CONTRACT_ID not configured" });
+  const issuer = String(req.params.issuer || "").replace(/^0x/, "");
+  if (!/^[0-9a-fA-F]{64}$/.test(issuer)) return res.status(400).json({ error: "issuer must be 32-byte hex" });
+  try {
+    res.json(await buildAudit(issuer));
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// Independent re-verify of a posted bundle (or the cached one) → checklist + verdict.
+app.post("/audit/verify", async (req, res) => {
+  if (!POLICY_ID || !TOKEN_ID) return res.status(503).json({ error: "POLICY/TOKEN not configured" });
+  const b = (req.body && Object.keys(req.body).length ? req.body : loadBundle()) as Bundle | null;
+  if (!b) return res.status(400).json({ error: "no bundle posted and none cached" });
+  try {
+    const out = await verifyBundle(auditCtx(), b);
+    res.json({ ...out, recipe: cliRecipe(auditCtx(), b, out.recomputedDigest) });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// Embeddable SVG badge reflecting the on-chain state (VERIFIED / SUPPLY STALE / UNVERIFIED).
+async function badgeSvg(issuer?: string): Promise<string> {
+  let label = "UNVERIFIED";
+  let fill = "#6b7280";
+  let supplyStr = "";
+  try {
+    const method = issuer ? "get_result" : "get_latest_result";
+    const args = issuer ? [scBytes(issuer)] : [];
+    const [{ value: stored }, supplyRes] = await Promise.all([
+      readContract(POLICY_ID, method, args),
+      TOKEN_ID ? readContract(TOKEN_ID, "total_supply") : Promise.resolve({ value: null, cost: {} }),
+    ]);
+    if (stored) {
+      const r = jsonSafe(stored) as { supply?: string | number };
+      const bound = String(r.supply ?? "");
+      const live = supplyRes.value != null ? String(supplyRes.value) : "";
+      supplyStr = bound ? `${(BigInt(bound) / 10n ** BigInt(DECIMALS)).toLocaleString("en-US")} zUSD` : "";
+      if (live && bound && live === bound) { label = "VERIFIED"; fill = "#2563EB"; }
+      else { label = "SUPPLY STALE"; fill = "#f59e0b"; }
+    }
+  } catch { /* fall through to UNVERIFIED */ }
+  const right = label === "VERIFIED" ? `reserves ≥ supply · ${supplyStr}` : label;
+  const w = 360, h = 40;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" role="img" aria-label="zkorage ${label}">
+  <rect width="${w}" height="${h}" rx="8" fill="#0b0b0f"/>
+  <rect x="1" y="1" width="${w - 2}" height="${h - 2}" rx="7" fill="none" stroke="${fill}" stroke-opacity="0.5"/>
+  <circle cx="20" cy="${h / 2}" r="5" fill="${fill}"/>
+  <text x="36" y="17" font-family="Verdana,Segoe UI,sans-serif" font-size="12" fill="#e5e7eb" font-weight="700">zkorage · Proof-of-Reserves</text>
+  <text x="36" y="31" font-family="Verdana,Segoe UI,sans-serif" font-size="11" fill="${fill}">${right}</text>
+</svg>`;
+}
+
+function sendSvg(res: express.Response, svg: string) {
+  res.setHeader("Content-Type", "image/svg+xml; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, max-age=0");
+  res.send(svg);
+}
+
+app.get("/badge.svg", async (_req, res) => {
+  try { sendSvg(res, await badgeSvg()); } catch (e) { res.status(500).json({ error: err(e) }); }
+});
+app.get("/badge/:issuer.svg", async (req, res) => {
+  const issuer = String(req.params.issuer || "").replace(/^0x/, "");
+  try { sendSvg(res, await badgeSvg(/^[0-9a-fA-F]{64}$/.test(issuer) ? issuer : undefined)); }
+  catch (e) { res.status(500).json({ error: err(e) }); }
+});
+
+// API docs: the OpenAPI spec + a Swagger-UI page (CDN).
+app.get("/openapi.yaml", (_req, res) => {
+  try {
+    res.setHeader("Content-Type", "application/yaml; charset=utf-8");
+    res.send(fs.readFileSync(path.join(process.cwd(), "openapi.yaml"), "utf8"));
+  } catch {
+    res.status(404).json({ error: "openapi.yaml not found" });
+  }
+});
+app.get("/docs", (_req, res) => {
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.send(`<!doctype html><html><head><meta charset="utf-8"><title>zkorage REST API</title>
+<link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css"></head>
+<body><div id="ui"></div>
+<script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+<script>window.onload=()=>SwaggerUIBundle({url:'/openapi.yaml',dom_id:'#ui'});</script>
+</body></html>`);
+});
+
+// ---------------------------------------------------------------------------------------------------
+// Week 5 — Identity (KYC selective disclosure): mock KYC issuer + identity prover + relying-party gate.
+// A user proves "KYC = passed" (signed by an allow-listed KYC provider) WITHOUT revealing their
+// identity; the proof is bound to a public `accessor` (a Stellar account) the gate grants access to.
+// ---------------------------------------------------------------------------------------------------
+
+// Mock KYC provider: sign an identity credential. `subject` (label or 32-byte hex) is the PRIVATE
+// identity and never reaches the journal. Returns the signed envelope (prover-side material).
+app.post("/attest-kyc", (req, res) => {
+  const { subject = "alice", kycStatus = 1, nonce = 1, expiry = 9_999_999_999 } = req.body ?? {};
+  try {
+    const subj = String(subject);
+    const subjectId = /^[0-9a-fA-F]{64}$/.test(subj) ? fromHex(subj) : demoSubjectId(subj);
+    res.json(
+      attestKyc({
+        subjectId,
+        kycStatus: toKycStatus(kycStatus),
+        nonce: BigInt(nonce),
+        expiry: BigInt(expiry),
+      }),
+    );
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+// Attest a KYC credential for a subject + bind it to `accessor`, then submit an identity proving job.
+app.post("/prove-kyc", async (req, res) => {
+  if (!PROVER_URL) return res.status(503).json({ error: "PROVER_URL not configured" });
+  const { subject = "alice", accessor, kycStatus = 1, nonce = 1, expiry = 9_999_999_999 } = req.body ?? {};
+  if (accessor === undefined) return res.status(400).json({ error: "accessor required (G-address or 32-byte hex)" });
+  // Validate + build the (deterministic, input-dependent) envelope first → 400 on bad client input.
+  let accessorHex: string;
+  let a: ReturnType<typeof attestKyc>;
+  try {
+    accessorHex = accessorToHex(accessor);
+    const subj = String(subject);
+    const subjectId = /^[0-9a-fA-F]{64}$/.test(subj) ? fromHex(subj) : demoSubjectId(subj);
+    a = attestKyc({ subjectId, kycStatus: toKycStatus(kycStatus), nonce: BigInt(nonce), expiry: BigInt(expiry) });
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  // The prover round-trip → 502 on upstream failure.
+  try {
+    const r = await fetch(`${PROVER_URL}/prove`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        kind: "identity",
+        envelope_hex: a.envelope,
+        signature_hex: a.signature,
+        issuer_pubkey_hex: a.issuer_pubkey,
+        accessor_hex: accessorHex,
+      }),
+    });
+    const j = (await r.json()) as { job_id?: string; error?: string };
+    if (!r.ok || !j.job_id) return res.status(502).json({ error: j.error || "prover submit failed" });
+    res.json({ jobId: j.job_id, accessor: accessorHex, issuerId: a.issuer_pubkey });
+  } catch (e) {
+    res.status(502).json({ error: err(e) });
+  }
+});
+
+// Server-sign + send the gate request_access tx (verify + identity policy + grant). Permissionless.
+app.post("/grant-access", async (req, res) => {
+  if (!GATE_ID) return res.status(503).json({ error: "GATE_CONTRACT_ID not configured" });
+  const b = req.body as Bundle;
+  if (!b?.seal || !b?.image_id || !b?.journal) {
+    return res.status(400).json({ error: "seal, image_id, journal (raw) required" });
+  }
+  try {
+    const out = await invokeContract(GATE_ID, "request_access", [
+      scBytes(b.seal),
+      scBytes(b.image_id),
+      scBytes(b.journal),
+    ]);
+    const journal = b.journal ? safe(() => identityJournalView(b.journal!)) : undefined;
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, result: jsonSafe(out.returnValue), journal, gateId: GATE_ID });
+  } catch (e) {
+    res.json({ ok: false, error: err(e), gateId: GATE_ID });
+  }
+});
+
+app.get("/gate/info", async (_req, res) => {
+  if (!GATE_ID) return res.status(503).json({ error: "GATE_CONTRACT_ID not configured" });
+  try {
+    const { value } = await readContract(GATE_ID, "get_config");
+    res.json({ config: value ? jsonSafe(value) : null, gateId: GATE_ID });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+app.get("/gate/count", async (_req, res) => {
+  if (!GATE_ID) return res.status(503).json({ error: "GATE_CONTRACT_ID not configured" });
+  try {
+    const { value } = await readContract(GATE_ID, "get_count");
+    res.json({ count: Number(value ?? 0), gateId: GATE_ID });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// A page of the on-chain access-grant history. ?start=0&limit=50 (limit clamped to 50 on-chain).
+app.get("/gate/history", async (req, res) => {
+  if (!GATE_ID) return res.status(503).json({ error: "GATE_CONTRACT_ID not configured" });
+  const start = Math.max(0, Number(req.query.start ?? 0) | 0);
+  const limit = Math.min(50, Math.max(1, Number(req.query.limit ?? 50) | 0));
+  try {
+    const [{ value: countRaw }, { value: rows }] = await Promise.all([
+      readContract(GATE_ID, "get_count"),
+      readContract(GATE_ID, "get_history", [scU32(start), scU32(limit)]),
+    ]);
+    res.json({
+      count: Number(countRaw ?? 0),
+      start,
+      limit,
+      results: rows ? (jsonSafe(rows) as unknown[]) : [],
+      gateId: GATE_ID,
+    });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// Is this accessor KYC-gated? (G-address or 32-byte hex.) Returns { granted, record }.
+app.get("/gate/access/:accessor", async (req, res) => {
+  if (!GATE_ID) return res.status(503).json({ error: "GATE_CONTRACT_ID not configured" });
+  let accessorHex: string;
+  try {
+    accessorHex = accessorToHex(req.params.accessor);
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const [{ value: granted }, { value: record }] = await Promise.all([
+      readContract(GATE_ID, "is_granted", [scBytes(accessorHex)]),
+      readContract(GATE_ID, "get_access", [scBytes(accessorHex)]),
+    ]);
+    res.json({
+      accessor: accessorHex,
+      granted: Boolean(granted),
+      record: record ? jsonSafe(record) : null,
+      gateId: GATE_ID,
+    });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// ---------------------------------------------------------------------------------------------------
+// Week 6 — Compliance (KYC ∧ not-sanctioned): mock KYC issuer + sanctions deny-list (IMT, sha256) +
+// combined prover + compliance gate. A user proves "KYC = passed by an allow-listed provider AND not in
+// the sanctions deny-list" WITHOUT revealing their identity, bound to a public `accessor`. The deny-list
+// tree-builder (denylist.ts) is the off-chain authority; the gate pins its root.
+// ---------------------------------------------------------------------------------------------------
+
+// The public deny-list snapshot (root/depth/size). The identities themselves are not exposed.
+app.get("/denylist", (_req, res) => {
+  const tree = demoDenyTree();
+  res.json({ root: tree.rootHex(), depth: DENY_DEPTH, size: tree.size() });
+});
+
+// Attest a KYC credential for a subject, build its sanctions non-membership witness, bind `accessor`,
+// and submit a combined compliance proving job. A SANCTIONED subject has no witness ⇒ short-circuit
+// (the tree-builder, as the authority, cannot produce one; the guest+gate enforce this regardless).
+app.post("/prove-compliance", async (req, res) => {
+  if (!PROVER_URL) return res.status(503).json({ error: "PROVER_URL not configured" });
+  const { subject = "alice", accessor, kycStatus = 1, nonce = 1, expiry = 9_999_999_999 } = req.body ?? {};
+  if (accessor === undefined) return res.status(400).json({ error: "accessor required (G-address or 32-byte hex)" });
+  let accessorHex: string;
+  let subjectId: Uint8Array;
+  let a: ReturnType<typeof attestKyc>;
+  let witness: string;
+  try {
+    accessorHex = accessorToHex(accessor);
+    const subj = String(subject);
+    subjectId = /^[0-9a-fA-F]{64}$/.test(subj) ? fromHex(subj) : demoSubjectId(subj);
+    const tree = demoDenyTree();
+    if (tree.isMember(subjectId)) {
+      // The honest ✗ case: a sanctioned subject cannot prove non-membership (no bracketing low-leaf).
+      return res.json({
+        sanctioned: true,
+        subject: subj,
+        denyRoot: tree.rootHex(),
+        message: "Subject is on the sanctions deny-list — no non-membership proof can be generated.",
+      });
+    }
+    a = attestKyc({ subjectId, kycStatus: toKycStatus(kycStatus), nonce: BigInt(nonce), expiry: BigInt(expiry) });
+    witness = tree.nonMembershipWitness(subjectId);
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const r = await fetch(`${PROVER_URL}/prove`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        kind: "compliance",
+        envelope_hex: a.envelope,
+        signature_hex: a.signature,
+        issuer_pubkey_hex: a.issuer_pubkey,
+        accessor_hex: accessorHex,
+        witness_hex: witness,
+      }),
+    });
+    const j = (await r.json()) as { job_id?: string; error?: string };
+    if (!r.ok || !j.job_id) return res.status(502).json({ error: j.error || "prover submit failed" });
+    res.json({ jobId: j.job_id, accessor: accessorHex, issuerId: a.issuer_pubkey, denyRoot: demoDenyTree().rootHex() });
+  } catch (e) {
+    res.status(502).json({ error: err(e) });
+  }
+});
+
+// Server-sign + send the compliance gate request_access tx (verify + compliance policy + grant).
+app.post("/grant-compliance", async (req, res) => {
+  if (!COMPLIANCE_ID) return res.status(503).json({ error: "COMPLIANCE_CONTRACT_ID not configured" });
+  const b = req.body as Bundle;
+  if (!b?.seal || !b?.image_id || !b?.journal) {
+    return res.status(400).json({ error: "seal, image_id, journal (raw) required" });
+  }
+  try {
+    const out = await invokeContract(COMPLIANCE_ID, "request_access", [
+      scBytes(b.seal),
+      scBytes(b.image_id),
+      scBytes(b.journal),
+    ]);
+    const journal = b.journal ? safe(() => complianceJournalView(b.journal!)) : undefined;
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, result: jsonSafe(out.returnValue), journal, complianceId: COMPLIANCE_ID });
+  } catch (e) {
+    res.json({ ok: false, error: err(e), complianceId: COMPLIANCE_ID });
+  }
+});
+
+app.get("/compliance/info", async (_req, res) => {
+  if (!COMPLIANCE_ID) return res.status(503).json({ error: "COMPLIANCE_CONTRACT_ID not configured" });
+  try {
+    const { value } = await readContract(COMPLIANCE_ID, "get_config");
+    res.json({ config: value ? jsonSafe(value) : null, complianceId: COMPLIANCE_ID });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+app.get("/compliance/count", async (_req, res) => {
+  if (!COMPLIANCE_ID) return res.status(503).json({ error: "COMPLIANCE_CONTRACT_ID not configured" });
+  try {
+    const { value } = await readContract(COMPLIANCE_ID, "get_count");
+    res.json({ count: Number(value ?? 0), complianceId: COMPLIANCE_ID });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// A page of the on-chain compliance access-grant history. ?start=0&limit=50 (clamped to 50 on-chain).
+app.get("/compliance/history", async (req, res) => {
+  if (!COMPLIANCE_ID) return res.status(503).json({ error: "COMPLIANCE_CONTRACT_ID not configured" });
+  const start = Math.max(0, Number(req.query.start ?? 0) | 0);
+  const limit = Math.min(50, Math.max(1, Number(req.query.limit ?? 50) | 0));
+  try {
+    const [{ value: countRaw }, { value: rows }] = await Promise.all([
+      readContract(COMPLIANCE_ID, "get_count"),
+      readContract(COMPLIANCE_ID, "get_history", [scU32(start), scU32(limit)]),
+    ]);
+    res.json({
+      count: Number(countRaw ?? 0),
+      start,
+      limit,
+      results: rows ? (jsonSafe(rows) as unknown[]) : [],
+      complianceId: COMPLIANCE_ID,
+    });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// Is this accessor compliance-gated (KYC'd & not-sanctioned)? (G-address or 32-byte hex.)
+app.get("/compliance/access/:accessor", async (req, res) => {
+  if (!COMPLIANCE_ID) return res.status(503).json({ error: "COMPLIANCE_CONTRACT_ID not configured" });
+  let accessorHex: string;
+  try {
+    accessorHex = accessorToHex(req.params.accessor);
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const [{ value: granted }, { value: record }] = await Promise.all([
+      readContract(COMPLIANCE_ID, "is_granted", [scBytes(accessorHex)]),
+      readContract(COMPLIANCE_ID, "get_access", [scBytes(accessorHex)]),
+    ]);
+    res.json({
+      accessor: accessorHex,
+      granted: Boolean(granted),
+      record: record ? jsonSafe(record) : null,
+      complianceId: COMPLIANCE_ID,
+    });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// ---------------------------------------------------------------------------------------------------
+// Week 7 — Confidential payroll (proof-of-income + auditor view-key): mock payroll attester + payroll
+// prover (in-guest ECIES to the auditor) + payroll gate. An employee proves "paid ≥ THRESHOLD" WITHOUT
+// revealing the salary; the salary is encrypted IN-GUEST to an allow-listed auditor's x25519 key. The
+// public sees only the boolean + the opaque ciphertext; the auditor's VIEW KEY unlocks the exact figure
+// (provably faithful — bound to the signed salary by the proof).
+//
+// ⚠️ DEMO POSTURE (NOT production): `/payroll/open` + `/payroll/audit` fall back to a SERVER-HELD demo
+// auditor secret when no `viewKey` is supplied, and (like all routes here) are unauthenticated under
+// open CORS. That is fine for the hosted demo — this backend already custodies every signer key — but it
+// means anyone who can reach this backend can decrypt salaries. This does NOT weaken the on-chain
+// soundness or the cryptographic hiding of the PUBLIC journal (the leak is only via the server that
+// holds the key). The trust-minimized, KEY-FREE path is the SDK's `openPayrollDisclosure(accessor,
+// viewKey)`, which is pure and never custodies a key. Before any production use: drop the demo-secret
+// fallback (require a caller-supplied `viewKey`), add auth, and restrict CORS.
+// ---------------------------------------------------------------------------------------------------
+
+/** Validate a positive u64-range amount (salary / threshold). */
+function toU64(v: unknown, name: string): bigint {
+  // Reject missing/empty BEFORE BigInt() — `BigInt("")` and `BigInt("  ")` both return 0n, which would
+  // silently pass as a valid u64 (e.g. an empty revenue/salary box -> a wasted proving run that proves 0).
+  if (v === undefined || v === null || (typeof v === "string" && v.trim() === "")) {
+    throw new Error(`${name} is required`);
+  }
+  const n = BigInt(v as string | number | bigint);
+  if (n < 0n || n > 18_446_744_073_709_551_615n) throw new Error(`${name} must be a u64`);
+  return n;
+}
+
+/** Resolve the auditor view-key secret: the caller's hex key if supplied, else the demo auditor's.
+ * The demo-secret fallback is a DEMO convenience only (see the section banner above). */
+function resolveViewSecret(input: unknown): Uint8Array {
+  const s = String(input ?? "").trim();
+  if (!s) return auditorViewSecret();
+  const h = s.replace(/^0x/i, "").toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(h)) throw new Error("viewKey must be 32-byte hex");
+  return fromHex(h);
+}
+
+// Mock payroll attester: sign a payroll record. `salary` stays server-side (private witness) and never
+// reaches the journal in cleartext — the ZK proof hides it (only the auditor's view key opens it).
+app.post("/attest-payroll", (req, res) => {
+  const { salary, nonce = 1, expiry = 9_999_999_999 } = req.body ?? {};
+  if (salary === undefined) return res.status(400).json({ error: "salary required" });
+  try {
+    res.json(attestPayroll({ salary: toU64(salary, "salary"), nonce: BigInt(nonce), expiry: BigInt(expiry) }));
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+// Attest a payroll record + bind `accessor` and the `auditorPub` disclosure target, then submit a
+// payroll proving job (in-guest ECIES). `threshold` is the PUBLIC income bar the salary is proven ≥.
+app.post("/prove-payroll", async (req, res) => {
+  if (!PROVER_URL) return res.status(503).json({ error: "PROVER_URL not configured" });
+  const { salary, threshold, accessor, auditorPub, nonce = 1, expiry = 9_999_999_999 } = req.body ?? {};
+  if (salary === undefined || threshold === undefined || accessor === undefined) {
+    return res.status(400).json({ error: "salary, threshold, accessor required" });
+  }
+  // Validate + build (deterministic) material first → 400 on bad client input.
+  let accessorHex: string;
+  let auditorHex: string;
+  let thr: bigint;
+  let a: ReturnType<typeof attestPayroll>;
+  try {
+    accessorHex = accessorToHex(accessor);
+    auditorHex = auditorPub ? accessorToHex(auditorPub) : toHex(auditorPublicKey());
+    thr = toU64(threshold, "threshold");
+    a = attestPayroll({ salary: toU64(salary, "salary"), nonce: BigInt(nonce), expiry: BigInt(expiry) });
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  // The prover round-trip → 502 on upstream failure.
+  try {
+    const r = await fetch(`${PROVER_URL}/prove`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        kind: "payroll",
+        envelope_hex: a.envelope,
+        signature_hex: a.signature,
+        issuer_pubkey_hex: a.issuer_pubkey,
+        accessor_hex: accessorHex,
+        auditor_pubkey_hex: auditorHex,
+        // Send the threshold as a STRING — a full u64 can exceed JS's 2^53 safe-integer range, and the
+        // gateway (str(int(...))) + host (u64 parse) handle a string exactly (avoids silent rounding).
+        threshold: thr.toString(),
+      }),
+    });
+    const j = (await r.json()) as { job_id?: string; error?: string };
+    if (!r.ok || !j.job_id) return res.status(502).json({ error: j.error || "prover submit failed" });
+    res.json({ jobId: j.job_id, accessor: accessorHex, auditorPub: auditorHex, threshold: thr.toString(), issuerId: a.issuer_pubkey });
+  } catch (e) {
+    res.status(502).json({ error: err(e) });
+  }
+});
+
+// Server-sign + send the payroll gate submit_payroll_proof tx (verify + payroll policy + grant).
+app.post("/submit-payroll", async (req, res) => {
+  if (!PAYROLL_ID) return res.status(503).json({ error: "PAYROLL_CONTRACT_ID not configured" });
+  const b = req.body as Bundle;
+  if (!b?.seal || !b?.image_id || !b?.journal) {
+    return res.status(400).json({ error: "seal, image_id, journal (raw) required" });
+  }
+  try {
+    const out = await invokeContract(PAYROLL_ID, "submit_payroll_proof", [
+      scBytes(b.seal),
+      scBytes(b.image_id),
+      scBytes(b.journal),
+    ]);
+    const journal = b.journal ? safe(() => payrollJournalView(b.journal!)) : undefined;
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, result: jsonSafe(out.returnValue), journal, payrollId: PAYROLL_ID });
+  } catch (e) {
+    res.json({ ok: false, error: err(e), payrollId: PAYROLL_ID });
+  }
+});
+
+app.get("/payroll/info", async (_req, res) => {
+  if (!PAYROLL_ID) return res.status(503).json({ error: "PAYROLL_CONTRACT_ID not configured" });
+  try {
+    const { value } = await readContract(PAYROLL_ID, "get_config");
+    res.json({ config: value ? jsonSafe(value) : null, auditorPub: toHex(auditorPublicKey()), payrollId: PAYROLL_ID });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+app.get("/payroll/count", async (_req, res) => {
+  if (!PAYROLL_ID) return res.status(503).json({ error: "PAYROLL_CONTRACT_ID not configured" });
+  try {
+    const { value } = await readContract(PAYROLL_ID, "get_count");
+    res.json({ count: Number(value ?? 0), payrollId: PAYROLL_ID });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// A page of the on-chain income-verified history. ?start=0&limit=50 (clamped to 50 on-chain).
+app.get("/payroll/history", async (req, res) => {
+  if (!PAYROLL_ID) return res.status(503).json({ error: "PAYROLL_CONTRACT_ID not configured" });
+  const start = Math.max(0, Number(req.query.start ?? 0) | 0);
+  const limit = Math.min(50, Math.max(1, Number(req.query.limit ?? 50) | 0));
+  try {
+    const [{ value: countRaw }, { value: rows }] = await Promise.all([
+      readContract(PAYROLL_ID, "get_count"),
+      readContract(PAYROLL_ID, "get_history", [scU32(start), scU32(limit)]),
+    ]);
+    res.json({
+      count: Number(countRaw ?? 0),
+      start,
+      limit,
+      results: rows ? (jsonSafe(rows) as unknown[]) : [],
+      payrollId: PAYROLL_ID,
+    });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// Is this accessor income-verified? (G-address or 32-byte hex.) The public read — salary stays hidden.
+app.get("/payroll/access/:accessor", async (req, res) => {
+  if (!PAYROLL_ID) return res.status(503).json({ error: "PAYROLL_CONTRACT_ID not configured" });
+  let accessorHex: string;
+  try {
+    accessorHex = accessorToHex(req.params.accessor);
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const [{ value: granted }, { value: record }] = await Promise.all([
+      readContract(PAYROLL_ID, "is_granted", [scBytes(accessorHex)]),
+      readContract(PAYROLL_ID, "get_access", [scBytes(accessorHex)]),
+    ]);
+    res.json({
+      accessor: accessorHex,
+      granted: Boolean(granted),
+      record: record ? jsonSafe(record) : null,
+      payrollId: PAYROLL_ID,
+    });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// AUDITOR VIEW-KEY: open one accessor's disclosure → the exact salary + a `faithful` proof. The view
+// key is the caller's (body.viewKey hex) or the demo auditor's. The PUBLIC has no key → cannot decrypt.
+app.post("/payroll/open/:accessor", async (req, res) => {
+  if (!PAYROLL_ID) return res.status(503).json({ error: "PAYROLL_CONTRACT_ID not configured" });
+  let accessorHex: string;
+  let viewSecret: Uint8Array;
+  try {
+    accessorHex = accessorToHex(req.params.accessor);
+    viewSecret = resolveViewSecret(req.body?.viewKey);
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const { value: rec } = await readContract(PAYROLL_ID, "get_access", [scBytes(accessorHex)]);
+    if (!rec) return res.status(404).json({ error: "no grant for accessor", accessor: accessorHex });
+    const r = rec as { eph_pub: Uint8Array; ct: Uint8Array; tag: Uint8Array; threshold: bigint };
+    const opened = eciesOpen(new Uint8Array(r.eph_pub), new Uint8Array(r.ct), new Uint8Array(r.tag), viewSecret);
+    res.json({
+      accessor: accessorHex,
+      threshold: String(r.threshold),
+      salary: opened.faithful ? opened.salary.toString() : null,
+      faithful: opened.faithful,
+      payrollId: PAYROLL_ID,
+    });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// AUDITOR DASHBOARD: open the grant history → per-EMPLOYEE salaries + the payroll TOTAL. (Q3:
+// per-employee disclosure; the auditor sums.) Deduped by `accessor` keeping the LATEST grant (the
+// append-only log can hold re-proofs for the same employee — a payroll total must count each employee
+// once, not per income-verification event). Only faithful entries count toward the total.
+app.post("/payroll/audit", async (req, res) => {
+  if (!PAYROLL_ID) return res.status(503).json({ error: "PAYROLL_CONTRACT_ID not configured" });
+  let viewSecret: Uint8Array;
+  try {
+    viewSecret = resolveViewSecret(req.body?.viewKey);
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const { value: grantsRaw } = await readContract(PAYROLL_ID, "get_count");
+    const grants = Number(grantsRaw ?? 0);
+    type Row = { accessor: Uint8Array; threshold: bigint; eph_pub: Uint8Array; ct: Uint8Array; tag: Uint8Array; index: number };
+    // Page through the FULL append-only log — `get_history` clamps `limit` to MAX_PAGE (50), so a single
+    // read would silently understate the total once the log exceeds 50 income-verification events.
+    const list: Row[] = [];
+    for (let start = 0; start < grants; start += 50) {
+      const { value: rows } = await readContract(PAYROLL_ID, "get_history", [scU32(start), scU32(50)]);
+      list.push(...(((rows as Row[]) ?? [])));
+    }
+    // Dedup by accessor — history is index-ascending, so the last occurrence is the latest grant.
+    const byAccessor = new Map<string, { index: number; accessor: string; threshold: string; salary: string | null; faithful: boolean }>();
+    for (const r of list) {
+      let salary: string | null = null;
+      let faithful = false;
+      try {
+        // One malformed disclosure must NOT 500 the whole audit — mark that row unfaithful and continue.
+        const opened = eciesOpen(new Uint8Array(r.eph_pub), new Uint8Array(r.ct), new Uint8Array(r.tag), viewSecret);
+        faithful = opened.faithful;
+        salary = opened.faithful ? opened.salary.toString() : null;
+      } catch { /* unfaithful row */ }
+      byAccessor.set(toHex(new Uint8Array(r.accessor)), {
+        index: Number(r.index),
+        accessor: toHex(new Uint8Array(r.accessor)),
+        threshold: String(r.threshold),
+        salary,
+        faithful,
+      });
+    }
+    const entries = [...byAccessor.values()].sort((a, b) => a.index - b.index);
+    let total = 0n;
+    for (const e of entries) if (e.faithful && e.salary) total += BigInt(e.salary);
+    // `count` = distinct employees; `grants` = total income-verification events in the log.
+    res.json({ count: entries.length, grants, total: total.toString(), entries, payrollId: PAYROLL_ID });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+function safe<T>(fn: () => T): T | undefined {
+  try {
+    return fn();
+  } catch {
+    return undefined;
+  }
+}
+
+// ─────────────────────────── Week 8 — Fundraising (composition) ───────────────────────────
+// Investor access requires BOTH: (a) an "accredited = yes" proof (the accredited gate, identity-style)
+// AND (b) a "revenue ≥ X" proof (generic value≥threshold claim, ingested by the fundraise contract).
+// fundraise.request_investor_access AND's them on-chain (cross-call is_granted ∧ is_revenue_verified).
+
+function revenueJournalView(journalHex: string): Record<string, unknown> {
+  return jsonSafe(decodeJournal(fromHex(journalHex))) as Record<string, unknown>;
+}
+
+// --- accredited credential (identity leg) ---
+
+app.post("/attest-accredited", (req, res) => {
+  const { subject = "ivy", accreditedStatus = 1, nonce = 1, expiry = 9_999_999_999 } = req.body ?? {};
+  try {
+    const subj = String(subject);
+    const subjectId = /^[0-9a-fA-F]{64}$/.test(subj) ? fromHex(subj) : demoInvestorId(subj);
+    res.json(attestAccredited({ subjectId, accreditedStatus: BigInt(accreditedStatus), nonce: BigInt(nonce), expiry: BigInt(expiry) }));
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+// Attest "accredited = yes" for an investor + bind to `accessor`, then submit an accredited proving job.
+app.post("/prove-accredited", async (req, res) => {
+  if (!PROVER_URL) return res.status(503).json({ error: "PROVER_URL not configured" });
+  const { subject = "ivy", accessor, accreditedStatus = 1, nonce = 1, expiry = 9_999_999_999 } = req.body ?? {};
+  if (accessor === undefined) return res.status(400).json({ error: "accessor required (G-address or 32-byte hex)" });
+  let accessorHex: string;
+  let a: ReturnType<typeof attestAccredited>;
+  try {
+    accessorHex = accessorToHex(accessor);
+    const subj = String(subject);
+    const subjectId = /^[0-9a-fA-F]{64}$/.test(subj) ? fromHex(subj) : demoInvestorId(subj);
+    a = attestAccredited({ subjectId, accreditedStatus: BigInt(accreditedStatus), nonce: BigInt(nonce), expiry: BigInt(expiry) });
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const r = await fetch(`${PROVER_URL}/prove`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ kind: "accredited", envelope_hex: a.envelope, signature_hex: a.signature, issuer_pubkey_hex: a.issuer_pubkey, accessor_hex: accessorHex }),
+    });
+    const j = (await r.json()) as { job_id?: string; error?: string };
+    if (!r.ok || !j.job_id) return res.status(502).json({ error: j.error || "prover submit failed" });
+    res.json({ jobId: j.job_id, accessor: accessorHex, issuerId: a.issuer_pubkey });
+  } catch (e) {
+    res.status(502).json({ error: err(e) });
+  }
+});
+
+// Server-sign + send accredited.request_access (verify + accredited policy + grant). Permissionless.
+app.post("/grant-accredited", async (req, res) => {
+  if (!ACCREDITED_ID) return res.status(503).json({ error: "ACCREDITED_CONTRACT_ID not configured" });
+  const b = req.body as Bundle;
+  if (!b?.seal || !b?.image_id || !b?.journal) return res.status(400).json({ error: "seal, image_id, journal (raw) required" });
+  try {
+    const out = await invokeContract(ACCREDITED_ID, "request_access", [scBytes(b.seal), scBytes(b.image_id), scBytes(b.journal)]);
+    const journal = b.journal ? safe(() => identityJournalView(b.journal!)) : undefined;
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, result: jsonSafe(out.returnValue), journal, accreditedId: ACCREDITED_ID });
+  } catch (e) {
+    res.json({ ok: false, error: err(e), accreditedId: ACCREDITED_ID });
+  }
+});
+
+app.get("/accredited/info", async (_req, res) => {
+  if (!ACCREDITED_ID) return res.status(503).json({ error: "ACCREDITED_CONTRACT_ID not configured" });
+  try {
+    const { value } = await readContract(ACCREDITED_ID, "get_config");
+    res.json({ config: value ? jsonSafe(value) : null, accreditedId: ACCREDITED_ID });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+app.get("/accredited/count", async (_req, res) => {
+  if (!ACCREDITED_ID) return res.status(503).json({ error: "ACCREDITED_CONTRACT_ID not configured" });
+  try {
+    const { value } = await readContract(ACCREDITED_ID, "get_count");
+    res.json({ count: Number(value ?? 0), accreditedId: ACCREDITED_ID });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+app.get("/accredited/history", async (req, res) => {
+  if (!ACCREDITED_ID) return res.status(503).json({ error: "ACCREDITED_CONTRACT_ID not configured" });
+  const start = Math.max(0, Number(req.query.start ?? 0) | 0);
+  const limit = Math.min(50, Math.max(1, Number(req.query.limit ?? 50) | 0));
+  try {
+    const [{ value: countRaw }, { value: rows }] = await Promise.all([
+      readContract(ACCREDITED_ID, "get_count"),
+      readContract(ACCREDITED_ID, "get_history", [scU32(start), scU32(limit)]),
+    ]);
+    res.json({ count: Number(countRaw ?? 0), start, limit, results: rows ? (jsonSafe(rows) as unknown[]) : [], accreditedId: ACCREDITED_ID });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+app.get("/accredited/access/:accessor", async (req, res) => {
+  if (!ACCREDITED_ID) return res.status(503).json({ error: "ACCREDITED_CONTRACT_ID not configured" });
+  let accessorHex: string;
+  try { accessorHex = accessorToHex(req.params.accessor); } catch (e) { return res.status(400).json({ error: err(e) }); }
+  try {
+    const [{ value: granted }, { value: record }] = await Promise.all([
+      readContract(ACCREDITED_ID, "is_granted", [scBytes(accessorHex)]),
+      readContract(ACCREDITED_ID, "get_access", [scBytes(accessorHex)]),
+    ]);
+    res.json({ accessor: accessorHex, granted: Boolean(granted), record: record ? jsonSafe(record) : null, accreditedId: ACCREDITED_ID });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// --- revenue claim (financial leg) ---
+
+app.post("/attest-revenue", (req, res) => {
+  const { revenue = 1_500_000, nonce = 1, expiry = 9_999_999_999 } = req.body ?? {};
+  try {
+    res.json(attestRevenue({ revenue: toU64(revenue, "revenue"), nonce: BigInt(nonce), expiry: BigInt(expiry) }));
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+// Attest revenue + submit a value≥threshold proving job (reserves kind; threshold = the public floor X).
+// `revenue` is REQUIRED + validated (an empty/non-numeric value would otherwise burn a real proving run).
+app.post("/prove-revenue", async (req, res) => {
+  if (!PROVER_URL) return res.status(503).json({ error: "PROVER_URL not configured" });
+  const { revenue, nonce = 1, expiry = 9_999_999_999 } = req.body ?? {};
+  let a: ReturnType<typeof attestRevenue>;
+  try {
+    a = attestRevenue({ revenue: toU64(revenue, "revenue"), nonce: BigInt(nonce), expiry: BigInt(expiry) });
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const r = await fetch(`${PROVER_URL}/prove`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ kind: "reserves", envelope_hex: a.envelope, signature_hex: a.signature, issuer_pubkey_hex: a.issuer_pubkey, threshold: FUNDRAISE_THRESHOLD.toString() }),
+    });
+    const j = (await r.json()) as { job_id?: string; error?: string };
+    if (!r.ok || !j.job_id) return res.status(502).json({ error: j.error || "prover submit failed" });
+    res.json({ jobId: j.job_id, threshold: FUNDRAISE_THRESHOLD.toString(), issuerId: a.issuer_pubkey });
+  } catch (e) {
+    res.status(502).json({ error: err(e) });
+  }
+});
+
+// --- fundraise (the composition) ---
+
+// Server-sign + send fundraise.submit_revenue_proof (ingest the revenue ≥ X proof, the financial leg).
+app.post("/fundraise/submit-revenue", async (req, res) => {
+  if (!FUNDRAISE_ID) return res.status(503).json({ error: "FUNDRAISE_CONTRACT_ID not configured" });
+  const b = req.body as Bundle;
+  if (!b?.seal || !b?.image_id || !b?.journal) return res.status(400).json({ error: "seal, image_id, journal (raw) required" });
+  try {
+    const out = await invokeContract(FUNDRAISE_ID, "submit_revenue_proof", [scBytes(b.seal), scBytes(b.image_id), scBytes(b.journal)]);
+    const journal = b.journal ? safe(() => revenueJournalView(b.journal!)) : undefined;
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, result: jsonSafe(out.returnValue), journal, fundraiseId: FUNDRAISE_ID });
+  } catch (e) {
+    res.json({ ok: false, error: err(e), fundraiseId: FUNDRAISE_ID });
+  }
+});
+
+// Server-sign + send fundraise.request_investor_access (the AND: accredited ∧ revenue → admit). Permissionless.
+app.post("/fundraise/request-access", async (req, res) => {
+  if (!FUNDRAISE_ID) return res.status(503).json({ error: "FUNDRAISE_CONTRACT_ID not configured" });
+  const { accessor } = req.body ?? {};
+  if (accessor === undefined) return res.status(400).json({ error: "accessor required (G-address or 32-byte hex)" });
+  let accessorHex: string;
+  try { accessorHex = accessorToHex(accessor); } catch (e) { return res.status(400).json({ error: err(e) }); }
+  try {
+    const out = await invokeContract(FUNDRAISE_ID, "request_investor_access", [scBytes(accessorHex)]);
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, result: jsonSafe(out.returnValue), accessor: accessorHex, fundraiseId: FUNDRAISE_ID });
+  } catch (e) {
+    res.json({ ok: false, error: err(e), accessor: accessorHex, fundraiseId: FUNDRAISE_ID });
+  }
+});
+
+app.get("/fundraise/info", async (_req, res) => {
+  if (!FUNDRAISE_ID) return res.status(503).json({ error: "FUNDRAISE_CONTRACT_ID not configured" });
+  try {
+    const [{ value: config }, { value: revenueVerified }, { value: revenueRecord }, { value: count }] = await Promise.all([
+      readContract(FUNDRAISE_ID, "get_config"),
+      readContract(FUNDRAISE_ID, "is_revenue_verified"),
+      readContract(FUNDRAISE_ID, "get_revenue_record"),
+      readContract(FUNDRAISE_ID, "get_count"),
+    ]);
+    res.json({
+      config: config ? jsonSafe(config) : null,
+      revenueVerified: Boolean(revenueVerified),
+      revenueRecord: revenueRecord ? jsonSafe(revenueRecord) : null,
+      admissions: Number(count ?? 0),
+      accreditedId: ACCREDITED_ID || null,
+      fundraiseId: FUNDRAISE_ID,
+    });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// The composed live decision: can this accessor access the fundraise? (revenue ∧ accredited, on-chain.)
+app.get("/fundraise/can-access/:accessor", async (req, res) => {
+  if (!FUNDRAISE_ID) return res.status(503).json({ error: "FUNDRAISE_CONTRACT_ID not configured" });
+  let accessorHex: string;
+  try { accessorHex = accessorToHex(req.params.accessor); } catch (e) { return res.status(400).json({ error: err(e) }); }
+  try {
+    // Read the accredited leg from the gate the FUNDRAISE CONTRACT points at (its Config.accredited_gate),
+    // NOT the backend's ACCREDITED_ID env — so the per-leg breakdown can never contradict the authoritative
+    // on-chain `can_access` (which AND's revenue ∧ that same gate). Falls back to the env only if the read fails.
+    const [{ value: canAccess }, { value: revenueVerified }, { value: cfg }] = await Promise.all([
+      readContract(FUNDRAISE_ID, "can_access", [scBytes(accessorHex)]),
+      readContract(FUNDRAISE_ID, "is_revenue_verified"),
+      readContract(FUNDRAISE_ID, "get_config"),
+    ]);
+    const gateId = (cfg as { accredited_gate?: string } | null)?.accredited_gate ?? ACCREDITED_ID;
+    let accredited: boolean | null = null;
+    if (gateId) {
+      try { accredited = Boolean((await readContract(gateId, "is_granted", [scBytes(accessorHex)])).value); }
+      catch { accredited = null; }
+    }
+    res.json({
+      accessor: accessorHex,
+      canAccess: Boolean(canAccess),
+      revenueVerified: Boolean(revenueVerified),
+      accredited,
+      fundraiseId: FUNDRAISE_ID,
+    });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+app.get("/fundraise/access/:accessor", async (req, res) => {
+  if (!FUNDRAISE_ID) return res.status(503).json({ error: "FUNDRAISE_CONTRACT_ID not configured" });
+  let accessorHex: string;
+  try { accessorHex = accessorToHex(req.params.accessor); } catch (e) { return res.status(400).json({ error: err(e) }); }
+  try {
+    const { value: record } = await readContract(FUNDRAISE_ID, "get_investor_access", [scBytes(accessorHex)]);
+    res.json({ accessor: accessorHex, record: record ? jsonSafe(record) : null, fundraiseId: FUNDRAISE_ID });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+app.get("/fundraise/count", async (_req, res) => {
+  if (!FUNDRAISE_ID) return res.status(503).json({ error: "FUNDRAISE_CONTRACT_ID not configured" });
+  try {
+    const { value } = await readContract(FUNDRAISE_ID, "get_count");
+    res.json({ count: Number(value ?? 0), fundraiseId: FUNDRAISE_ID });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+app.get("/fundraise/history", async (req, res) => {
+  if (!FUNDRAISE_ID) return res.status(503).json({ error: "FUNDRAISE_CONTRACT_ID not configured" });
+  const start = Math.max(0, Number(req.query.start ?? 0) | 0);
+  const limit = Math.min(50, Math.max(1, Number(req.query.limit ?? 50) | 0));
+  try {
+    const [{ value: countRaw }, { value: rows }] = await Promise.all([
+      readContract(FUNDRAISE_ID, "get_count"),
+      readContract(FUNDRAISE_ID, "get_history", [scU32(start), scU32(limit)]),
+    ]);
+    res.json({ count: Number(countRaw ?? 0), start, limit, results: rows ? (jsonSafe(rows) as unknown[]) : [], fundraiseId: FUNDRAISE_ID });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// ───────────────────────── DR1 — Confidential Data Room (data plane) ─────────────────────────
+// Upload → encrypt (fresh K, AES-256-GCM) → store ciphertext off-chain (R2, or the local stand-in) →
+// prove the seal (kind dataroom_seal, worker-first via the gateway) → anchor on Soroban (put_document).
+// The blob is content-addressed by sha256(ciphertext); the on-chain proof binds the ECIES-sealed K to
+// that content_hash + room_id + doc_id (faithful disclosure). ZK is plumbing in DR1 (load-bearing from
+// DR2). Routes:
+//   /dataroom/info ; POST /dataroom/create-room ; POST /dataroom/prove-seal (encrypt+upload+enqueue;
+//   poll the generic /prove-status/:id) ; POST /dataroom/submit-document ; reads /dataroom/room/:roomId,
+//   /dataroom/document/:roomId/:docId, /dataroom/documents/:roomId, GET /dataroom/blob/:contentHash ;
+//   POST /dataroom/open/:roomId/:docId (recipient opener — DEMO convenience; the key-free path is the SDK).
+
+/** Normalize a room/doc id to 64-char lowercase hex: 32-byte hex passes through; any other non-empty
+ *  string is sha256-hashed to 32 bytes (human-friendly labels); empty → random 32 bytes if allowed. */
+function toBytes32(input: unknown, opts: { random?: boolean } = {}): string {
+  const s = String(input ?? "").trim();
+  if (!s) {
+    if (opts.random) return toHex(randomKey());
+    throw new Error("id required (32-byte hex or a label)");
+  }
+  const h = s.replace(/^0x/i, "").toLowerCase();
+  if (/^[0-9a-f]{64}$/.test(h)) return h;
+  return toHex(sha256(new TextEncoder().encode(s)));
+}
+
+/** An x25519 recipient public key must be 32-byte hex (NOT a G-address — it's an encryption key). */
+function toX25519PubHex(input: unknown, fallback: () => string): string {
+  const s = String(input ?? "").trim();
+  if (!s) return fallback();
+  const h = s.replace(/^0x/i, "").toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(h)) throw new Error("recipientPub must be 32-byte x25519 hex");
+  return h;
+}
+
+/** Resolve the recipient x25519 SECRET: caller's hex key if supplied, else the demo recipient's.
+ *  The demo-secret fallback is a DEMO convenience only (see the payroll-open section banner). */
+function resolveRecipientSecret(input: unknown): Uint8Array {
+  const s = String(input ?? "").trim();
+  if (!s) return recipientViewSecret();
+  const h = s.replace(/^0x/i, "").toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(h)) throw new Error("recipientKey must be 32-byte hex");
+  return fromHex(h);
+}
+
+/** Decode a journal hex into a friendly data-room seal view (K is absent — only public fields). */
+function dataroomJournalView(journalHex: string): Record<string, unknown> {
+  const j = decodeDataroomSealJournal(fromHex(journalHex));
+  return {
+    result: j.result,
+    claimType: j.claimType,
+    roomId: j.roomId,
+    docId: j.docId,
+    recipientPub: j.recipientPub,
+    contentHash: j.contentHash,
+    ephPub: j.ephPub,
+    ct: j.ct,
+    tag: j.tag,
+    note: "the 32-byte document key K is absent — sealed (ECIES) to recipientPub and bound to content_hash/room_id/doc_id",
+  };
+}
+
+/** jsonSafe a Document, then decode its blob_pointer back to its UTF-8 string for readability. The pointer
+ *  is stored on-chain as the UTF-8 bytes of a string (via `scBytesUtf8`), and `jsonSafe` renders on-chain
+ *  Bytes as hex — so blob_pointer arrives here ALWAYS as an even-length hex string, and exactly ONE
+ *  hex→utf8 decode recovers the original pointer (`r2://…`, `local://…`, or a bare content hash). The
+ *  regex + try/catch are defensive only; for all pointers we write, the decode is unconditional + correct. */
+function dataroomDocView(doc: unknown): unknown {
+  const d = jsonSafe(doc) as Record<string, unknown> | null;
+  if (d && typeof d.blob_pointer === "string" && /^([0-9a-f]{2})*$/i.test(d.blob_pointer)) {
+    try { d.blob_pointer = Buffer.from(d.blob_pointer, "hex").toString("utf8"); } catch { /* leave hex */ }
+  }
+  return d;
+}
+
+/** A blob_pointer string → an scvBytes ScVal (the contract stores it as raw Bytes). */
+const scBytesUtf8 = (s: string) => scBytes(toHex(new TextEncoder().encode(s)));
+
+app.get("/dataroom/info", async (_req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  try {
+    const [{ value: config }, { value: roomCount }] = await Promise.all([
+      readContract(DATAROOM_ID, "get_config"),
+      readContract(DATAROOM_ID, "get_room_count"),
+    ]);
+    res.json({
+      config: config ? jsonSafe(config) : null,
+      roomCount: Number(roomCount ?? 0),
+      dataroomImageId: DATAROOM_IMAGE_ID,
+      recipientPub: toHex(recipientPublicKey()),
+      storage: getBlobStore().backend,
+      dataroomId: DATAROOM_ID,
+    });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// Create a room owned by the server admin (authenticated by SIGNER_SECRET). `roomId` may be a label
+// (sha256-hashed) or 32-byte hex; omit it for a random room id.
+app.post("/dataroom/create-room", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  if (!ADMIN_ADDRESS) return res.status(503).json({ error: "ADMIN_ADDRESS not configured" });
+  let roomIdHex: string;
+  try {
+    roomIdHex = toBytes32(req.body?.roomId, { random: true });
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const out = await invokeContract(DATAROOM_ID, "create_room", [scAddress(ADMIN_ADDRESS), scBytes(roomIdHex)]);
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, roomId: roomIdHex, owner: ADMIN_ADDRESS, room: jsonSafe(out.returnValue), dataroomId: DATAROOM_ID });
+  } catch (e) {
+    res.json({ ok: false, error: err(e), roomId: roomIdHex, dataroomId: DATAROOM_ID });
+  }
+});
+
+// Encrypt a document (fresh K, AES-256-GCM), upload the ciphertext to the blob store (content-addressed),
+// then enqueue the seal proof (kind dataroom_seal) worker-first via the gateway. Poll the generic
+// /prove-status/:id for the bundle, then POST /dataroom/submit-document. K never leaves the server.
+app.post("/dataroom/prove-seal", async (req, res) => {
+  if (!PROVER_URL) return res.status(503).json({ error: "PROVER_URL not configured" });
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  const { roomId, docId, content, contentB64, recipientPub } = req.body ?? {};
+  // Validate + build (deterministic) material first → 400 on bad client input.
+  let roomIdHex: string;
+  let docIdHex: string;
+  let recipientPubHex: string;
+  let plaintext: Uint8Array;
+  try {
+    roomIdHex = toBytes32(roomId);
+    docIdHex = toBytes32(docId, { random: true });
+    recipientPubHex = toX25519PubHex(recipientPub, () => toHex(recipientPublicKey()));
+    if (typeof content === "string") plaintext = new TextEncoder().encode(content);
+    else if (typeof contentB64 === "string") plaintext = new Uint8Array(Buffer.from(contentB64, "base64"));
+    else throw new Error("content (utf8 text) or contentB64 (base64) required");
+    if (plaintext.length === 0) throw new Error("document content must be non-empty");
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  // Fail fast: the room must exist (put_document later requires the room owner's auth) — don't burn a
+  // proving run anchoring into a non-existent room.
+  try {
+    const { value: room } = await readContract(DATAROOM_ID, "get_room", [scBytes(roomIdHex)]);
+    if (!room) return res.status(404).json({ error: "room not found — create it first", roomId: roomIdHex });
+  } catch (e) {
+    return res.status(502).json({ error: err(e) });
+  }
+  // Encrypt, then enqueue the proof FIRST (it needs only the content hash, computable in-memory) and
+  // upload the ciphertext only after the gateway accepts the job — so a prover-down / enqueue failure
+  // never orphans a blob in the store. (A caller that enqueues but then abandons the flow still leaves a
+  // content-addressed blob; that is inherent and harmless — encrypted bytes, dedupable, no PII.)
+  try {
+    const k = randomKey();
+    const blob = aeadSeal(plaintext, k);
+    const contentHash = toHex(sha256(blob));
+    const r = await fetch(`${PROVER_URL}/prove`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        kind: "dataroom_seal",
+        doc_key_hex: toHex(k),
+        recipient_pubkey_hex: recipientPubHex,
+        content_hash_hex: contentHash,
+        room_id_hex: roomIdHex,
+        doc_id_hex: docIdHex,
+      }),
+    });
+    const j = (await r.json()) as { job_id?: string; error?: string };
+    if (!r.ok || !j.job_id) return res.status(502).json({ error: j.error || "prover submit failed" });
+    // Proof queued → persist the ciphertext so the recipient can fetch it once the document is anchored.
+    const put = await getBlobStore().put(blob);
+    res.json({
+      jobId: j.job_id,
+      roomId: roomIdHex,
+      docId: docIdHex,
+      recipientPub: recipientPubHex,
+      contentHash: put.contentHash,
+      blobPointer: put.blobPointer,
+      size: put.size,
+      deduped: put.deduped,
+      storage: getBlobStore().backend,
+      note: "poll /prove-status/<jobId>; on done, POST /dataroom/submit-document {seal,image_id,journal,blobPointer}",
+    });
+  } catch (e) {
+    res.status(502).json({ error: err(e) });
+  }
+});
+
+// Server-sign + send the DataRoom put_document tx (image pin → on-chain sha256(journal) → bare-verifier
+// cross-call → result∧claim_type(8) → room exists ∧ owner auth → dedup → anchor). `blobPointer` is the
+// off-chain pointer from /dataroom/prove-seal; defaults to the journal's content_hash if omitted.
+app.post("/dataroom/submit-document", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  const b = req.body as Bundle & { blobPointer?: string };
+  if (!b?.seal || !b?.image_id || !b?.journal) {
+    return res.status(400).json({ error: "seal, image_id, journal (raw) required" });
+  }
+  let pointer: string;
+  try {
+    // Default the pointer to the journal's content_hash (the blob is content-addressed, so the hash alone
+    // is a valid retrieval key) when the caller doesn't pass the richer pointer from prove-seal.
+    const view = decodeDataroomSealJournal(fromHex(b.journal));
+    pointer = typeof b.blobPointer === "string" && b.blobPointer.trim() ? b.blobPointer.trim() : view.contentHash;
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const out = await invokeContract(DATAROOM_ID, "put_document", [
+      scBytes(b.seal),
+      scBytes(b.image_id),
+      scBytes(b.journal),
+      scBytesUtf8(pointer),
+    ]);
+    const journal = safe(() => dataroomJournalView(b.journal!));
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, result: dataroomDocView(out.returnValue), journal, blobPointer: pointer, dataroomId: DATAROOM_ID });
+  } catch (e) {
+    res.json({ ok: false, error: err(e), dataroomId: DATAROOM_ID });
+  }
+});
+
+app.get("/dataroom/room/:roomId", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  let roomIdHex: string;
+  try { roomIdHex = toBytes32(req.params.roomId); } catch (e) { return res.status(400).json({ error: err(e) }); }
+  try {
+    const { value: room } = await readContract(DATAROOM_ID, "get_room", [scBytes(roomIdHex)]);
+    res.json({ roomId: roomIdHex, room: room ? jsonSafe(room) : null, dataroomId: DATAROOM_ID });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+app.get("/dataroom/document/:roomId/:docId", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  let roomIdHex: string;
+  let docIdHex: string;
+  try { roomIdHex = toBytes32(req.params.roomId); docIdHex = toBytes32(req.params.docId); }
+  catch (e) { return res.status(400).json({ error: err(e) }); }
+  try {
+    const { value: doc } = await readContract(DATAROOM_ID, "get_document", [scBytes(roomIdHex), scBytes(docIdHex)]);
+    res.json({ roomId: roomIdHex, docId: docIdHex, document: doc ? dataroomDocView(doc) : null, dataroomId: DATAROOM_ID });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// List a room's anchored documents (the append-only log). ?start=0&limit=50.
+app.get("/dataroom/documents/:roomId", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  let roomIdHex: string;
+  try { roomIdHex = toBytes32(req.params.roomId); } catch (e) { return res.status(400).json({ error: err(e) }); }
+  const start = Math.max(0, Number(req.query.start ?? 0) | 0);
+  const limit = Math.min(50, Math.max(1, Number(req.query.limit ?? 50) | 0));
+  try {
+    const { value: countRaw } = await readContract(DATAROOM_ID, "get_doc_count", [scBytes(roomIdHex)]);
+    const count = Number(countRaw ?? 0);
+    const end = Math.min(count, start + limit);
+    const idxs: number[] = [];
+    for (let i = start; i < end; i++) idxs.push(i);
+    // Fetch the page's documents in parallel (the contract has no batch read; one simulate per index).
+    const rows = await Promise.all(idxs.map((i) => readContract(DATAROOM_ID, "get_doc_by_index", [scBytes(roomIdHex), scU32(i)])));
+    const docs = rows.map((r) => r.value).filter(Boolean).map((doc) => dataroomDocView(doc));
+    res.json({ roomId: roomIdHex, count, start, limit, documents: docs, dataroomId: DATAROOM_ID });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// Fetch the raw encrypted ciphertext blob by content hash (octet-stream). The blob is encrypted; this is
+// the public availability path the recipient/SDK fetches before AEAD-decrypting. We re-verify the bytes.
+app.get("/dataroom/blob/:contentHash", async (req, res) => {
+  const h = String(req.params.contentHash || "").replace(/^0x/i, "").toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(h)) return res.status(400).json({ error: "contentHash must be 32-byte hex" });
+  try {
+    const bytes = await getBlobStore().get(h);
+    if (!bytes) return res.status(404).json({ error: "blob not found", contentHash: h });
+    if (toHex(sha256(bytes)) !== h) return res.status(502).json({ error: "stored blob hash mismatch", contentHash: h });
+    res.setHeader("Content-Type", "application/octet-stream");
+    res.setHeader("X-Content-Hash", h);
+    res.send(Buffer.from(bytes));
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// RECIPIENT OPENER (DEMO convenience — the trust-minimized KEY-FREE path is the SDK's openDocument, which
+// never custodies a key; see the payroll-open section banner for the production hardening notes). Reads the
+// on-chain Document, recovers K with the recipient x25519 secret, verifies the faithful tag, fetches the
+// blob by content_hash (re-verifying the bytes), then AES-256-GCM-decrypts → the document plaintext.
+app.post("/dataroom/open/:roomId/:docId", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  let roomIdHex: string;
+  let docIdHex: string;
+  let recipientSecret: Uint8Array;
+  try {
+    roomIdHex = toBytes32(req.params.roomId);
+    docIdHex = toBytes32(req.params.docId);
+    recipientSecret = resolveRecipientSecret(req.body?.recipientKey);
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const { value: docRaw } = await readContract(DATAROOM_ID, "get_document", [scBytes(roomIdHex), scBytes(docIdHex)]);
+    if (!docRaw) return res.status(404).json({ error: "document not found", roomId: roomIdHex, docId: docIdHex });
+    const d = docRaw as { recipient_pub: Uint8Array; content_hash: Uint8Array; eph_pub: Uint8Array; ct: Uint8Array; tag: Uint8Array; room_id: Uint8Array; doc_id: Uint8Array };
+    const contentHash = new Uint8Array(d.content_hash);
+    // Verify the faithful tag against the DOCUMENT's OWN on-chain room_id/doc_id (not the request-path ids)
+    // — self-consistent against the object being authenticated. (They're equal here since get_document is
+    // keyed by them, but this stays correct if the read path ever changes.)
+    const opened = dataroomEciesOpen(
+      new Uint8Array(d.eph_pub), new Uint8Array(d.ct), new Uint8Array(d.tag),
+      contentHash, new Uint8Array(d.room_id), new Uint8Array(d.doc_id), recipientSecret,
+    );
+    if (!opened.faithful) {
+      // Wrong recipient key, or a tag that doesn't bind K to THIS document — refuse to decrypt.
+      return res.json({ roomId: roomIdHex, docId: docIdHex, faithful: false, recipientPub: toHex(new Uint8Array(d.recipient_pub)), contentHash: toHex(contentHash), dataroomId: DATAROOM_ID });
+    }
+    const blob = await getBlobStore().get(toHex(contentHash));
+    if (!blob) return res.status(404).json({ error: "blob not found for content_hash", contentHash: toHex(contentHash) });
+    const contentHashVerified = toHex(sha256(blob)) === toHex(contentHash);
+    // 502 (not 500): a hash mismatch is the upstream store serving wrong/corrupt bytes, not a server bug.
+    if (!contentHashVerified) return res.status(502).json({ error: "fetched blob hash mismatch", contentHash: toHex(contentHash) });
+    const plaintext = aeadOpen(blob, opened.k);
+    res.json({
+      roomId: roomIdHex,
+      docId: docIdHex,
+      faithful: true,
+      contentHashVerified: true,
+      recipientPub: toHex(new Uint8Array(d.recipient_pub)),
+      contentHash: toHex(contentHash),
+      size: plaintext.length,
+      plaintextB64: Buffer.from(plaintext).toString("base64"),
+      plaintextUtf8: safe(() => new TextDecoder("utf-8", { fatal: true }).decode(plaintext)) ?? null,
+      dataroomId: DATAROOM_ID,
+    });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// ===========================================================================================
+// DR2 — anonymous eligibility (membership + nullifier). A requester gains access to a room ONLY by
+// proving, in ZK, that they are an eligible member — anonymously and once per room. The marquee
+// load-bearing ZK: an ACL cannot reproduce anonymous-but-eligible, unlinkable, quota-limited access.
+//   GET  /dataroom/membership/info
+//   POST /dataroom/membership/register     (add an id_commitment; demo: mint a fresh identity)
+//   GET  /dataroom/membership/eligible/:roomId
+//   POST /dataroom/membership/set-root      (push the room's computed eligible root on-chain; owner=admin)
+//   POST /dataroom/membership/prove-access  (build the Merkle witness + NEW-5 sig → enqueue worker-first)
+//   POST /dataroom/membership/request-access (submit the proof → request_access → grant or #NullifierUsed)
+//   GET  /dataroom/membership/is-granted/:roomId/:accessor
+//   GET  /dataroom/membership/nullifier/:roomId/:nullifier
+//   GET  /dataroom/membership/grant/:roomId/:accessor
+// The id_secret/id_trapdoor are PRIVATE witness; they reach the self-hosted (trusted) prover, never the
+// chain — anonymity is vs the on-chain verifier + the public, exactly the project's "prover sees plaintext".
+
+/** A 32-byte hex value (id_secret/id_trapdoor/holder seed/nullifier/commitment) — throws on bad input. */
+function hex32(input: unknown, name: string): Uint8Array {
+  const s = String(input ?? "").trim().replace(/^0x/i, "").toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(s)) throw new Error(`${name} must be 32-byte hex (64 hex chars)`);
+  return fromHex(s);
+}
+
+app.get("/dataroom/membership/info", async (_req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  try {
+    const { value: onchain } = await readContract(DATAROOM_ID, "get_membership_image_id");
+    res.json({
+      dataroomId: DATAROOM_ID,
+      membershipImageId: MEMBERSHIP_IMAGE_ID,
+      membershipImageOnchain: onchain ? toHex(new Uint8Array(onchain as Uint8Array)) : null,
+      claimType: 9,
+      treeDepth: 20,
+      recipientPub: toHex(recipientPublicKey()),
+      note: "request_access(seal,image_id,journal): proves depth-20 sha256-Merkle membership + per-room nullifier + NEW-5 holder sig (pk==accessor); first use grants, reuse → #NullifierUsed.",
+    });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// Register a member in a room's eligible set. Body: { roomId, idCommitment?, mint? }. With `mint` (or no
+// commitment) the DEMO backend mints a fresh identity and RETURNS its secrets (in production the member
+// generates these client-side and registers only the public commitment). Recomputes the off-chain root;
+// call /set-root to push it on-chain.
+app.post("/dataroom/membership/register", (req, res) => {
+  let roomIdHex: string;
+  try {
+    roomIdHex = toBytes32(req.body?.roomId);
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    let commitmentHex: string;
+    let minted: Record<string, string> | undefined;
+    if (req.body?.idCommitment && !req.body?.mint) {
+      commitmentHex = toHex(hex32(req.body.idCommitment, "idCommitment"));
+    } else {
+      const id = freshIdentity();
+      commitmentHex = toHex(id.commitment);
+      minted = {
+        idSecret: toHex(id.idSecret),
+        idTrapdoor: toHex(id.idTrapdoor),
+        holderSeed: toHex(id.holderSeed),
+        accessor: toHex(id.accessor),
+        note: "DEMO ONLY — in production the member generates + holds these client-side and registers only idCommitment.",
+      };
+    }
+    const { index, added, total } = addEligible(roomIdHex, commitmentHex);
+    const commitments = getEligible(roomIdHex).map((h) => fromHex(h));
+    const { root } = buildEligibleTree(commitments);
+    res.json({
+      ok: true,
+      roomId: roomIdHex,
+      idCommitment: commitmentHex,
+      memberIndex: index,
+      added,
+      memberCount: total,
+      eligibleRoot: toHex(root),
+      minted,
+      note: "call POST /dataroom/membership/set-root {roomId} to pin this root on-chain.",
+    });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+app.get("/dataroom/membership/eligible/:roomId", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  let roomIdHex: string;
+  try {
+    roomIdHex = toBytes32(req.params.roomId);
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const commitmentsHex = getEligible(roomIdHex);
+    const { root } = buildEligibleTree(commitmentsHex.map((h) => fromHex(h)));
+    const computedRoot = toHex(root);
+    const { value: pinned } = await readContract(DATAROOM_ID, "get_eligible_root", [scBytes(roomIdHex)]);
+    const pinnedRoot = pinned ? toHex(new Uint8Array(pinned as Uint8Array)) : null;
+    res.json({
+      roomId: roomIdHex,
+      memberCount: commitmentsHex.length,
+      commitments: commitmentsHex,
+      computedRoot,
+      pinnedRoot,
+      inSync: pinnedRoot === computedRoot,
+    });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// Push the room's current (off-chain computed) eligible root on-chain. set_eligible_root requires the
+// room owner's auth — the server admin (SIGNER_SECRET) owns the demo rooms. Re-pinning rotates the set.
+app.post("/dataroom/membership/set-root", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  let roomIdHex: string;
+  try {
+    roomIdHex = toBytes32(req.body?.roomId);
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const commitments = getEligible(roomIdHex).map((h) => fromHex(h));
+    if (commitments.length === 0) return res.status(400).json({ error: "no members registered for this room" });
+    const { root } = buildEligibleTree(commitments);
+    const rootHex = toHex(root);
+    const out = await invokeContract(DATAROOM_ID, "set_eligible_root", [scBytes(roomIdHex), scBytes(rootHex)]);
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, roomId: roomIdHex, eligibleRoot: rootHex, memberCount: commitments.length });
+  } catch (e) {
+    res.json({ ok: false, error: err(e), roomId: roomIdHex });
+  }
+});
+
+// Build the membership witness (from the room's eligible set) + the NEW-5 holder signature, then enqueue
+// the membership proof (kind=membership) worker-first via the gateway. Poll the generic /prove-status/:id;
+// on done, POST /dataroom/membership/request-access. The private witness goes only to the trusted prover.
+app.post("/dataroom/membership/prove-access", async (req, res) => {
+  if (!PROVER_URL) return res.status(503).json({ error: "PROVER_URL not configured" });
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  let roomIdHex: string, idSecret: Uint8Array, idTrapdoor: Uint8Array, holderSeed: Uint8Array, recipientPubHex: string;
+  try {
+    roomIdHex = toBytes32(req.body?.roomId);
+    idSecret = hex32(req.body?.idSecret, "idSecret");
+    idTrapdoor = hex32(req.body?.idTrapdoor, "idTrapdoor");
+    holderSeed = hex32(req.body?.holderSeed, "holderSeed");
+    recipientPubHex = toX25519PubHex(req.body?.recipientPub, () => toHex(recipientPublicKey()));
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    // The member must be in the room's eligible set (derive the index from the commitment — never trust a
+    // client-supplied index).
+    const commitmentHex = toHex(idCommitment(idSecret, idTrapdoor));
+    const memberIndex = indexOfCommitment(roomIdHex, commitmentHex);
+    if (memberIndex < 0) return res.status(400).json({ error: "not in the room's eligible set — register first", idCommitment: commitmentHex });
+    const commitments = getEligible(roomIdHex).map((h) => fromHex(h));
+    const built = buildMembershipJob({
+      idSecret, idTrapdoor, roomId: fromHex(roomIdHex), holderSeed,
+      recipientPub: fromHex(recipientPubHex), commitments, memberIndex,
+    });
+    const r = await fetch(`${PROVER_URL}/prove`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(built.job),
+    });
+    const j = (await r.json()) as { job_id?: string; error?: string };
+    if (!r.ok || !j.job_id) return res.status(502).json({ error: j.error || "prover submit failed" });
+    res.json({
+      jobId: j.job_id,
+      roomId: roomIdHex,
+      eligibleRoot: built.eligibleRoot,
+      nullifier: built.nullifier,
+      accessor: built.accessor,
+      recipientPub: recipientPubHex,
+      note: "poll /prove-status/<jobId>; on done, POST /dataroom/membership/request-access {seal,image_id,journal}",
+    });
+  } catch (e) {
+    res.status(502).json({ error: err(e) });
+  }
+});
+
+// Submit a membership proof to the contract: request_access (PERMISSIONLESS — the in-guest NEW-5 holder
+// sig carries the accessor's consent; the server is just the relayer/fee-payer). Grant or #NullifierUsed.
+app.post("/dataroom/membership/request-access", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  const b = req.body as Bundle;
+  if (!b?.seal || !b?.image_id || !b?.journal) {
+    return res.status(400).json({ error: "seal, image_id, journal (raw) required" });
+  }
+  try {
+    const out = await invokeContract(DATAROOM_ID, "request_access", [scBytes(b.seal), scBytes(b.image_id), scBytes(b.journal)]);
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, grant: jsonSafe(out.returnValue), dataroomId: DATAROOM_ID });
+  } catch (e) {
+    res.json({ ok: false, error: err(e), dataroomId: DATAROOM_ID });
+  }
+});
+
+app.get("/dataroom/membership/is-granted/:roomId/:accessor", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  try {
+    const roomIdHex = toBytes32(req.params.roomId);
+    const accessorHex = toHex(hex32(req.params.accessor, "accessor"));
+    const { value } = await readContract(DATAROOM_ID, "is_granted", [scBytes(roomIdHex), scBytes(accessorHex)]);
+    res.json({ roomId: roomIdHex, accessor: accessorHex, isGranted: Boolean(value) });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+app.get("/dataroom/membership/nullifier/:roomId/:nullifier", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  try {
+    const roomIdHex = toBytes32(req.params.roomId);
+    const nullifierHex = toHex(hex32(req.params.nullifier, "nullifier"));
+    const { value } = await readContract(DATAROOM_ID, "is_nullifier_used", [scBytes(roomIdHex), scBytes(nullifierHex)]);
+    res.json({ roomId: roomIdHex, nullifier: nullifierHex, used: Boolean(value) });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+app.get("/dataroom/membership/grant/:roomId/:accessor", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  try {
+    const roomIdHex = toBytes32(req.params.roomId);
+    const accessorHex = toHex(hex32(req.params.accessor, "accessor"));
+    const { value } = await readContract(DATAROOM_ID, "get_grant", [scBytes(roomIdHex), scBytes(accessorHex)]);
+    res.json({ roomId: roomIdHex, accessor: accessorHex, grant: value ? jsonSafe(value) : null });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+// ═══════════════════════════ DR3 — threshold-ECIES committee (key release) ═══════════════════════════
+//   GET  /dataroom/committee/info                              -> keypers + threshold + live health
+//   POST /dataroom/committee/seal-doc {roomId,docId,content}   -> DEALER: split K to keypers + anchor doc
+//   GET  /dataroom/committee/document/:roomId/:docId           -> on-chain committee doc (content_hash,k_commitment,pointer)
+//   POST /dataroom/committee/collect/:roomId/:docId {accessor} -> collect SEALED shares (no secret; for the SDK opener)
+//   POST /dataroom/committee/open/:roomId/:docId {accessor}    -> DEMO opener (server-side reconstruct + decrypt)
+
+/** Collect sealed shares from every keyper for a (room,doc,accessor). Each keyper independently gates on the
+ *  on-chain grant; a non-granted accessor yields zero shares. Never throws on a single keyper being down. */
+async function collectSealedShares(
+  roomIdHex: string,
+  docIdHex: string,
+  accessorHex: string,
+): Promise<{ shares: SealedShare[]; recipientPub: string; errors: string[] }> {
+  const shares: SealedShare[] = [];
+  const recipients = new Set<string>();
+  const errors: string[] = [];
+  await Promise.all(
+    KEYPER_ENDPOINTS.map(async (ep) => {
+      try {
+        const r = await fetch(`${ep}/share`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ room_id: roomIdHex, doc_id: docIdHex, accessor: accessorHex }),
+        });
+        const j = (await r.json().catch(() => ({}))) as Record<string, string>;
+        if (!r.ok) {
+          errors.push(`${ep}: ${j.error || r.status}`);
+          return;
+        }
+        shares.push({ keyperIndex: Number(j.keyper_index), ephPub: fromHex(j.eph_pub), ct: fromHex(j.ct), tag: fromHex(j.tag) });
+        recipients.add(j.recipient_pub);
+      } catch (e) {
+        errors.push(`${ep}: ${err(e)}`);
+      }
+    }),
+  );
+  if (recipients.size > 1) throw new Error(`keypers disagree on recipient_pub: ${[...recipients].join(",")}`);
+  return { shares, recipientPub: [...recipients][0] || "", errors };
+}
+
+app.get("/dataroom/committee/info", async (_req, res) => {
+  const keypers = await Promise.all(
+    KEYPER_ENDPOINTS.map(async (ep) => {
+      try {
+        const r = await fetch(`${ep}/health`, { signal: AbortSignal.timeout(4000) });
+        const h = (await r.json()) as Record<string, unknown>;
+        return { endpoint: ep, ok: h.ok === true, keyperIndex: h.keyper_index, shares: h.shares, rpc: h.rpc };
+      } catch (e) {
+        return { endpoint: ep, ok: false, error: err(e) };
+      }
+    }),
+  );
+  res.json({
+    threshold: COMMITTEE_THRESHOLD,
+    n: KEYPER_ENDPOINTS.length,
+    online: keypers.filter((k) => k.ok).length,
+    keypers,
+    dataroomId: DATAROOM_ID,
+    note: "the document key K is Shamir-split across the keypers; >= threshold sealed shares reconstruct it; no single keyper holds K",
+  });
+});
+
+// DEALER: encrypt the doc (fresh K), upload the ciphertext, Shamir-split K, distribute one share per keyper
+// (bearer-token /deal), DELETE K, then anchor the committee document on-chain (content_hash + sha256(K) +
+// pointer). After this returns, no single party holds K — only the keyper committee, t-of-n.
+app.post("/dataroom/committee/seal-doc", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  if (!ADMIN_ADDRESS) return res.status(503).json({ error: "ADMIN_ADDRESS not configured" });
+  const n = KEYPER_ENDPOINTS.length;
+  let roomIdHex: string, docIdHex: string, plaintext: Uint8Array;
+  try {
+    roomIdHex = toBytes32(req.body?.roomId);
+    docIdHex = toBytes32(req.body?.docId, { random: true });
+    const { content, contentB64 } = req.body ?? {};
+    if (typeof contentB64 === "string" && contentB64) plaintext = new Uint8Array(Buffer.from(contentB64, "base64"));
+    else if (typeof content === "string" && content) plaintext = new TextEncoder().encode(content);
+    else throw new Error("content or contentB64 required");
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    // 0) fast-fail if the room doesn't exist — anchoring reverts RoomNotFound anyway, so don't burn a blob
+    //    upload + strand shares on the keypers (mirrors the DR1 prove-seal room check).
+    const { value: roomRaw } = await readContract(DATAROOM_ID, "get_room", [scBytes(roomIdHex)]);
+    if (!roomRaw) return res.status(404).json({ error: "room not found — create it before sealing a committee doc", roomId: roomIdHex });
+
+    // 1) fresh K → AES-256-GCM blob → upload (content-addressed) → commitments.
+    const k = randomKey();
+    const blob = aeadSeal(plaintext, k);
+    const { contentHash, blobPointer: pointer } = await getBlobStore().put(blob);
+    const kCommitment = toHex(sha256(k));
+
+    // 2) Shamir-split K and distribute one share per keyper (bearer-gated /deal). Abort the anchor if any
+    //    keyper rejects the deal (the encrypted blob is harmless without K, which we drop). allSettled so a
+    //    network throw on one keyper doesn't lose the per-keyper status of the others.
+    const shares = shamirSplit(k, COMMITTEE_THRESHOLD, n); // x = 1..n
+    const settled = await Promise.allSettled(
+      shares.map(async (sh, i) => {
+        const ep = KEYPER_ENDPOINTS[i];
+        const r = await fetch(`${ep}/deal`, {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${KEYPER_DEAL_TOKEN}` },
+          body: JSON.stringify({ room_id: roomIdHex, doc_id: docIdHex, keyper_index: sh.x, share_y: toHex(sh.y) }),
+          signal: AbortSignal.timeout(8000),
+        });
+        return { ep, idx: sh.x, ok: r.ok, status: r.status };
+      }),
+    );
+    // K goes out of scope here — the dealer no longer holds it (trusted-dealer-at-split caveat documented).
+    const dealResults = settled.map((s, i) =>
+      s.status === "fulfilled" ? s.value : { ep: KEYPER_ENDPOINTS[i], idx: shares[i].x, ok: false, status: 0, error: String((s.reason as Error)?.message ?? s.reason) },
+    );
+    const failed = dealResults.filter((d) => !d.ok);
+    if (failed.length > 0) {
+      // We do NOT anchor → the doc is never readable, so any shares that DID land are inert (an unanchored
+      // doc returns null from get_committee_document, and < t honest shares reveal nothing). Log for the
+      // operator to reconcile; a retry with the same (room,doc) re-deals a fresh K, overwriting the orphans.
+      const dealt = dealResults.filter((d) => d.ok).map((d) => d.idx);
+      if (dealt.length > 0) console.warn(`[committee] partial deal for ${roomIdHex.slice(0, 8)}…/${docIdHex.slice(0, 8)}…: shares dealt to keypers [${dealt.join(",")}] are orphaned (doc NOT anchored, K dropped) — retry to overwrite`);
+      return res.status(502).json({ error: "share distribution failed — document NOT anchored", failed: failed.map((f) => ({ ep: f.ep, keyper: f.idx, status: f.status })) });
+    }
+
+    // 3) anchor the committee document on-chain (room owner = admin).
+    const out = await invokeContract(DATAROOM_ID, "put_committee_document", [
+      scBytes(roomIdHex), scBytes(docIdHex), scBytes(contentHash), scBytes(kCommitment), scBytesUtf8(pointer),
+    ]);
+    res.json({
+      ok: true,
+      roomId: roomIdHex,
+      docId: docIdHex,
+      contentHash,
+      kCommitment,
+      blobPointer: pointer,
+      dealt: dealResults.length,
+      threshold: COMMITTEE_THRESHOLD,
+      txHash: out.hash,
+      cost: out.cost,
+      note: "K was split across the keypers and dropped by the dealer; reconstruct needs >= threshold shares released to a granted recipient",
+    });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+app.get("/dataroom/committee/document/:roomId/:docId", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  try {
+    const roomIdHex = toBytes32(req.params.roomId);
+    const docIdHex = toBytes32(req.params.docId);
+    const { value } = await readContract(DATAROOM_ID, "get_committee_document", [scBytes(roomIdHex), scBytes(docIdHex)]);
+    res.json({ roomId: roomIdHex, docId: docIdHex, document: value ? dataroomDocView(value) : null, dataroomId: DATAROOM_ID });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+// Collect the SEALED shares for a granted accessor (no secret involved). The SDK/frontend opens these in the
+// browser with the recipient x25519 secret — this route never sees a key. A non-granted accessor → 403.
+app.post("/dataroom/committee/collect/:roomId/:docId", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  let roomIdHex: string, docIdHex: string, accessorHex: string;
+  try {
+    roomIdHex = toBytes32(req.params.roomId);
+    docIdHex = toBytes32(req.params.docId);
+    accessorHex = toHex(hex32(req.body?.accessor, "accessor"));
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const { shares, recipientPub, errors } = await collectSealedShares(roomIdHex, docIdHex, accessorHex);
+    if (shares.length < COMMITTEE_THRESHOLD) {
+      return res.status(403).json({ error: "fewer than threshold shares released (accessor not granted, or keypers down)", collected: shares.length, threshold: COMMITTEE_THRESHOLD, errors });
+    }
+    res.json({
+      roomId: roomIdHex,
+      docId: docIdHex,
+      accessor: accessorHex,
+      recipientPub,
+      threshold: COMMITTEE_THRESHOLD,
+      shares: shares.map((s) => ({ keyperIndex: s.keyperIndex, ephPub: toHex(s.ephPub), ct: toHex(s.ct), tag: toHex(s.tag) })),
+      errors,
+    });
+  } catch (e) {
+    res.status(502).json({ error: err(e) });
+  }
+});
+
+// DEMO server-side opener (the trust-minimized KEY-FREE path is the SDK's committee opener — Ch4). Collects
+// sealed shares, ECIES-opens each with the recipient secret, reconstructs K (commitment-gated, robust to 1
+// bad share), fetches the blob, and AES-GCM-decrypts. Uses the demo recipient secret unless one is supplied.
+app.post("/dataroom/committee/open/:roomId/:docId", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  let roomIdHex: string, docIdHex: string, accessorHex: string, recipientSecret: Uint8Array;
+  try {
+    roomIdHex = toBytes32(req.params.roomId);
+    docIdHex = toBytes32(req.params.docId);
+    accessorHex = toHex(hex32(req.body?.accessor, "accessor"));
+    recipientSecret = resolveRecipientSecret(req.body?.recipientKey);
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    // on-chain committee doc → content_hash + k_commitment.
+    const { value: docRaw } = await readContract(DATAROOM_ID, "get_committee_document", [scBytes(roomIdHex), scBytes(docIdHex)]);
+    if (!docRaw) return res.status(404).json({ error: "committee document not found" });
+    const d = docRaw as { content_hash: Uint8Array; k_commitment: Uint8Array };
+    const contentHash = toHex(new Uint8Array(d.content_hash));
+    const kCommitment = new Uint8Array(d.k_commitment);
+
+    // the AUTHORITATIVE recipient_pub is from the on-chain DR2 grant (proof-bound) — read it ourselves, not
+    // from the share aggregator (defense-in-depth: a wrong reported key can only yield a failed open).
+    const { value: grantRaw } = await readContract(DATAROOM_ID, "get_grant", [scBytes(roomIdHex), scBytes(accessorHex)]);
+    const grantRecipient = grantRaw ? toHex(new Uint8Array((grantRaw as { recipient_pub: Uint8Array }).recipient_pub)) : "";
+
+    // collect sealed shares (gated on the live grant by each keyper).
+    const { shares, errors } = await collectSealedShares(roomIdHex, docIdHex, accessorHex);
+    if (shares.length < COMMITTEE_THRESHOLD || !grantRecipient) {
+      return res.status(403).json({ error: "fewer than threshold shares released (accessor not granted, or keypers down)", collected: shares.length, threshold: COMMITTEE_THRESHOLD, errors });
+    }
+
+    // open each share, keep the faithful ones, reconstruct K (commitment-gated), then AES-GCM-decrypt.
+    const recipientPubBytes = fromHex(grantRecipient);
+    const opened = shares
+      .map((s) => shareEciesOpen(s, recipientSecret, fromHex(roomIdHex), fromHex(docIdHex), recipientPubBytes))
+      .filter((o) => o.faithful)
+      .map((o) => ({ keyperIndex: o.keyperIndex, shareY: o.shareY }));
+    if (opened.length < COMMITTEE_THRESHOLD) {
+      return res.json({ ok: false, faithful: false, reason: "fewer than threshold shares opened faithfully (wrong recipient key?)", opened: opened.length, threshold: COMMITTEE_THRESHOLD, roomId: roomIdHex, docId: docIdHex });
+    }
+    const { k, pair } = reconstructWithCommitment(opened, kCommitment);
+    const blob = await getBlobStore().get(contentHash);
+    if (!blob) return res.status(502).json({ error: "blob not found for content_hash", contentHash });
+    if (toHex(sha256(blob)) !== contentHash) return res.status(502).json({ error: "stored blob hash mismatch", contentHash });
+    const plaintext = aeadOpen(blob, k);
+    res.json({
+      ok: true,
+      faithful: true,
+      roomId: roomIdHex,
+      docId: docIdHex,
+      accessor: accessorHex,
+      reconstructedFromPair: pair,
+      contentHash,
+      content: Buffer.from(plaintext).toString("utf8"),
+      contentB64: Buffer.from(plaintext).toString("base64"),
+      dataroomId: DATAROOM_ID,
+      note: "reconstructed K from >= threshold committee shares (commitment-verified) and AES-GCM-decrypted",
+    });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// ═══════════════════════════ DR4 — document-authenticity (zkPDF: third-party truth) ═══════════════════════════
+//   GET  /dataroom/docauth/info                                  -> contract + image + mock-bank issuer + allowlist
+//   POST /dataroom/docauth/allowlist-issuer                      -> set_docauth_issuer(bank key hash, true) [admin]
+//   POST /dataroom/docauth/prove-fact  {roomId,value,threshold}  -> mock-bank signs a statement → enqueue worker-first
+//   POST /dataroom/docauth/attest      {seal,image_id,journal}   -> attest_document_fact → DocumentFact (owner=admin)
+//   GET  /dataroom/docauth/fact/:roomId/:msgDigest               -> the proven fact (value>=threshold), if any
+//   GET  /dataroom/docauth/facts/:roomId                         -> enumerate a room's facts
+// The mock bank is the THIRD PARTY: it RSA-signs a private statement; the guest re-verifies that signature
+// in-zkVM and proves value>=threshold WITHOUT revealing the statement. A self-minted key is rejected on-chain.
+
+app.get("/dataroom/docauth/info", async (_req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  try {
+    const issuer = bankIssuer();
+    const { value: onchainImage } = await readContract(DATAROOM_ID, "get_docauth_image_id");
+    const { value: allowed } = await readContract(DATAROOM_ID, "is_docauth_issuer_allowed", [
+      scBytes(issuer.issuerKeyHash),
+    ]);
+    res.json({
+      dataroomId: DATAROOM_ID,
+      docauthImageId: DOCAUTH_IMAGE_ID,
+      docauthImageOnchain: onchainImage ? toHex(new Uint8Array(onchainImage as Uint8Array)) : null,
+      claimType: 10,
+      issuerKeyHash: issuer.issuerKeyHash,
+      issuerAllowlisted: Boolean(allowed),
+      note: "attest_document_fact(seal,image_id,journal): verifies a real RSA-2048 third-party signature in-zkVM + value>=threshold, bound to a room/document; the statement/account/exact value stay private.",
+    });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// One-time setup: allowlist the mock-bank issuer key on-chain (admin/deployer signs). In production this
+// pins a real bank/authority's public key; only facts signed by an allowlisted issuer are accepted.
+app.post("/dataroom/docauth/allowlist-issuer", async (_req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  try {
+    const issuer = bankIssuer();
+    const out = await invokeContract(DATAROOM_ID, "set_docauth_issuer", [
+      scBytes(issuer.issuerKeyHash),
+      scBool(true),
+    ]);
+    res.json({ ok: true, txHash: out.hash, issuerKeyHash: issuer.issuerKeyHash, dataroomId: DATAROOM_ID });
+  } catch (e) {
+    res.json({ ok: false, error: err(e), dataroomId: DATAROOM_ID });
+  }
+});
+
+// The mock bank signs a fixed-layout statement attesting `value`; we enqueue a worker-first proof of
+// `value >= threshold`. The PRIVATE statement reaches only the self-hosted prover (which already sees
+// plaintext per the project rule); confidentiality is vs the on-chain verifier + public, not the prover.
+app.post("/dataroom/docauth/prove-fact", async (req, res) => {
+  if (!PROVER_URL) return res.status(503).json({ error: "PROVER_URL not configured" });
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  let roomIdHex: string, value: bigint, threshold: bigint;
+  try {
+    roomIdHex = toBytes32(req.body?.roomId);
+    value = BigInt(req.body?.value ?? 0);
+    threshold = BigInt(req.body?.threshold ?? 0);
+    if (value < 0n || threshold < 0n) throw new Error("value/threshold must be non-negative");
+    if (value < threshold) throw new Error("value < threshold: the proof would not be producible");
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const built = buildDocauthJob({ roomIdHex, value, threshold });
+    const r = await fetch(`${PROVER_URL}/prove`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(built.job),
+    });
+    const j = (await r.json()) as { job_id?: string; error?: string };
+    if (!r.ok || !j.job_id) return res.status(502).json({ error: j.error || "prover submit failed" });
+    res.json({
+      jobId: j.job_id,
+      roomId: roomIdHex,
+      threshold: threshold.toString(),
+      msgDigest: built.msgDigest,
+      issuerKeyHash: built.issuerKeyHash,
+      note: "poll /prove-status/<jobId>; on done, POST /dataroom/docauth/attest {seal,image_id,journal}. ~22 segments → multi-minute proof (pre-prove for the demo).",
+    });
+  } catch (e) {
+    res.status(502).json({ error: err(e) });
+  }
+});
+
+// Submit a docauth proof to the contract: attest_document_fact (the room owner — the demo admin — signs).
+app.post("/dataroom/docauth/attest", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  const b = req.body as Bundle;
+  if (!b?.seal || !b?.image_id || !b?.journal) {
+    return res.status(400).json({ error: "seal, image_id, journal (raw) required" });
+  }
+  try {
+    const out = await invokeContract(DATAROOM_ID, "attest_document_fact", [
+      scBytes(b.seal),
+      scBytes(b.image_id),
+      scBytes(b.journal),
+    ]);
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, fact: jsonSafe(out.returnValue), dataroomId: DATAROOM_ID });
+  } catch (e) {
+    res.json({ ok: false, error: err(e), dataroomId: DATAROOM_ID });
+  }
+});
+
+app.get("/dataroom/docauth/fact/:roomId/:msgDigest", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  try {
+    const roomIdHex = toBytes32(req.params.roomId);
+    const msgDigestHex = toHex(hex32(req.params.msgDigest, "msgDigest"));
+    const { value } = await readContract(DATAROOM_ID, "get_document_fact", [
+      scBytes(roomIdHex),
+      scBytes(msgDigestHex),
+    ]);
+    res.json({ roomId: roomIdHex, msgDigest: msgDigestHex, fact: value ? jsonSafe(value) : null });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+app.get("/dataroom/docauth/facts/:roomId", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  try {
+    const roomIdHex = toBytes32(req.params.roomId);
+    const { value: countRaw } = await readContract(DATAROOM_ID, "get_doc_fact_count", [scBytes(roomIdHex)]);
+    const count = Number(countRaw ?? 0);
+    const facts: unknown[] = [];
+    for (let i = 0; i < count; i++) {
+      const { value } = await readContract(DATAROOM_ID, "get_doc_fact_by_index", [scBytes(roomIdHex), scU32(i)]);
+      if (value) facts.push(jsonSafe(value));
+    }
+    res.json({ roomId: roomIdHex, count, facts });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+// ===========================================================================================
+// DR5 — faithful disclosure / auditor redacted view + data-side teaser. NO new guest: the teaser reuses
+// the generic value>=threshold guest (reserves kind, claim_type 11, vouched by the allowlisted data-room
+// appraiser attester); the auditor redacted view reuses the seal guest (dataroom_seal kind) sealing a
+// REDACTED blob's key to the auditor's x25519 key (integrity-faithful: content_hash + faithful tag).
+//   GET  /dataroom/teaser/info
+//   POST /dataroom/teaser/prove   {roomId, docId, figure?, fieldTag?, threshold}  -> appraiser sign + enqueue (reserves)
+//   POST /dataroom/teaser/attest  {seal,image_id,journal, roomId, docId}          -> attest_teaser
+//   GET  /dataroom/teaser/:roomId/:docId                                          -> the proven teaser, if any
+//   GET  /dataroom/teasers/:roomId                                                -> enumerate a room's teasers
+//   POST /dataroom/disclose/prove {roomId, docId?, auditorPub?, doc?, policy?}    -> redact + seal to auditor (dataroom_seal)
+//   POST /dataroom/disclose/open/:roomId/:docId {viewKey?}                        -> auditor opener (redacted view + log)
+// ===========================================================================================
+
+app.get("/dataroom/teaser/info", async (_req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  try {
+    const appraiser = toHex(teaserAttesterPubkey());
+    const [imgRes, allowRes] = await Promise.all([
+      readContract(DATAROOM_ID, "get_teaser_image_id"),
+      readContract(DATAROOM_ID, "is_teaser_attester_allowed", [scBytes(appraiser)]),
+    ]);
+    res.json({
+      dataroomId: DATAROOM_ID,
+      verifierId: VERIFIER_ID,
+      teaserImageId: TEASER_IMAGE_ID,
+      teaserImageOnchain: imgRes.value ? toHex(new Uint8Array(imgRes.value as Uint8Array)) : null,
+      claimType: 11,
+      appraiserAttester: appraiser,
+      appraiserAllowed: !!allowRes.value,
+      auditorPub: toHex(auditorPublicKey()),
+      demoDocPublicView: publicView(DEMO_FINANCIAL_DOC, DEMO_FINANCIAL_POLICY),
+      teaserField: DEMO_TEASER_FIELD,
+      note: "Teaser = a public ZK fact (sealed doc's figure >= X) vouched by the allowlisted appraiser, doc unseen. Auditor redacted view = a field-level disclosure policy (public/auditor/private; PCI/HIPAA/GDPR masking) sealed to the auditor's key, integrity-faithful.",
+    });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// Appraiser signs a teaser envelope (claim_type 11, value = the PRIVATE figure, nonce = fieldTag) and the
+// generic value>=threshold guest proves `figure >= threshold` worker-first. The figure stays private; only
+// the boolean + the public threshold are revealed. The referenced doc MUST already be anchored (attest_teaser
+// binds the teaser to the doc's on-chain content_hash).
+app.post("/dataroom/teaser/prove", async (req, res) => {
+  if (!PROVER_URL) return res.status(503).json({ error: "PROVER_URL not configured" });
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  let roomIdHex: string, docIdHex: string, figure: bigint, threshold: bigint, fieldTag: number;
+  try {
+    roomIdHex = toBytes32(req.body?.roomId);
+    docIdHex = toBytes32(req.body?.docId);
+    figure = req.body?.figure != null
+      ? BigInt(req.body.figure)
+      : teaserFigure(DEMO_FINANCIAL_DOC, DEMO_FINANCIAL_POLICY, DEMO_TEASER_FIELD);
+    threshold = BigInt(req.body?.threshold ?? 1_000_000);
+    fieldTag = Number(req.body?.fieldTag ?? FIELD_TAG_REVENUE);
+    if (figure < 0n || threshold < 0n) throw new Error("figure/threshold must be non-negative");
+    if (!Number.isInteger(fieldTag) || fieldTag < 0 || fieldTag > 0xffffffff) throw new Error("fieldTag must be a u32");
+    if (figure < threshold) throw new Error("figure < threshold: the proof would not be producible");
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  // Fail fast: the referenced document must exist (attest_teaser requires it → binds the teaser to its hash).
+  try {
+    const { value: doc } = await readContract(DATAROOM_ID, "get_document", [scBytes(roomIdHex), scBytes(docIdHex)]);
+    if (!doc) return res.status(404).json({ error: "document not found — anchor it first (put_document)", roomId: roomIdHex, docId: docIdHex });
+  } catch (e) {
+    return res.status(502).json({ error: err(e) });
+  }
+  try {
+    const a = attestTeaser({ figure, fieldTag });
+    const r = await fetch(`${PROVER_URL}/prove`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        kind: "reserves",
+        envelope_hex: a.envelope,
+        signature_hex: a.signature,
+        issuer_pubkey_hex: a.issuer_pubkey,
+        threshold: threshold.toString(),
+      }),
+    });
+    const j = (await r.json()) as { job_id?: string; error?: string };
+    if (!r.ok || !j.job_id) return res.status(502).json({ error: j.error || "prover submit failed" });
+    res.json({
+      jobId: j.job_id,
+      roomId: roomIdHex,
+      docId: docIdHex,
+      threshold: threshold.toString(),
+      fieldTag,
+      appraiser: a.issuer_pubkey,
+      note: "poll /prove-status/<jobId>; on done, POST /dataroom/teaser/attest {seal,image_id,journal,roomId,docId}. The figure stays PRIVATE.",
+    });
+  } catch (e) {
+    res.status(502).json({ error: err(e) });
+  }
+});
+
+// Submit a teaser proof to the contract: attest_teaser (the room owner — the demo admin — signs). room_id and
+// doc_id are call args (the generic journal carries neither); the contract binds the teaser to the doc's hash.
+app.post("/dataroom/teaser/attest", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  const b = req.body as Bundle & { roomId?: string; docId?: string };
+  if (!b?.seal || !b?.image_id || !b?.journal) {
+    return res.status(400).json({ error: "seal, image_id, journal (raw) required" });
+  }
+  let roomIdHex: string, docIdHex: string;
+  try {
+    roomIdHex = toBytes32(b.roomId);
+    docIdHex = toBytes32(b.docId);
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const out = await invokeContract(DATAROOM_ID, "attest_teaser", [
+      scBytes(b.seal),
+      scBytes(b.image_id),
+      scBytes(b.journal),
+      scBytes(roomIdHex),
+      scBytes(docIdHex),
+    ]);
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, teaser: jsonSafe(out.returnValue), dataroomId: DATAROOM_ID });
+  } catch (e) {
+    res.json({ ok: false, error: err(e), dataroomId: DATAROOM_ID });
+  }
+});
+
+app.get("/dataroom/teaser/:roomId/:docId", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  let roomIdHex: string, docIdHex: string;
+  try { roomIdHex = toBytes32(req.params.roomId); docIdHex = toBytes32(req.params.docId); }
+  catch (e) { return res.status(400).json({ error: err(e) }); }
+  try {
+    const [tRes, validRes] = await Promise.all([
+      readContract(DATAROOM_ID, "get_teaser", [scBytes(roomIdHex), scBytes(docIdHex)]),
+      readContract(DATAROOM_ID, "is_teaser_valid", [scBytes(roomIdHex), scBytes(docIdHex)]),
+    ]);
+    res.json({ roomId: roomIdHex, docId: docIdHex, teaser: tRes.value ? jsonSafe(tRes.value) : null, valid: !!validRes.value, dataroomId: DATAROOM_ID });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+app.get("/dataroom/teasers/:roomId", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  let roomIdHex: string;
+  try { roomIdHex = toBytes32(req.params.roomId); } catch (e) { return res.status(400).json({ error: err(e) }); }
+  try {
+    const { value: countRaw } = await readContract(DATAROOM_ID, "get_teaser_count", [scBytes(roomIdHex)]);
+    const count = Number(countRaw ?? 0);
+    const idxs: number[] = [];
+    for (let i = 0; i < count; i++) idxs.push(i);
+    const rows = await Promise.all(idxs.map((i) => readContract(DATAROOM_ID, "get_teaser_by_index", [scBytes(roomIdHex), scU32(i)])));
+    const teasers = rows.map((r) => r.value).filter(Boolean).map((t) => jsonSafe(t));
+    res.json({ roomId: roomIdHex, count, teasers, dataroomId: DATAROOM_ID });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// Redact the document per the field-level disclosure policy → seal the REDACTED blob's key to the auditor's
+// x25519 key (dataroom_seal guest), worker-first. The auditor receives the redacted view INTEGRITY-FAITHFULLY
+// (content_hash + faithful tag = the exact bytes the owner committed). The redacted view is its OWN document
+// (a fresh doc_id); anchor it via the existing POST /dataroom/submit-document, then open via /disclose/open.
+app.post("/dataroom/disclose/prove", async (req, res) => {
+  if (!PROVER_URL) return res.status(503).json({ error: "PROVER_URL not configured" });
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  let roomIdHex: string, docIdHex: string, auditorPubHex: string;
+  let blobPlain: Uint8Array, log: ReturnType<typeof redact>["log"], pub: StructuredDoc;
+  try {
+    roomIdHex = toBytes32(req.body?.roomId);
+    docIdHex = toBytes32(req.body?.docId, { random: true }); // the redacted view is its OWN document
+    auditorPubHex = toX25519PubHex(req.body?.auditorPub, () => toHex(auditorPublicKey()));
+    const doc: StructuredDoc =
+      req.body?.doc && typeof req.body.doc === "object" && !Array.isArray(req.body.doc) ? req.body.doc : DEMO_FINANCIAL_DOC;
+    const policy: DisclosurePolicy =
+      req.body?.policy && typeof req.body.policy === "object" && !Array.isArray(req.body.policy) ? req.body.policy : DEMO_FINANCIAL_POLICY;
+    const redacted = redact(doc, policy);
+    log = redacted.log;
+    pub = publicView(doc, policy);
+    const disclosure = {
+      kind: "zkorage-dr5-redacted-disclosure",
+      generated_for: "auditor",
+      policy_basis: "field-level disclosure policy (HIPAA Safe Harbor / PCI-DSS Req 3.4 / GDPR Art.5(1)(c) / FOIA §552(b))",
+      document: redacted.view,
+      redaction_log: redacted.log,
+    };
+    blobPlain = new TextEncoder().encode(JSON.stringify(disclosure));
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  // Fail fast: the room must exist (put_document later requires the room owner's auth).
+  try {
+    const { value: room } = await readContract(DATAROOM_ID, "get_room", [scBytes(roomIdHex)]);
+    if (!room) return res.status(404).json({ error: "room not found — create it first", roomId: roomIdHex });
+  } catch (e) {
+    return res.status(502).json({ error: err(e) });
+  }
+  try {
+    const k = randomKey();
+    const blob = aeadSeal(blobPlain, k);
+    const contentHash = toHex(sha256(blob));
+    const r = await fetch(`${PROVER_URL}/prove`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        kind: "dataroom_seal",
+        doc_key_hex: toHex(k),
+        recipient_pubkey_hex: auditorPubHex,
+        content_hash_hex: contentHash,
+        room_id_hex: roomIdHex,
+        doc_id_hex: docIdHex,
+      }),
+    });
+    const j = (await r.json()) as { job_id?: string; error?: string };
+    if (!r.ok || !j.job_id) return res.status(502).json({ error: j.error || "prover submit failed" });
+    const put = await getBlobStore().put(blob);
+    res.json({
+      jobId: j.job_id,
+      roomId: roomIdHex,
+      docId: docIdHex,
+      auditorPub: auditorPubHex,
+      contentHash: put.contentHash,
+      blobPointer: put.blobPointer,
+      storage: getBlobStore().backend,
+      publicView: pub,
+      redactionLog: log,
+      note: "poll /prove-status/<jobId>; on done, POST /dataroom/submit-document {seal,image_id,journal,blobPointer}. The auditor opens the redacted view via POST /dataroom/disclose/open (or the key-free SDK openDocument).",
+    });
+  } catch (e) {
+    res.status(502).json({ error: err(e) });
+  }
+});
+
+// AUDITOR OPENER (DEMO convenience — the trust-minimized KEY-FREE path is the SDK's openDocument). Reads the
+// on-chain Document (the redacted view sealed to the auditor), recovers K with the auditor's view secret,
+// verifies the faithful tag, fetches the blob by content_hash, AES-256-GCM-decrypts → the redacted disclosure
+// JSON (document + redaction log). Defaults to the demo auditor secret when `viewKey` is omitted.
+app.post("/dataroom/disclose/open/:roomId/:docId", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  let roomIdHex: string, docIdHex: string, viewSecret: Uint8Array;
+  try {
+    roomIdHex = toBytes32(req.params.roomId);
+    docIdHex = toBytes32(req.params.docId);
+    const s = String(req.body?.viewKey ?? "").trim();
+    if (!s) viewSecret = auditorViewSecret();
+    else {
+      const h = s.replace(/^0x/i, "").toLowerCase();
+      if (!/^[0-9a-f]{64}$/.test(h)) throw new Error("viewKey must be 32-byte hex");
+      viewSecret = fromHex(h);
+    }
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const { value: docRaw } = await readContract(DATAROOM_ID, "get_document", [scBytes(roomIdHex), scBytes(docIdHex)]);
+    if (!docRaw) return res.status(404).json({ error: "document not found", roomId: roomIdHex, docId: docIdHex });
+    const d = docRaw as { recipient_pub: Uint8Array; content_hash: Uint8Array; eph_pub: Uint8Array; ct: Uint8Array; tag: Uint8Array; room_id: Uint8Array; doc_id: Uint8Array };
+    const contentHash = new Uint8Array(d.content_hash);
+    const opened = dataroomEciesOpen(
+      new Uint8Array(d.eph_pub), new Uint8Array(d.ct), new Uint8Array(d.tag),
+      contentHash, new Uint8Array(d.room_id), new Uint8Array(d.doc_id), viewSecret,
+    );
+    if (!opened.faithful) {
+      return res.json({ roomId: roomIdHex, docId: docIdHex, faithful: false, recipientPub: toHex(new Uint8Array(d.recipient_pub)), contentHash: toHex(contentHash), dataroomId: DATAROOM_ID });
+    }
+    const blob = await getBlobStore().get(toHex(contentHash));
+    if (!blob) return res.status(404).json({ error: "blob not found for content_hash", contentHash: toHex(contentHash) });
+    if (toHex(sha256(blob)) !== toHex(contentHash)) return res.status(502).json({ error: "fetched blob hash mismatch", contentHash: toHex(contentHash) });
+    const plaintext = aeadOpen(blob, opened.k);
+    const utf8 = safe(() => new TextDecoder("utf-8", { fatal: true }).decode(plaintext)) ?? null;
+    const disclosure = utf8 ? safe(() => JSON.parse(utf8)) : undefined;
+    res.json({
+      roomId: roomIdHex,
+      docId: docIdHex,
+      faithful: true,
+      contentHashVerified: true,
+      recipientPub: toHex(new Uint8Array(d.recipient_pub)),
+      contentHash: toHex(contentHash),
+      disclosure: disclosure ?? null,
+      plaintextUtf8: disclosure ? undefined : utf8,
+      dataroomId: DATAROOM_ID,
+    });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// ═══════════════════════════ DR6 — private-policy composition + revocation/rotation ═══════════════════════════
+//   GET  /dataroom/admission/info
+//   POST /dataroom/policy/set {roomId, requireMembership?, complianceGate?, accreditedGate?}   (room-owner=admin)
+//   GET  /dataroom/policy/:roomId
+//   POST /dataroom/admission/request {roomId, accessor}            -> request_room_admission (composite AND)
+//   GET  /dataroom/admission/is-admitted/:roomId/:accessor         -> live composed AND
+//   GET  /dataroom/admission/:roomId/:accessor                     -> get_admission (audit record)
+//   GET  /dataroom/admissions/:roomId?start&limit                  -> list admissions
+//   POST /dataroom/revoke {roomId, accessor, revoked?}             (room-owner=admin; default revoked=true)
+//   GET  /dataroom/revoked/:roomId/:accessor                       -> is_access_revoked
+//   POST /dataroom/committee/rotate-doc {roomId, docId, content}   -> re-split K' + re-encrypt + rotate
+//   GET  /dataroom/committee/key-epoch/:roomId/:docId              -> get_committee_key_epoch
+
+// A DR6 gate-policy arg: `true`/omitted -> use the configured gate (ON, the default); `false`/null -> OFF;
+// a C-address string -> that gate explicitly.
+function parseGateArg(input: unknown, defaultId: string, legName?: string): string | null {
+  if (input === false || input === null) return null;
+  if (input === true || input === undefined) {
+    // requested ON (or defaulting ON) but the gate id is unconfigured → leg is silently OFF. Warn loudly so a
+    // misconfigured backend doesn't quietly set a weaker policy than the operator intends (it stays fail-closed).
+    if (!defaultId) console.warn(`[dr6] policy leg "${legName ?? "gate"}" requested ON but no gate id is configured — leg left OFF`);
+    return defaultId || null;
+  }
+  if (typeof input === "string") {
+    const g = input.trim();
+    if (g === "") return null;
+    // Validate the Soroban contract-address shape up front so a malformed gate fails with 400 at the boundary
+    // (rather than a later 200 {ok:false} from the invoke). C-address = 'C' + 55 base32 chars.
+    if (!/^C[A-Z2-7]{55}$/.test(g)) throw new Error(`invalid gate address "${g}" (expected a C… contract address)`);
+    return g;
+  }
+  return null;
+}
+
+app.get("/dataroom/admission/info", async (_req, res) => {
+  res.json({
+    dataroomId: DATAROOM_ID || null,
+    complianceGate: COMPLIANCE_ID || null,
+    accreditedGate: ACCREDITED_ID || null,
+    composition: "membership (DR2 anonymous eligibility) ∧ compliance.is_granted ∧ accredited.is_granted — AND'd on-chain",
+    note: "Each leg is an independent ZK proof bound to ONE pseudonymous accessor; the AND is the on-chain cross-call (W8 pattern). Anonymous: subject_id absent in every leg; the membership leg hides which member.",
+  });
+});
+
+app.post("/dataroom/policy/set", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  let roomIdHex: string, requireMembership: boolean, complianceGate: string | null, accreditedGate: string | null;
+  try {
+    roomIdHex = toBytes32(req.body?.roomId);
+    requireMembership = req.body?.requireMembership !== false; // default true (the anonymity spine)
+    complianceGate = parseGateArg(req.body?.complianceGate, COMPLIANCE_ID, "compliance");
+    accreditedGate = parseGateArg(req.body?.accreditedGate, ACCREDITED_ID, "accredited");
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const out = await invokeContract(DATAROOM_ID, "set_room_policy", [
+      scBytes(roomIdHex), scBool(requireMembership), scOptAddress(complianceGate), scOptAddress(accreditedGate),
+    ]);
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, roomId: roomIdHex, requireMembership, complianceGate, accreditedGate, dataroomId: DATAROOM_ID });
+  } catch (e) {
+    res.json({ ok: false, error: err(e), dataroomId: DATAROOM_ID });
+  }
+});
+
+app.get("/dataroom/policy/:roomId", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  try {
+    const roomIdHex = toBytes32(req.params.roomId);
+    const { value } = await readContract(DATAROOM_ID, "get_room_policy", [scBytes(roomIdHex)]);
+    res.json({ roomId: roomIdHex, policy: value ? jsonSafe(value) : null, dataroomId: DATAROOM_ID });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+// Submit the composite-policy admission (PERMISSIONLESS — each leg was already gated on a verified proof;
+// the membership leg's NEW-5 holder sig carries the accessor's consent). Admit, or a specific leg error
+// (#21 RoomPolicyNotSet / #22 MembershipRequired / #23 NotCompliant / #24 NotAccredited / #25 AccessRevoked).
+app.post("/dataroom/admission/request", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  let roomIdHex: string, accessorHex: string;
+  try {
+    roomIdHex = toBytes32(req.body?.roomId);
+    accessorHex = accessorToHex(req.body?.accessor);
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const out = await invokeContract(DATAROOM_ID, "request_room_admission", [scBytes(roomIdHex), scBytes(accessorHex)]);
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, admission: jsonSafe(out.returnValue), roomId: roomIdHex, accessor: accessorHex, dataroomId: DATAROOM_ID });
+  } catch (e) {
+    res.json({ ok: false, error: err(e), roomId: roomIdHex, accessor: accessorHex, dataroomId: DATAROOM_ID });
+  }
+});
+
+app.get("/dataroom/admission/is-admitted/:roomId/:accessor", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  try {
+    const roomIdHex = toBytes32(req.params.roomId);
+    const accessorHex = accessorToHex(req.params.accessor);
+    const { value } = await readContract(DATAROOM_ID, "is_admitted", [scBytes(roomIdHex), scBytes(accessorHex)]);
+    res.json({ roomId: roomIdHex, accessor: accessorHex, isAdmitted: Boolean(value) });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+app.get("/dataroom/admission/:roomId/:accessor", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  try {
+    const roomIdHex = toBytes32(req.params.roomId);
+    const accessorHex = accessorToHex(req.params.accessor);
+    const { value } = await readContract(DATAROOM_ID, "get_admission", [scBytes(roomIdHex), scBytes(accessorHex)]);
+    res.json({ roomId: roomIdHex, accessor: accessorHex, admission: value ? jsonSafe(value) : null });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+app.get("/dataroom/admissions/:roomId", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  try {
+    const roomIdHex = toBytes32(req.params.roomId);
+    const { value: cntRaw } = await readContract(DATAROOM_ID, "get_admission_count", [scBytes(roomIdHex)]);
+    const count = Number(cntRaw ?? 0);
+    const start = Math.max(0, Number(req.query.start ?? 0) | 0);
+    const limit = Math.min(50, Math.max(1, Number(req.query.limit ?? 50) | 0));
+    const idxs = [];
+    for (let i = start; i < Math.min(count, start + limit); i++) idxs.push(i);
+    const rows = await Promise.all(
+      idxs.map(async (i) => {
+        const { value } = await readContract(DATAROOM_ID, "get_admission_by_index", [scBytes(roomIdHex), scU32(i)]);
+        return value ? jsonSafe(value) : null;
+      }),
+    );
+    res.json({ roomId: roomIdHex, count, admissions: rows.filter(Boolean) });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+// Surgically revoke (or restore) an accessor in a room (room-owner = admin signs). Revoking makes is_granted
+// false at once -> the DR3 keypers refuse shares, is_admitted drops. The member can't re-enter (nullifier spent).
+app.post("/dataroom/revoke", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  let roomIdHex: string, accessorHex: string, revoked: boolean;
+  try {
+    roomIdHex = toBytes32(req.body?.roomId);
+    accessorHex = accessorToHex(req.body?.accessor);
+    revoked = req.body?.revoked !== false; // default true
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const out = await invokeContract(DATAROOM_ID, "revoke_access", [scBytes(roomIdHex), scBytes(accessorHex), scBool(revoked)]);
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, roomId: roomIdHex, accessor: accessorHex, revoked });
+  } catch (e) {
+    res.json({ ok: false, error: err(e), roomId: roomIdHex, accessor: accessorHex });
+  }
+});
+
+app.get("/dataroom/revoked/:roomId/:accessor", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  try {
+    const roomIdHex = toBytes32(req.params.roomId);
+    const accessorHex = accessorToHex(req.params.accessor);
+    const { value } = await readContract(DATAROOM_ID, "is_access_revoked", [scBytes(roomIdHex), scBytes(accessorHex)]);
+    res.json({ roomId: roomIdHex, accessor: accessorHex, revoked: Boolean(value) });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+// DR6 committee KEY ROTATION: re-split a FRESH K' to the keypers, re-encrypt the blob under K', and
+// rotate the on-chain record (+bump key_epoch). Honest members re-collect new shares (grant still valid)
+// and decrypt with K'; a revoked member's is_granted is false so keypers refuse, and the old K is useless
+// against the re-encrypted blob. Mirrors /committee/seal-doc but UPDATES an existing committee doc.
+app.post("/dataroom/committee/rotate-doc", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  const n = KEYPER_ENDPOINTS.length;
+  let roomIdHex: string, docIdHex: string, plaintext: Uint8Array;
+  try {
+    roomIdHex = toBytes32(req.body?.roomId);
+    docIdHex = toBytes32(req.body?.docId); // required (rotation targets an existing doc)
+    const { content, contentB64 } = req.body ?? {};
+    if (typeof contentB64 === "string" && contentB64) plaintext = new Uint8Array(Buffer.from(contentB64, "base64"));
+    else if (typeof content === "string" && content) plaintext = new TextEncoder().encode(content);
+    else throw new Error("content or contentB64 required");
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    // 0) the committee doc must already exist (else rotate_committee_document reverts CommitteeDocNotFound).
+    const { value: existing } = await readContract(DATAROOM_ID, "get_committee_document", [scBytes(roomIdHex), scBytes(docIdHex)]);
+    if (!existing) return res.status(404).json({ error: "committee doc not found — seal it first (POST /dataroom/committee/seal-doc)", roomId: roomIdHex, docId: docIdHex });
+
+    // 1) fresh K' → AES-256-GCM blob → upload → commitments.
+    const k = randomKey();
+    const blob = aeadSeal(plaintext, k);
+    const { contentHash, blobPointer: pointer } = await getBlobStore().put(blob);
+    const kCommitment = toHex(sha256(k));
+
+    // 2) re-split K' and re-deal one share per keyper (overwrites their stored share for this (room,doc)).
+    const shares = shamirSplit(k, COMMITTEE_THRESHOLD, n);
+    const settled = await Promise.allSettled(
+      shares.map(async (sh, i) => {
+        const ep = KEYPER_ENDPOINTS[i];
+        const r = await fetch(`${ep}/deal`, {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${KEYPER_DEAL_TOKEN}` },
+          body: JSON.stringify({ room_id: roomIdHex, doc_id: docIdHex, keyper_index: sh.x, share_y: toHex(sh.y) }),
+          signal: AbortSignal.timeout(8000),
+        });
+        return { ep, idx: sh.x, ok: r.ok, status: r.status };
+      }),
+    );
+    const dealResults = settled.map((s, i) =>
+      s.status === "fulfilled" ? s.value : { ep: KEYPER_ENDPOINTS[i], idx: shares[i].x, ok: false, status: 0, error: String((s.reason as Error)?.message ?? s.reason) },
+    );
+    const failed = dealResults.filter((d) => !d.ok);
+    if (failed.length > 0) {
+      // Do NOT rotate on-chain if re-deal failed — on-chain stays consistent (old blob ↔ old commitment, no
+      // rotate). CAVEAT: /deal overwrites in place, so a PARTIAL re-deal can leave keypers holding a mix of
+      // old-K and new-K′ shares; until a FULL successful re-deal, recovery may be degraded (< threshold
+      // mutually-consistent shares). Retrying rotate-doc with a clean re-deal restores a consistent set.
+      const dealt = dealResults.filter((d) => d.ok).map((d) => d.idx);
+      if (dealt.length > 0) console.warn(`[committee] partial RE-deal ${roomIdHex.slice(0, 8)}…/${docIdHex.slice(0, 8)}…: keypers [${dealt.join(",")}] took the new share; recovery may be degraded until a full retry (doc NOT rotated on-chain)`);
+      return res.status(502).json({ error: "share re-distribution failed — document NOT rotated on-chain; retry to restore a consistent share set", failed: failed.map((f) => ({ ep: f.ep, keyper: f.idx, status: f.status })) });
+    }
+
+    // 3) rotate the committee document on-chain (room owner = admin) + bump key_epoch.
+    const out = await invokeContract(DATAROOM_ID, "rotate_committee_document", [
+      scBytes(roomIdHex), scBytes(docIdHex), scBytes(contentHash), scBytes(kCommitment), scBytesUtf8(pointer),
+    ]);
+    const { value: epochRaw } = await readContract(DATAROOM_ID, "get_committee_key_epoch", [scBytes(roomIdHex), scBytes(docIdHex)]);
+    res.json({
+      ok: true,
+      roomId: roomIdHex,
+      docId: docIdHex,
+      contentHash,
+      kCommitment,
+      blobPointer: pointer,
+      reDealt: dealResults.length,
+      keyEpoch: Number(epochRaw ?? 0),
+      threshold: COMMITTEE_THRESHOLD,
+      txHash: out.hash,
+      cost: out.cost,
+      note: "K' was re-split + dropped; the old K is useless against the re-encrypted blob. Only granted (non-revoked) accessors get the new shares.",
+    });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+app.get("/dataroom/committee/key-epoch/:roomId/:docId", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  try {
+    const roomIdHex = toBytes32(req.params.roomId);
+    const docIdHex = toBytes32(req.params.docId);
+    const { value } = await readContract(DATAROOM_ID, "get_committee_key_epoch", [scBytes(roomIdHex), scBytes(docIdHex)]);
+    res.json({ roomId: roomIdHex, docId: docIdHex, keyEpoch: Number(value ?? 0) });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+app.listen(PORT, () => console.log(`zkorage backend :${PORT} | token=${TOKEN_ID || "-"} policy=${POLICY_ID || "-"}`));

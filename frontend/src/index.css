@@ -1,0 +1,108 @@
+/* zkorage design system — "Precision Ink" (user-picked palette, 2026-06-18).
+   Tailwind + shadcn token model. ONE palette for both variants; variants differ in LAYOUT.
+   Ink (#0F172A) primary · electric-blue (#2563EB) brand action · emerald (#059669) verified.
+   Fonts loaded via <link> in index.html (Inter + JetBrains Mono). */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 210 40% 98%;        /* #F8FAFC page surface */
+    --foreground: 222 47% 11%;        /* #0F172A ink */
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    --primary: 222 47% 11%;           /* ink buttons */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 19% 41%;  /* AA on white + on surface */
+    --accent: 210 40% 96%;            /* shadcn subtle hover surface */
+    --accent-foreground: 222 47% 11%;
+    --brand: 221 83% 53%;             /* #2563EB electric blue: links, focus, CTA highlight */
+    --brand-foreground: 0 0% 100%;
+    --success: 161 94% 30%;           /* #059669 emerald: verified */
+    --success-foreground: 0 0% 100%;
+    --warning: 25 95% 39%;            /* amber: proving / caution accents */
+    --warning-foreground: 0 0% 100%;
+    --destructive: 0 72% 51%;         /* #DC2626 */
+    --destructive-foreground: 0 0% 100%;
+    --border: 216 24% 92%;            /* #E5E9F0 */
+    --input: 216 24% 88%;
+    --ring: 221 83% 53%;
+    --radius: 0.625rem;
+  }
+
+  .dark {
+    --background: 222 47% 8%;
+    --foreground: 210 40% 96%;
+    --card: 222 40% 11%;
+    --card-foreground: 210 40% 96%;
+    --popover: 222 40% 11%;
+    --popover-foreground: 210 40% 96%;
+    --primary: 210 40% 96%;
+    --primary-foreground: 222 47% 11%;
+    --secondary: 217 33% 17%;
+    --secondary-foreground: 210 40% 96%;
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 65%;
+    --accent: 217 33% 20%;
+    --accent-foreground: 210 40% 96%;
+    --brand: 217 91% 62%;
+    --brand-foreground: 222 47% 11%;
+    --success: 158 64% 52%;
+    --success-foreground: 222 47% 11%;
+    --warning: 38 92% 55%;
+    --warning-foreground: 222 47% 11%;
+    --destructive: 0 63% 50%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217 33% 22%;
+    --input: 217 33% 24%;
+    --ring: 217 91% 62%;
+  }
+
+  * {
+    border-color: hsl(var(--border));
+  }
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    min-height: 100vh;
+  }
+  /* Keyboard focus: solid 2px ring (>=3:1, not glow-only — WCAG 2.4.7/2.4.11). */
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+}
+
+/* Respect prefers-reduced-motion: disable transitions/animations (carried over from prior UX pass). */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Build stamp chip (VersionBadge) — fixed bottom-right, below modals. */
+@layer components {
+  .vbadge {
+    @apply fixed right-2.5 bottom-2.5 z-30 rounded-md border bg-card/80 px-2 py-1 text-[11px] font-normal leading-none text-muted-foreground backdrop-blur;
+    font-variant-numeric: tabular-nums;
+    user-select: all;
+    opacity: 0.7;
+    transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+  }
+  .vbadge:hover {
+    opacity: 1;
+    @apply text-brand border-brand;
+  }
+}

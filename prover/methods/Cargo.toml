@@ -1,0 +1,13 @@
+[package]
+name = "methods"
+version = "0.1.0"
+edition = "2021"
+
+[build-dependencies]
+# PHASE 0 (risc0-5 GPU smoke): only the 5.x available is 5.0.0-rc.1.
+risc0-build = { version = "=5.0.0-rc.1" }
+# Computes the image_id when embedding a prebuilt (deterministic) guest ELF via ZKORAGE_GUEST_ELF.
+risc0-binfmt = { version = "=5.0.0-rc.1" }
+
+[package.metadata.risc0]
+methods = ["guest", "guest-identity", "guest-compliance", "guest-payroll", "guest-accredited", "guest-dataroom-seal", "guest-membership", "guest-docauth"]

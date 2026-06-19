@@ -1,0 +1,431 @@
+{
+  "network": "testnet",
+  "network_passphrase": "Test SDF Network ; September 2015",
+  "rpc": "https://soroban-testnet.stellar.org",
+  "deployer": {
+    "alias": "zkorage-deployer",
+    "address": "GDLECNXD76OZQROASQGWEP4KAMJWTJXZW2LN7OJGYPXIJDRXACWGXZY6"
+  },
+  "verifier": {
+    "name": "RiscZeroGroth16Verifier (bare, soroban-sdk 26.1.0) — REDEPLOYED for risc0 5.0.0-rc.1 (GPU-unblock migration)",
+    "contract_id": "CBAPC663PTWIWDLYNCG5WAD5MIZF4SKY43U6L2NM5ZUU5XFOS4JDYAFW",
+    "contract_id_previous_v3": "CB75PMLNOMDATZ7BMEYYJMQUEMPUIVZKBGMAHZKDJH6BBG57LI6DZ2JH",
+    "wasm_hash": "ebf69b279ac6f9132567da465941d8c780b0a272848329ef34b17cf4f85c5793",
+    "wasm_size_bytes": 15913,
+    "selector": "ef6cb709",
+    "selector_previous_v3": "73c457ba",
+    "risc0_version": "5.0.0-rc.1",
+    "deploy_tx": "fc6d6d715da7f331c817fd01fe9c325225c900a0f37f1cbcc05217f8695c0973",
+    "risc0_5_migration_note": "risc0 3.0.5 -> 5.0.0-rc.1 to unblock GPU proving on Blackwell sm_120 (3.0.x sppark-0.1.15 crashed; 5.x risc0-sppark fork works). parameters.json change was MINIMAL: only control_root (a54dc85a -> 4ec91150); bn254_control_id + Groth16 VK byte-identical v3->v5. All 8 guest image_ids changed (new risc0 circuit) + all 7 contracts re-pinned via set_verifier+set_image_id (scripts/repin_v5.sh). v3 proofs do NOT verify on this verifier (different control_root) -> demo data + test fixtures must be re-proved with v5.",
+    "exported_functions": [
+      "selector",
+      "verify",
+      "verify_integrity",
+      "verify_proof",
+      "version"
+    ]
+  },
+  "token": {
+    "name": "zkorage demo SEP-41 supply-tracking token",
+    "contract_id": "CC3JKNC4EKALMT7WALUMCTVBSH73ZZSP3AC4B7IQUAZ7UYYZCEIISQLA",
+    "symbol": "zUSD",
+    "decimals": 7,
+    "initial_supply_base_units": "10000000000000",
+    "initial_supply_whole": 1000000,
+    "wasm_size_bytes": 4346,
+    "note": "Provides the on-chain circulating-supply anchor (total_supply) the PoR policy binds to; classic SACs expose no total supply."
+  },
+  "policy": {
+    "name": "zkorage Proof-of-Reserves policy (Week 3: on-chain history + upgradeable)",
+    "contract_id": "CDQ2PA27UTJDLPA4XTGG647SNTMUYO2KRFGS3SW5SMNBIWRB7JVCZXQ6",
+    "previous_contract_id": "CCXIEYFULSORMXN3AW5ZK4DLRANLSCRMROBEFEAWF3CL6MZ3YWSYQCMT",
+    "wasm_size_bytes": 27651,
+    "claim_type": 2,
+    "image_id_pinned": "973c983125ad3a9f115b2f4d8d12ec39e3f1b107f15c57643f72baf36f923502",
+    "image_id_pinned_previous": "5bb5644b7aa0bd9639c537fc3dc5e63fbb1ef2528c402b261c9315ecd1e76ce2",
+    "image_repin_note": "W5: re-pinned via set_image_id (tx 7180408a) after the guest soundness fix (assert pk==issuer_id); fresh PoR proof re-submitted (tx e60e9faa, history index #3).",
+    "issuer_allowlist": [
+      "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c"
+    ],
+    "binds": "journal.supply == token.total_supply() (cross-call); recomputes sha256(journal) on-chain; cross-calls the bare verifier",
+    "submit_min_resource_fee_stroops": 636680,
+    "history": "append-only on-chain log: get_count / get_by_index / get_history(start,limit, MAX_PAGE=50); VerifiedResult.index; Verified event carries index",
+    "upgradeable": "admin-gated upgrade(new_wasm_hash, operator) -> update_current_contract_wasm (protocol-level WASM swap; storage preserved). New policy ID now; future changes are in-place.",
+    "wasm_hash": "721cb133ed9f2aedf15e6a259277901f73752b49ad3864dedb2614825ccb25e8",
+    "init_tx": "927412cc6c14ff4bbf09116f019fa1916239bec68acfa72fc422257644d2e196",
+    "upgrade_tx_proof": "39ef899b14b291796e3703c65e537b40bdea7fd84bfe1c50f65e1b0e58ead863 (live no-op self-upgrade; get_count/get_config survived)",
+    "exported_functions": [
+      "initialize",
+      "submit_proof_of_reserves",
+      "get_latest_result",
+      "get_result",
+      "get_count",
+      "get_by_index",
+      "get_history",
+      "get_config",
+      "is_issuer_allowed",
+      "add_issuer",
+      "remove_issuer",
+      "set_image_id",
+      "set_token",
+      "set_verifier",
+      "upgrade"
+    ]
+  },
+  "gate": {
+    "name": "zkorage relying-party KYC gate (Week 5: identity selective disclosure)",
+    "contract_id": "CCTHDSEQFMAOPJXI5GVSUTMXO5DHZUJS7YQYAEIGKFMOAMTNDKSL4FWT",
+    "wasm_size_bytes": 18642,
+    "wasm_hash": "3e7156473bcc6ba18d4af29b7c32130c0e451823452b2f7d1d6dd745441313cb",
+    "claim_type": 3,
+    "image_id_pinned": "a5198a5a359359b08dc1b0faa260e253d413dea5035c1375d19b742f7deaeb3b",
+    "issuer_allowlist": [
+      "fd1724385aa0c75b64fb78cd602fa1d991fdebf76b13c58ed702eac835e9f618"
+    ],
+    "kyc_issuer_note": "mock KYC provider (ed25519 seed [9u8;32]); distinct from the PoR custodian [7u8;32].",
+    "binds": "grants access to the public `accessor` committed in the proof (a Stellar account's 32-byte ed25519 key); subject_id is NEVER on-chain. Recomputes sha256(journal) on-chain; cross-calls the bare verifier. accessor fixed in-proof (stolen bundle not redirectable); accessor NOT authenticated (holder binds own handle); NULLIFIER DEFERRED.",
+    "init_tx": "92f9d033fbd3d796679d6aa0ae031bd79284a37cb612cb7861e5def61c952624",
+    "is_granted_note": "is_granted re-checks the credential expiry against ledger time (live access decision); get_access returns the raw record regardless of expiry.",
+    "history": "append-only on-chain log: get_count / get_by_index / get_history(start,limit, MAX_PAGE=50); AccessRecord.index; AccessGranted event carries index. Access keyed by accessor: is_granted / get_access / get_latest_access.",
+    "upgradeable": "admin-gated upgrade(new_wasm_hash, operator) -> update_current_contract_wasm (same native mechanism as the PoR policy; storage preserved). Live upgrade proven: tx d2a7d1b23090e279c8a9dae210df22d89711c54cb2e2d1dbcb0a987dc91032a3 (is_granted expiry fix; get_count=1 + grant survived).",
+    "exported_functions": [
+      "initialize",
+      "request_access",
+      "is_granted",
+      "get_access",
+      "get_latest_access",
+      "get_count",
+      "get_by_index",
+      "get_history",
+      "get_config",
+      "is_issuer_allowed",
+      "add_issuer",
+      "remove_issuer",
+      "set_image_id",
+      "set_verifier",
+      "upgrade"
+    ]
+  },
+  "guest": {
+    "name": "claim_predicate (RISC0 zkVM guest, PoR/generic) — deterministic build; W5 soundness fix",
+    "canonical_image_id": "973c983125ad3a9f115b2f4d8d12ec39e3f1b107f15c57643f72baf36f923502",
+    "canonical_image_id_previous": "5bb5644b7aa0bd9639c537fc3dc5e63fbb1ef2528c402b261c9315ecd1e76ce2",
+    "soundness_fix": "W5: assert pk==issuer_id (the committed issuer_id must equal the key that verified the signature). Without it, a prover could verify under their own key while committing an allow-listed issuer_id -> forged claim. Changed the image_id -> policy re-pinned.",
+    "build": "cargo risczero build (Docker / reproducible); host embeds it via ZKORAGE_GUEST_ELF (methods/build.rs)",
+    "deterministic_fix": "pinned ruint=1.17.2 in methods/guest/Cargo.lock (1.18.0 needs rustc 1.90 > risc0 docker toolchain 1.88)",
+    "rationale": "policy pins expected_image_id -> all prover boxes must emit the same id; required for soundness (bare verifier is image-agnostic)"
+  },
+  "guest_identity": {
+    "name": "identity_predicate (RISC0 zkVM guest, KYC) — Week 5; deterministic build",
+    "canonical_image_id": "a5198a5a359359b08dc1b0faa260e253d413dea5035c1375d19b742f7deaeb3b",
+    "predicate": "verifies the KYC issuer's ed25519 signature; asserts pk==issuer_id, claim_type==3, kyc_status==PASSED; commits an 85-byte journal {result, claim_type, issuer_id, accessor, nonce, expiry} — subject_id ABSENT (selective disclosure).",
+    "build": "cargo risczero build (Docker); host_identity embeds it via ZKORAGE_IDENTITY_ELF (methods/build.rs builds + embeds BOTH guests). ruint=1.17.2 pinned in guest-identity/Cargo.lock.",
+    "envelope": "92-byte IdentityEnvelope: claim_type(4)|kyc_status(8)|subject_id(32,private)|issuer_id(32)|nonce(8)|expiry(8)"
+  },
+  "acceptance_testnet": {
+    "case1_valid": "submit_proof_of_reserves -> Ok; persisted VerifiedResult (tx cad4ae56...)",
+    "case3_supply_mismatch": "mint -> resubmit -> Error(Contract, #10) SupplyMismatch (verify Ok, binding rejects)",
+    "case4_tampered_seal": "Error(Contract, #5) ProofInvalid",
+    "cases_2_5_6": "R<S (guest panic), issuer-not-allowed, expired -> covered by policy unit tests (10/10)"
+  },
+  "acceptance_testnet_week3": {
+    "history_seeded": "3 entries / 2 distinct supplies: #0=1e13 (tx 478afeb4), #1=1.5e13 (fresh canonical proof, tx f220e4bd), #2=1e13 (tx 5021a139); ends at baseline 1e13",
+    "third_party_onchain_read": "stellar contract invoke (public RPC, NO backend): get_count->3, get_history->3 entries",
+    "third_party_reverify": "stellar contract invoke verify --seal/--image_id/--journal -> null (Ok); same checks the public /verify page runs in-browser against the public RPC",
+    "live_upgrade": "no-op self-upgrade to same wasm (tx 39ef899b) -> get_count still 3, get_config intact (storage preserved)",
+    "submit_cost_note": "first append (cold Latest/Result keys) min_resource_fee=636,680 stroops; subsequent appends ~237,973 stroops"
+  },
+  "compliance": {
+    "name": "zkorage compliance gate (Week 6: KYC ∧ not-sanctioned)",
+    "contract_id": "CDSA3PUL7OZ5HKLIT73ZTG64TLYK4QTO5ZHZKHA3JBS76R5L5Q2EO4FV",
+    "claim_type": 4,
+    "image_id_pinned": "54d5921c58280b63ef80905ffe6d4e506f77031b53ff2a347fe84ace423cb129",
+    "deny_root_pinned": "8cb45df8b0c8224c818ffc5e4d3c3d56cc6928d5c49f75528ba850def35fd18d",
+    "issuer_allowlist": [
+      "fd1724385aa0c75b64fb78cd602fa1d991fdebf76b13c58ed702eac835e9f618"
+    ],
+    "note": "sha256 Indexed-Merkle-Tree non-membership in-guest; one proof = KYC'd ∧ not-sanctioned; subject hidden."
+  },
+  "payroll": {
+    "name": "zkorage payroll gate (Week 7: confidential proof-of-income + auditor view-key)",
+    "contract_id": "CA6XYNHYR3GS3TQ24Z2Y45SXRNQDA5Z4L2PU54YM2WUKSMPVWVMYZCDA",
+    "claim_type": 5,
+    "image_id_pinned": "2c9cc61b0dc261290209067783365842eca14b77981486eb535bbacfbd1e2785",
+    "issuer_allowlist": [
+      "66be7e332c7a453332bd9d0a7f7db055f5c5ef1a06ada66d98b39fb6810c473a"
+    ],
+    "auditor_allowlist": [
+      "c275cf79ef891f9d1a725a7ecd74047854754b4445c92b75f193725f6376a83f"
+    ],
+    "note": "in-guest ECIES (Option B): salary encrypted to the auditor's x25519 view key; public sees only ≥ threshold."
+  },
+  "accredited": {
+    "name": "zkorage accredited-investor gate (Week 8: identity leg of the fundraising composition)",
+    "contract_id": "CCLSXZBOPCAJQS6L54EAGZQHTD5QUES2OSYCFX5XJT6ZXSICRPS4QKQZ",
+    "claim_type": 7,
+    "image_id_pinned": "26d743739468287991220d6da2cb891616aa7c6b90da2eda9836395f31bcc947",
+    "issuer_allowlist": [
+      "91a28a0b74381593a4d9469579208926afc8ad82c8839b7644359b9eba9a4b3a"
+    ],
+    "wasm_size_bytes": 18213,
+    "init_tx": "17efe3b7b0897e50127f3967f2f0bbff1b7088a37d0b53ba324a0cef894f37aa",
+    "note": "faithful clone of the W5 KYC gate (claim_type 7); proves 'accredited = yes' by an allow-listed provider; investor identity hidden; grant keyed by accessor."
+  },
+  "fundraise": {
+    "name": "zkorage fundraise-access contract (Week 8: the composition finale)",
+    "contract_id": "CDEV4METH74Z42DFV6HC3VLF3PWACXVIIS7C3PLK6CZT2B6L5I3YBC2L",
+    "binds": "request_investor_access(accessor) = is_revenue_verified() AND accredited_gate.is_granted(accessor) (cross-call, try_is_granted). can_access is the live read of the same AND.",
+    "accredited_gate": "CCLSXZBOPCAJQS6L54EAGZQHTD5QUES2OSYCFX5XJT6ZXSICRPS4QKQZ",
+    "revenue_image_id_pinned": "973c983125ad3a9f115b2f4d8d12ec39e3f1b107f15c57643f72baf36f923502",
+    "revenue_claim_type": 6,
+    "revenue_threshold_X": "1000000",
+    "revenue_issuer_allowlist": [
+      "d9bf2148748a85c89da5aad8ee0b0fc2d105fd39d41a4c796536354f0ae2900c"
+    ],
+    "wasm_size_bytes": 22420,
+    "init_tx": "2bcc1b55042f7f28e3a98189bc488b2ec9bf7e75aff3e9ffd1d66be664a48e6a",
+    "upgrade_tx": "in-place upgrade (review fixes: try_is_granted + threshold-consistency); wasm_hash d0b298e625effb05cb6333f156104b1720e4c0eb355dce46294d88411cbb76a5; storage preserved.",
+    "request_investor_access_min_resource_fee_stroops": 165815,
+    "note": "revenue REUSES the generic PoR guest (973c9831, value≥threshold); the financial proof is verified IN-contract and AND'd with the identity proof verified in the accredited gate. Revenue + identity both hidden; X public."
+  },
+  "guest_accredited": {
+    "name": "accredited_predicate (RISC0 zkVM guest, Week 8) — deterministic Docker build",
+    "canonical_image_id": "26d743739468287991220d6da2cb891616aa7c6b90da2eda9836395f31bcc947",
+    "predicate": "verifies the accreditation provider's ed25519 signature over DOMAIN ‖ envelope (NEW-2 domain-sep, DOMAIN=zkorage-accredited-v1\u0000); asserts pk==issuer_id, claim_type==7, accredited_status==1; commits the 85-byte identity-style journal (subject_id ABSENT).",
+    "envelope": "92-byte AccreditedEnvelope: claim_type(4)|accredited_status(8)|subject_id(32,private)|issuer_id(32)|nonce(8)|expiry(8)"
+  },
+  "attesters": {
+    "por_custodian_seed7": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "kyc_provider_seed9": "fd1724385aa0c75b64fb78cd602fa1d991fdebf76b13c58ed702eac835e9f618",
+    "payroll_attester_seed11": "66be7e332c7a453332bd9d0a7f7db055f5c5ef1a06ada66d98b39fb6810c473a",
+    "accredited_provider_seed13": "91a28a0b74381593a4d9469579208926afc8ad82c8839b7644359b9eba9a4b3a",
+    "revenue_auditor_seed15": "d9bf2148748a85c89da5aad8ee0b0fc2d105fd39d41a4c796536354f0ae2900c"
+  },
+  "dataroom_DR1": {
+    "name": "zkorage Confidential Data Room contract (DR1: data plane — upload/encrypt/store/anchor)",
+    "contract_id": "CDUQITRVJOPJNVWBUINLZFI2LHPOLVFW2I7354WEFDG2W3VIG627HLNN",
+    "claim_type": 8,
+    "seal_image_id_pinned": "8f24842d0647a0671ed1b898f6a42c2d104ff04b3f152067c93d9449bf65a3ce",
+    "wasm_size_bytes": 20384,
+    "init_tx": "2c952ad854b50112e7a876e689cdc39843d55ca32e0b52c89f27889877792bf8",
+    "binds": "create_room(owner) then put_document(seal,image_id,journal,blob_pointer): image pin -> on-chain sha256(journal) -> bare-verifier cross-call -> result==1 ∧ claim_type==8 -> room exists ∧ room.owner.require_auth() -> dedup -> store Document {commitment via content_hash + ECIES disclosure eph_pub/ct/tag + recipient_pub + blob_pointer}. Upgradeable in place for DR2 (nullifier set) / DR3 (keyper grant) / DR4 (fact binding).",
+    "note": "DR1 is commitment-only (no attester); the seal guest ECIES-seals the doc key K to a recipient x25519 key in-guest (W7 Option B) and binds K to content_hash/room_id/doc_id (faithful). Blob ciphertext stored off-chain (Cloudflare R2, decided); content-addressed by content_hash. The on-chain proof confirms the disclosure is a real guest output. DR1 is plumbing; ZK becomes load-bearing in DR2 (anonymous eligibility + nullifier).",
+    "acceptance_testnet": "deployed + initialized (config: claim_type 8, seal_image_id 20adf66a, verifier CB75); created room 0101..01 (RoomCreated idx 0, tx 35f83058); put_document with a real worker/VM-proved seal -> DocumentAnchored idx 0 (tx 7e975410); on-chain verify of the seal bundle against the bare verifier -> Ok(null).",
+    "backend_ch3": "DR1 Chunk 3 backend (storage adapter R2+local stand-in, /dataroom/* routes, ECIES recipient opener). Full e2e on testnet via backend/scripts/dr1-e2e.mjs: R2 path (create-room tx c926eb94 -> seal proved_by=worker image 20adf66a -> put_document tx de0247d0, doc idx 0 -> recipient-open faithful+plaintext MATCH, wrong-key rejected); local-stand-in path (create-room tx cf8fe7e2 -> put_document tx 4ae04aa1). Storage: Cloudflare R2 primary when R2_* creds present (content-addressed by sha256(ciphertext)); local fs stand-in otherwise.",
+    "sdk_mcp_ch4": "SDK/MCP v0.9.0. zkorage-sdk: KEY-FREE recipient opener (recoverDocumentKey mirrors the seal guest byte-exact; aeadDecrypt = AES-256-GCM via WebCrypto, browser+Node) + reads getDataroomConfig/getRoom/getDocument/listDocuments + verifyDataroomBundle + decodeDataroomSealJournal. zkorage-mcp: 5 READ-ONLY tools (get_dataroom_info/room/document, list_dataroom_documents, verify_dataroom_bundle) — NO key custody / no open tool. Stable demo doc anchored for the read+open round-trip: room c1c33201… / doc 7cb3ee5c… (sealed to demo recipient 97a6b925…). SDK smoke + MCP selftest GREEN.",
+    "frontend_ch5": "frontend /dataroom page (violet black-glass): engine + upload/encrypt/anchor (worker-first) + the KEY-FREE recipient open running ENTIRELY IN THE BROWSER via the SDK (secret never transmitted) + public document browser. Playwright (real Chromium) GREEN; full suite 9/9.",
+    "review": "Ch3+Ch4 reviewed (security auditor + code reviewer) NO blockers + Codex CLEAN; review-hardening applied (commit 1c59645: @noble/curves pinned, gateway dataroom_seal hex validation [VM gateway restarted], self-consistent tag verify, length guards, fromHex hardening, prove-seal enqueue-before-upload). Ch6 review: contract audit SOUND for demo (no Critical/High; M-1 unbounded-growth + M-2 room_id-squatting are latent/DR2-scope, gated behind the trusted admin today) + frontend review clean (in-browser key-handling verified; secret never transmitted). Fixes: added the negative room-owner-auth test (contract now 16/16), Open-panel + upload hex guards, create_room doc note."
+  },
+  "dataroom_DR2": {
+    "name": "DataRoom contract — DR2 anonymous-eligibility upgrade (membership + nullifier, in place)",
+    "contract_id": "CDUQITRVJOPJNVWBUINLZFI2LHPOLVFW2I7354WEFDG2W3VIG627HLNN",
+    "upgrade_wasm_hash": "9eede6953d623baa8d0e0866c49bc7a4852f9c6b9313b0005db634804b6642e0",
+    "upgrade_tx": "84c506024597019f55677168e252db8d996966e85ec858406757aa8767a87620",
+    "wasm_size_bytes": 30826,
+    "membership_image_id_pinned": "9550a12e84a9b26bc3926e79e271dc0f1a740f45d86f88c19d3e3e438939011c",
+    "membership_claim_type": 9,
+    "set_membership_image_tx": "8d6549863929668fec8cffee53a28e1ab387a92fe80871a9f894cf0165d69ba1",
+    "binds": "request_access(seal,image_id,journal): image pin (MembershipImageId, fail-closed if unset) -> on-chain sha256(165-B journal) -> bare-verifier cross-call -> result==1 ∧ claim_type==9 -> room exists ∧ journal.eligible_root == room's EligibleRoot -> nullifier UNUSED in room (else #15 NullifierUsed) -> record nullifier + store Grant{accessor, recipient_pub, eligible_root, nullifier} + append grant log + emit AccessGranted. PERMISSIONLESS (no require_auth — the in-guest NEW-5 holder sig pk==accessor carries the accessor's consent off-chain). set_eligible_root(room,root) = room-owner auth; re-pin rotates the set + revokes stale grants via is_granted.",
+    "new_storage": "DataKeys added in place (DR1 Config untouched — no retype): MembershipImageId, EligibleRoot(room), Nullifier(room,nullifier), Grant(room,accessor), GrantCount(room), GrantLog(room,idx). New errors NullifierUsed=15, EligibleRootMismatch=16, EligibleRootNotSet=17.",
+    "demo_eligible_set": "zero-subtree membership tree (member at index 0, empties elsewhere); demo member id_secret 0x11*32 / id_trapdoor 0x22*32 -> id_commitment leaf -> eligible_root 8be678722c84e8bf478cd0c2a8e257bcc599f80d56ad2839e0188a1cace651da pinned on demo room c1c33201… (set_eligible_root tx d61eaf82). Demo room 0101..01 -> eligible_root dfee7aba (fresh id 0x55/0x66) for the cost measurement.",
+    "acceptance_testnet": "MARQUEE: two accessors from ONE credential (same nullifier 2d6ee934, demo room c1c33201). Proof A (holder 0x03 -> accessor ed4928c6, worker-proved) -> request_access GRANT (AccessGranted idx 0, tx 0b1b0357). Proof B (holder 0x04 -> accessor ca93ac17, SAME nullifier, VM-fallback-proved) -> request_access #15 NullifierUsed. is_granted(c1c33201, ed4928c6)=true, is_granted(ca93ac17)=false, is_nullifier_used(2d6ee934)=true, grant_count=1. The on-chain record reveals neither identity nor which eligible member.",
+    "cost": "request_access (room 0101, fresh proof C) via simulateTransaction: 35,046,471 CPU instructions (35% of the 100M budget; dominated by the Groth16 BN254 pairing), writeBytes 1040, minResourceFee 567585 stroops (~0.0568 XLM).",
+    "contract_tests": "cargo 31/31 (16 DR1 + 15 DR2: happy grant, nullifier reuse #15, different-nullifier grant, image mismatch, membership-not-enabled fail-closed, malformed/proof-invalid/result/claim-type, room-not-found, root-not-set #17, root-mismatch #16, root-rotation-revokes, set_eligible_root owner-auth, set_membership_image admin-auth).",
+    "backend": "DR2 Ch3: backend/src/membership.ts (sha256 tree + nullifier + NEW-5 sign + buildMembershipJob, byte-exact w/ guest) + eligible-store.ts + /dataroom/membership/* routes. e2e GREEN (scripts/dr2-e2e.mjs): fresh room -> 2-member anonymity set -> set-root -> prove worker-first -> request_access GRANT -> reuse #15 -> unregistered blocked.",
+    "sdk_mcp": "SDK/MCP v0.10.0. SDK: decodeMembershipJournal + isRoomGranted/isNullifierUsed/getGrant/getEligibleRoot/getMembershipImageId/getGrantCount + verifyMembershipBundle (no key custody). MCP: 5 read-only DR2 tools (get_membership_status/is_room_granted/is_nullifier_used/get_membership_grant/verify_membership_bundle), selftest 35 tools + no-key-custody asserted. Smoke + selftest GREEN.",
+    "frontend": "frontend /dataroom DR2 card (violet black-glass): engine + 'Request anonymous access' full ZK flow + read-only in-browser SDK status check. Playwright (real Chromium) GREEN; full suite 10/10.",
+    "review": "THREE passes, all clean. (1) security-blockchain-security-auditor SOUND (0 Critical/High; anonymity + nullifier + accessor-binding guarantees confirmed; byte-exact across guest/contract/backend/SDK verified) + engineering-code-reviewer Ship-it (0 blockers); fixes commit 0fb858e: gateway rejects leaf_index >= 2^20 (M-1, closes the reachable high-bit aliasing path; guest in-assert deferred — would change the pinned image_id), backend memberIndex capacity guard, corrected root-rotation comment (nullifier is root-independent), frontend label, stale gateway comments. (2) Second deep pass (two correctness agents): PROVER LAYER ZERO BUGS (byte-exactness re-confirmed across all 7 layers); off-chain fixes commit 3580e63: atomic eligible-store write (temp+renameSync) + fail-loud on corrupt file (was silent {} reset → would revoke grants), type-correct `as Uint8Array` casts, frontend 12-min poll unmount cleanup. (3) Codex review CLEAN. Deferred/documented: recipient_pub PoK is a DR3-boundary concern; permissionless front-run non-harmful (accessor sig-bound); demo backend mints/sees the witness (production = member-held, the only model under which anonymity holds vs the prover)."
+  },
+  "dataroom_DR3": {
+    "name": "DataRoom contract — DR3 threshold-ECIES committee upgrade (put_committee_document, in place)",
+    "contract_id": "CDUQITRVJOPJNVWBUINLZFI2LHPOLVFW2I7354WEFDG2W3VIG627HLNN",
+    "upgrade_wasm_hash": "ab1dfb2fcffe1e8397b8cc1b0b14b6c0b1b766a1d148704ae7edc76d0c8cb383",
+    "upload_tx": "ca6e7cabbc37d4387ce4dcf15e0cfcc1e20d56eb773f1e7047fb2b9cc4754542",
+    "upgrade_tx": "935a0166b5409fedab0a010312fb137bc293ba2dc6aff1c24780eda34199c44f",
+    "wasm_size_bytes": 36691,
+    "binds": "put_committee_document(room_id, doc_id, content_hash, k_commitment, blob_pointer) -> RoomNotFound if room absent -> room.owner.require_auth() -> DocExists (#14) if doc_id already in the committee keyspace -> store CommitteeDocument{content_hash, k_commitment=sha256(K), blob_pointer} + append committee-doc log + emit CommitteeDocumentAnchored. NO ZK proof and NO on-chain key material here: K is Shamir-split off-chain to the keyper committee; faithfulness is off-chain (recipient checks sha256(reconstructed K)==k_commitment, then AES-GCM authenticates the blob vs content_hash); the ANONYMOUS access decision stays the DR2 grant (request_access / is_granted). NO contract change was strictly required for the keypers — they read is_granted + get_grant.recipient_pub; this method only anchors the committee doc honestly (vs a dead single-recipient seal).",
+    "new_storage": "DataKeys added in place (DR1/DR2 storage untouched — no retype): CommitteeDoc(room,doc), CommitteeDocCount(room), CommitteeDocLog(room,idx). Separate keyspace from DR1 Doc, so a committee doc and a single-recipient doc may share a doc_id. New reads: get_committee_document / get_committee_doc_count / get_committee_doc_by_index. No new errors (reuses RoomNotFound #12 / DocExists #14).",
+    "acceptance_testnet": "Upgrade preserved all DR1/DR2 storage (is_granted(c1c33201, ed4928c6) still true after the swap). put_committee_document on demo room c1c33201 (doc d3d3..d3, content_hash abab..ab, k_commitment cdcd..cd) -> CommitteeDocumentAnchored idx 0 (tx aed8e89b); get_committee_document returns it byte-for-byte.",
+    "cost": "put_committee_document via simulateTransaction: minResourceFee 375,360 stroops (~0.0375 XLM) — a pure storage write, no Groth16 verify (cheaper than request_access's 35M-instr verify).",
+    "contract_tests": "cargo 37/37 (31 DR1+DR2 + 6 DR3: committee-doc happy, room-not-found #12, duplicate #14, two-docs increment/enumerate, coexists-with-DR1-doc same doc_id, requires-room-owner-auth).",
+    "key_release": "OFF-CHAIN self-built 2-of-3 threshold-ECIES keyper committee (keyper/ package). Shamir GF(256) byte-wise t=2/n=3 (backend/src/shamir.ts); per-share ECIES reuses the DR1 keystream byte-exact, DR3 tag domain zkorage-dataroom-share-v1/tag (backend/src/committee.ts + keyper/src/share-ecies.ts). Each keyper independently reads is_granted + get_grant.recipient_pub from its OWN RPC and seals its share only to the proof-bound recipient_pub. TACo adapter NOT built (documented design only). Honest caveats: trusted dealer at K-split (DKG = hardening); keyper liveness (t-of-n margin).",
+    "stable_demo": "room 'zkorage-dr3-committee-demo' = a17388e8fe6c1ea798522f463d095e8267ca28d1c52b6a2a9977b2a42c40a8c8 / doc 'dr3-committee-welcome-doc' = 614664eba5e05904c98125425a8bd175f9908f74cab1fd4869143a0d1ebfe38a; demo member id 0x11/0x22 holder 0x03 -> accessor ed4928c6…; recipient = demo x25519 97a6b925… (secret = sha256('zkorage-demo-dataroom-recipient-key')). GRANT tx ac5ed077, committee-doc tx 40f59659 (content_hash 803355c8, k_commitment 98ba38b9). Reproducible key-free round-trip (SDK DEMO_DATAROOM_COMMITTEE). Seed: backend/scripts/dr3-anchor-demo.mjs (idempotent).",
+    "e2e": "backend/scripts/dr3-e2e.mjs GREEN on testnet: fresh room -> 2-member set -> DR2 proof (worker-first) -> GRANT (recipient = demo key) -> committee seal-doc (K split + dealt to 3 keypers + anchored) -> collect 3 sealed shares -> reconstruct 2-of-3 -> AES-GCM decrypt -> content MATCH; non-granted accessor -> 403 collect + 403 open; wrong recipient key -> not faithful. Keypers: 3 local processes :8801-8803.",
+    "sdk_mcp": "SDK/MCP v0.11.0. SDK (no key custody): committee.ts (shamirReconstruct, openShare, reconstructWithCommitment — byte-exact mirror, frozen-vector pinned) + openCommitteeDocument (collect sealed shares -> open with the recipient secret -> reconstruct -> AEAD decrypt; reads recipient_pub from the on-chain grant). MCP: 2 read-only tools (get_committee_document / get_committee_doc_count), NO collect/open/reconstruct/key tool (selftest asserts it).",
+    "frontend": "frontend /dataroom DR3 card (violet black-glass): committee status (3 keypers / threshold) + the demo doc's content_hash + sha256(K) commitment + the KEY-FREE in-browser open (collect via the backend aggregator -> reconstruct 2-of-3 -> AES-GCM decrypt; recipient secret never leaves the browser). Playwright (real Chromium) GREEN; full suite 11/11.",
+    "reviews": "TWO adversarial passes, both clean. security-blockchain-security-auditor SOUND (0 Critical/High; confirmed a non-granted party cannot obtain K, < t keypers cannot reconstruct, the share is sealed only to the proof-bound on-chain recipient_pub, Shamir GF(256) + information-theoretic t-of-n correct, no keystream reuse [fresh eph/seal], k_commitment hiding sound [K is 32 high-entropy bytes], put_committee_document honest, DR2 not weakened) + engineering-code-reviewer Ship-it (0 blockers; byte-exactness independently re-verified). Fixes (commit f786b01): keyper /deal FAIL-CLOSED when DEAL_TOKEN unset (M-02); SDK + backend opener read recipient_pub from the on-chain get_grant not the aggregator (L-01); seal-doc pre-deal get_room fast-fail + Promise.allSettled + WARN on partial deal (L-02); keyper selftest runs assertFrozenVector offline (drift gate); M-01 /share-oracle documented public-by-design (no identity leak; rate-limit = prod TODO); MCP version literal 0.10.0->0.11.0. Re-verified GREEN after fixes (backend self-test, keyper selftest, SDK smoke, MCP selftest, Playwright 11/11, targeted seal-doc room-check + open get_grant paths). THREE review passes clean: auditor SOUND + code-reviewer Ship-it + **Codex CLEAN** (third pass, 2026-06-16)."
+  },
+  "guest_dataroom_seal": {
+    "name": "dataroom_seal_predicate (RISC0 zkVM guest, DR1) — deterministic Docker build",
+    "canonical_image_id": "8f24842d0647a0671ed1b898f6a42c2d104ff04b3f152067c93d9449bf65a3ce",
+    "predicate": "NO attester (commitment-only). In-guest ECIES (x25519, W7 Option B): seals the PRIVATE 32-byte document key K to recipient_pub; commits a 229-byte journal {result, claim_type=8, room_id, doc_id, recipient_pub, content_hash, eph_pub, ct, tag} (K ABSENT). tag = sha256(DOMAIN ‖ K ‖ content_hash ‖ room_id ‖ doc_id) binds the seal to THIS blob+document (faithful, non-portable). DOMAIN_KS=zkorage-dataroom-ecies-v1/ks, DOMAIN_TAG=zkorage-dataroom-seal-v1/tag.",
+    "segments": "2 (measured; ECIES via curve25519 precompile, no ed25519). x25519 guest -> canonical image_id built ONCE on the VM and embedded everywhere (W8 cross-machine x25519 finding). ruint pinned 1.17.2.",
+    "build": "cargo risczero build (Docker); methods/build.rs embeds SIX guests via ZKORAGE_DATAROOM_SEAL_ELF (+ the other 5). host_dataroom_seal (job: doc_key_hex/recipient_pubkey_hex/content_hash_hex/room_id_hex/doc_id_hex; host makes the ECIES eph_secret). gateway kind dataroom_seal; worker 6th canonical bin."
+  },
+  "guest_membership": {
+    "name": "membership_predicate (RISC0 zkVM guest, DR2 anonymous eligibility) — deterministic Docker build",
+    "canonical_image_id": "9550a12e84a9b26bc3926e79e271dc0f1a740f45d86f88c19d3e3e438939011c",
+    "predicate": "NO attester. (1) NEW-5 accessor-auth: holder ed25519 sig over 'zkorage-dataroom-access-v1' ‖ room_id ‖ accessor ‖ recipient_pub, with pk == accessor asserted (off-chain require_auth, gasless/permissionless). (2) Membership: leaf id_commitment = sha256(0x00 ‖ id_secret ‖ id_trapdoor), fold a depth-20 sha256 Merkle path (internal = sha256(0x01 ‖ L ‖ R)) to the eligible_root. (3) Nullifier = sha256(0x02 ‖ id_secret ‖ room_id) (external_nullifier = room_id). Commits a 165-B journal {result, claim_type=9, room_id, eligible_root, nullifier, accessor, recipient_pub}; id_secret/id_trapdoor/leaf_index ABSENT (anonymous).",
+    "segments": "2 (measured; ed25519 holder sig via curve25519 precompile + depth-20 sha256 Merkle + nullifier). ed25519+sha256 only (NO x25519) -> canonical image_id REPRODUCES cross-machine (verified VM == WSL2, both 2f744f78). ruint pinned 1.17.2.",
+    "build": "cargo risczero build (Docker); methods/build.rs embeds SEVEN guests via ZKORAGE_MEMBERSHIP_ELF (+ the other 6). host_membership (job: sig_hex/pk_hex/accessor_hex/recipient_pubkey_hex/id_secret_hex/id_trapdoor_hex/room_id_hex/siblings_hex/leaf_index; demo mode self-signs + builds a zero-subtree witness). gateway kind membership (+ public hex/u32 validation); worker 7th canonical bin. Worker-first proof verified on testnet (by=worker, bare verifier verify -> Ok)."
+  },
+  "all_contracts": {
+    "note": "Weeks 1–8 + DR1 — every deployed contract ID on Stellar testnet. Deployer GDLECNXD…GXZY6.",
+    "verifier_W1": "CBAPC663PTWIWDLYNCG5WAD5MIZF4SKY43U6L2NM5ZUU5XFOS4JDYAFW",
+    "token_W2": "CC3JKNC4EKALMT7WALUMCTVBSH73ZZSP3AC4B7IQUAZ7UYYZCEIISQLA",
+    "por_policy_W3": "CDQ2PA27UTJDLPA4XTGG647SNTMUYO2KRFGS3SW5SMNBIWRB7JVCZXQ6",
+    "kyc_gate_W5": "CCTHDSEQFMAOPJXI5GVSUTMXO5DHZUJS7YQYAEIGKFMOAMTNDKSL4FWT",
+    "compliance_gate_W6": "CDSA3PUL7OZ5HKLIT73ZTG64TLYK4QTO5ZHZKHA3JBS76R5L5Q2EO4FV",
+    "payroll_gate_W7": "CA6XYNHYR3GS3TQ24Z2Y45SXRNQDA5Z4L2PU54YM2WUKSMPVWVMYZCDA",
+    "accredited_gate_W8": "CCLSXZBOPCAJQS6L54EAGZQHTD5QUES2OSYCFX5XJT6ZXSICRPS4QKQZ",
+    "fundraise_W8": "CDEV4METH74Z42DFV6HC3VLF3PWACXVIIS7C3PLK6CZT2B6L5I3YBC2L",
+    "guest_image_ids": {
+      "claim_por_revenue": "973c983125ad3a9f115b2f4d8d12ec39e3f1b107f15c57643f72baf36f923502",
+      "identity_kyc": "a5198a5a359359b08dc1b0faa260e253d413dea5035c1375d19b742f7deaeb3b",
+      "compliance": "54d5921c58280b63ef80905ffe6d4e506f77031b53ff2a347fe84ace423cb129",
+      "payroll": "2c9cc61b0dc261290209067783365842eca14b77981486eb535bbacfbd1e2785",
+      "accredited": "26d743739468287991220d6da2cb891616aa7c6b90da2eda9836395f31bcc947",
+      "dataroom_seal": "8f24842d0647a0671ed1b898f6a42c2d104ff04b3f152067c93d9449bf65a3ce",
+      "membership_dr2": "9550a12e84a9b26bc3926e79e271dc0f1a740f45d86f88c19d3e3e438939011c",
+      "docauth_dr4": "e4f4a356cbacde61ef901500a6d396d2fa83a666b31224be2848fd69bbff8741"
+    },
+    "dataroom_DR1_thru_DR6": "CDUQITRVJOPJNVWBUINLZFI2LHPOLVFW2I7354WEFDG2W3VIG627HLNN"
+  },
+  "acceptance_testnet_week8": {
+    "composition_positive": "accredited grant (tx 17efe3b7 gate) + revenue proof submit (is_revenue_verified=true) -> can_access(demo)=true + request_investor_access GRANT (InvestorAdmitted, idx 0)",
+    "composition_negatives": "accredited-but-no-revenue -> #11 RevenueNotVerified; revenue-but-not-accredited -> #12 NotAccredited",
+    "backend_e2e": "fresh G-address investor (GABF456W): attest -> prove(worker-first) -> grant-accredited -> request-access -> can_access=true",
+    "worker_first_proof": "accredited proof (image 04fe8d3e, claim_type 7, 260-B seal) proved by=worker -> verifier.verify Ok on testnet",
+    "upgrade": "fundraise upgraded in-place (review fixes); post-upgrade can_access(demo)=true, is_revenue_verified=true, admissions=2 (storage preserved)",
+    "reviews": "TWO review passes — security-blockchain-security-auditor SOUND (no Critical/High) + engineering-code-reviewer Ship-it; 7 fixes applied (try_is_granted totality, revenue X-consistency, MCP env, empty-input guard, fail-closed worker job-build, /prove-status PoR-cache guard, + the threshold u64-string). Codex review CLEAN. The 8-week build is complete and reviewed."
+  },
+  "guest_docauth": {
+    "name": "docauth_predicate (RISC0 zkVM guest, DR4 document-authenticity / zkPDF) — deterministic Docker build",
+    "canonical_image_id": "e4f4a356cbacde61ef901500a6d396d2fa83a666b31224be2848fd69bbff8741",
+    "predicate": "Re-verifies a REAL third-party RSA-2048 PKCS#1 v1.5 (SHA-256, e=65537) signature IN-zkVM (m = s^65537 mod n via square-and-multiply on crypto-bigint U2048 risc0-fork; full EMSA-PKCS1-v1_5 structural check), over sha256(statement) which the guest computes itself; parses a fixed 88-byte signed bank statement (DOMAIN 'zkorage-bankstmt' | version=1 | field_tag=1 | account_ref(32,private) | value u64(private) | issued_at | expiry | currency) and asserts value >= threshold. Commits a 113-byte journal {result, claim_type=10, field_tag, threshold, issuer_key_hash=sha256(n), room_id, msg_digest=sha256(statement)}; statement/account/exact value ABSENT.",
+    "segments": 22,
+    "cost_note": "RSA-2048 modexp = 22 segments (~7x payroll); de-risked DR1 Ch0. NEVER crypto-bigint constant-time pow (329 seg).",
+    "reproducible": "RSA + sha256 only (no ed25519/x25519) -> canonical image_id reproduces cross-machine; ruint pinned 1.17.2.",
+    "prover_kind": "docauth (gateway + 8th worker canonical bin); fields n_hex/sig_hex/statement_hex/threshold/room_id_hex; worker-first verified on testnet (proved_by=worker emitted the pinned image_id).",
+    "hardening_deferred": "DR4 review LOW-1/LOW-2 (assert odd modulus + s<n) deferred to the next re-pin (non-exploitable under the trusted-admin allowlist model; would change the image_id)."
+  },
+  "dataroom_DR4": {
+    "name": "DataRoom contract — DR4 document-authenticity upgrade (attest_document_fact + issuer allowlist, in place)",
+    "contract_id": "CDUQITRVJOPJNVWBUINLZFI2LHPOLVFW2I7354WEFDG2W3VIG627HLNN",
+    "upgrade_wasm_hash": "ea471ee1957e083f6569e57aaf451a18444d2cd7539539d319cfee791c1f3f4b",
+    "upload_tx": "704d9a4daad402a3627e4e5d53223588d72757954a48fd971c3f021d061f2549",
+    "upgrade_tx": "206a91af5e35ec21d2ab86e6538bcb6ff9ae30abea330aac1093bb65bbb4f24f",
+    "wasm_size_bytes": 45451,
+    "docauth_image_id_pinned": "e4f4a356cbacde61ef901500a6d396d2fa83a666b31224be2848fd69bbff8741",
+    "set_docauth_image_id_tx": "4efadde113b6a5bad61e22fa65fda0543bb07d7fa11cc3b74469680b3ca9d1a9",
+    "claim_type": 10,
+    "binds": "attest_document_fact(seal, image_id, journal): image pin (fail-closed if unset) -> on-chain sha256(journal) -> bare Groth16 verify -> result==1 & claim_type==10 -> room exists & room.owner.require_auth() -> issuer_key_hash ALLOWLISTED (DocAuthIssuer; the third-party-truth trust anchor) -> dedup (DocFactExists #18) -> store DocumentFact(room_id, msg_digest) + log + event. Admin: set_docauth_image_id / set_docauth_issuer. Reads: get_document_fact / get_doc_fact_count / get_doc_fact_by_index / get_docauth_image_id / is_docauth_issuer_allowed. DR1/DR2/DR3 storage preserved (DataKeys appended, no retype).",
+    "cargo_tests": "51/51 (+14 DR4)",
+    "acceptance_testnet": {
+      "note": "A REAL worker RSA proof attested an on-chain fact; non-allowlisted issuer rejected.",
+      "ch2_room": "0101010101010101010101010101010101010101010101010101010101010101",
+      "ch2_issuer_allowlist_tx": "73900f0f1d1d5217ed3ca1e97a603f8f7da4f40fc01d7647613941da6f855d66",
+      "ch2_attest_tx": "8fef43ba36318a449485626258d1278c03fb738195bd8cfc4c0672ca80fad891",
+      "ch2_fact": "field_tag=1 (balance), threshold=1000000, issuer_key_hash=2c83c24b…, msg_digest=3764e06d…",
+      "verify_cost_instructions": 35592618,
+      "verify_fee_stroops": 415888,
+      "verify_fee_xlm": "~0.0416"
+    },
+    "stable_demo": {
+      "note": "The reproducible demo fact (stable mock-bank key 3d181231; persisted in backend/data). The mock bank RSA-signs a private statement; the guest proves balance >= $X without revealing it; only an allowlisted issuer is accepted.",
+      "room": "7114b21093db993fec02abec52e32610ac2baeb061ff16669f7bff52ee1b58e0",
+      "msg_digest": "3764e06dfd6236e853580d5db31b87cac89a2004e5fe5cd6486468e2f6f71ebf",
+      "issuer_key_hash": "3d1812311f69c609de6d57ba960e8dc4ca35c309b10f721b965ee415b0f05e51",
+      "issuer_allowlist_tx": "987886ddaf3a3d58641bc05da4b11298d72f035c05b418d45752bf8d06140fed",
+      "threshold": "1000000 (value 5000000 hidden)"
+    },
+    "reviews": "security-blockchain-security-auditor SOUND + engineering-code-reviewer Ship-it (Ch6 fixes 0e946e2). LOW-1/LOW-2 documented as deferred hardening.",
+    "sdk_mcp": "v0.12.0 (read-only, no key custody: getDocumentFact/verifyDocauthBundle + 5 MCP tools)",
+    "frontend": "/dataroom DR4 card + Playwright 12/12"
+  },
+  "dataroom_DR5": {
+    "name": "DataRoom contract — DR5 faithful disclosure / data-side teaser upgrade (attest_teaser + appraiser allowlist, in place)",
+    "contract_id": "CDUQITRVJOPJNVWBUINLZFI2LHPOLVFW2I7354WEFDG2W3VIG627HLNN",
+    "upgrade_wasm_hash": "2fdd0597c77ed18fecadbc274ef1ccc984f972783f214cdcb1813b4a7ade66da",
+    "upgrade_tx": "67040add11463d68e378a73372c4a9901293dc713c5303a92728deebe3546537",
+    "upgrade_tx_2_doc_hardening": "ae9db2a9776543e2dc7643873e4bebad5d8d1e439679e21e66d5e33029f9e90e (Ch6 review fixes: doc-comment caveats on Teaser/is_teaser_valid + 2 tests; behavior-identical re-upgrade so source==chain; wasm b1f36915 -> 2fdd0597)",
+    "wasm_size_bytes": 55011,
+    "teaser_image_id_pinned": "973c983125ad3a9f115b2f4d8d12ec39e3f1b107f15c57643f72baf36f923502",
+    "set_teaser_image_id_tx": "2bdacb97f9aeca5a4867a86ad890083984a26c7313860fc41223f59c285d8d24",
+    "teaser_attester_allowlisted": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+    "set_teaser_attester_tx": "b50e39b70d969d268508a50b5ac29cb8e511d46a82fed11662c1623bc6276ac3",
+    "claim_type": 11,
+    "no_new_guest": "DR5 reuses the generic value>=threshold guest (973c9831, the teaser, claim_type 11) + the seal guest (8f24842d, the auditor faithful redacted view via put_document). No new guest / gateway kind / worker bin.",
+    "binds": "attest_teaser(seal, image_id, journal, room_id, doc_id): image pin == TeaserImageId (fail-closed if unset) -> on-chain sha256(journal) -> bare Groth16 verify -> result==1 & claim_type==11 -> room exists & room.owner.require_auth() -> referenced Doc(room_id,doc_id) exists (bind its content_hash = the released blob hash) -> attester (journal issuer_id) ALLOWLISTED (TeaserAttester; the appraiser third-party-truth anchor) -> expiry>now (Expired #9) -> dedup (TeaserExists #19) -> store Teaser + log + event. The attester signs nonce=field_tag (field semantics attester-vouched). Admin: set_teaser_image_id / set_teaser_attester. Reads: get_teaser / get_teaser_count / get_teaser_by_index / is_teaser_valid (expiry-aware) / is_teaser_attester_allowed / get_teaser_image_id. DR1-DR4 storage preserved (DataKeys appended, no retype; room_count=11 survived).",
+    "errors_added": "TeaserExists=19, DocNotFound=20",
+    "cargo_tests": "69/69 (+18 DR5; +2 Ch6 review tests: same-proof-rebindable + field_tag-low-word)",
+    "design": "Auditor redacted view = a field-level disclosure policy (public/auditor/private tiers; PCI/HIPAA/GDPR masking; owner/custodian redacts) sealed to the auditor's x25519 key via put_document, integrity-faithful (content_hash + faithful tag). Teaser = a public ZK-verified fact (sealed doc's figure >= X, doc unseen) vouched by an allowlisted appraiser. Honest gap: redaction-correctness is owner-asserted (no new guest); the teaser figure is appraiser-vouched, the teaser<->doc linkage owner-asserted (owner controls the room) but bound to the anchored content_hash.",
+    "acceptance_testnet": {
+      "note": "Full DR5 e2e GREEN (backend/scripts/dr5-e2e.mjs, worker-first GPU). A REAL appraiser teaser proof attested an on-chain fact (figure>=$1M, figure PRIVATE); a SELF-MINTED appraiser key was REJECTED #8; an auditor opened a redacted view faithfully (PCI ****1881 / FOIA [REDACTED] / HIPAA year / GDPR drop), wrong key rejected.",
+      "teaser_attest_tx": "52ebb1fc9f9b0e9afc0b6b3bf381984cb1b65d87bbc9ed30005e67e48e95fcfc",
+      "teaser": "field_tag=1 (revenue), threshold=1000000, figure 4250000 hidden, content_hash bound a2891da3…, appraiser d04ab232…",
+      "self_minted_rejected": "#8 IssuerNotAllowed (a self-minted appraiser key is refused — the third-party-truth anchor)",
+      "auditor_redacted_view_tx": "102f8e899d3f50580214529e2fc9d1bfbfc37ce2087fa1981969f25a5dc91282 (redacted blob sealed to auditor c275cf79…; faithful open ✓, wrong key ✗)",
+      "verify_fee_stroops": 519446,
+      "verify_fee_xlm": "~0.052",
+      "verify_cost_note": "Groth16-verify-dominated (~35M instr, in line with DR2/DR3/DR4)"
+    },
+    "stable_demo": {
+      "note": "Reproducible demo (backend/scripts/dr5-anchor-demo.mjs, idempotent): a sealed full financial statement, a public teaser about it (revenue>=$1M, figure private), and an auditor REDACTED view (PCI/HIPAA/GDPR masking) sealed to the demo auditor. Read/re-verify with getTeaser/verifyTeaserBundle; auditor opens key-free with openDisclosure.",
+      "room": "e4fec337908b737271e676adcc6b07de30f6a814aa4207ab57db471e1bad76c2",
+      "full_doc_id": "c17d9f3c7355894889a5b9b72cfe7a0e940e59e67816b56a0955f894ff054642",
+      "auditor_view_doc_id": "aac527e91a16d28ce92d19243d85b4e9cf636d41c80cc4a5b69af28c7850d404",
+      "appraiser_attester": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737 (signer seed [17])",
+      "auditor_pub": "c275cf79ef891f9d1a725a7ecd74047854754b4445c92b75f193725f6376a83f (reuses the W7 demo auditor; secret = sha256('zkorage-demo-auditor-payroll-view-key')[:32])",
+      "threshold": "1000000 (figure 4250000 hidden)"
+    },
+    "reviews": "security-blockchain-security-auditor SOUND (no Critical/High; MEDIUM-1 cross-doc-replay + MEDIUM-2 appraiser-removal both by-design/documented; LOW test gaps closed) + engineering-code-reviewer Ship-it (no blockers, no key leaks; S1 verifyTeaserBundle wording tightened). Ch6 fixes: Teaser/is_teaser_valid doc caveats (owner-asserted binding; consumer allowlist cross-check) + 2 tests + SDK doc; behavior-identical re-upgrade (upgrade_tx_2).",
+    "sdk_mcp": "v0.13.0 (read-only, no key custody). SDK: getTeaser/isTeaserValid/getTeaserCount/getTeaserByIndex/listTeasers/getTeaserImageId/isTeaserAttesterAllowed + verifyTeaserBundle + openDisclosure (key-free auditor open). MCP: 4 read tools (get_dataroom_teaser/list_dataroom_teasers/is_teaser_attester_allowed/verify_teaser_bundle). Smoke 11/11 + selftest GREEN.",
+    "frontend": "/dataroom DR5 card (teaser provenance re-verify + key-free auditor redacted-view open in-browser) + Playwright dataroom-dr5.spec.ts; full suite 13/13 GREEN."
+  },
+  "dataroom_DR6": {
+    "name": "DataRoom contract — DR6 private-policy composition + revocation/rotation upgrade (the data-room finale, in place)",
+    "contract_id": "CDUQITRVJOPJNVWBUINLZFI2LHPOLVFW2I7354WEFDG2W3VIG627HLNN",
+    "upgrade_wasm_hash": "6571b74bf176a2a64f91775a82445616dd9f197d7ef268ffa4920c8aca59a18a",
+    "upgrade_tx": "9d036d9cfd7ad1177553423427db2128b3156d5941375b31855f2fce9829f826",
+    "upgrade_tx_2_review_fixes": "fde41a615d9ee017c295980ad757f432bf34e3b2582f835f34da207a38e4cb71 (Ch6 review fixes: LOW-1 admission-log dedup + code-review #1 is_admitted revoke check for membership-optional rooms; wasm 1ac89c5b -> 7ca7aab8; storage preserved)",
+    "upgrade_tx_3_review_pass_2": "5502d42da9f8728ec761368ff65e7990291b3d38d9bfb7cc81921a495b055e09 (2nd review pass: LOW-1 audit-log TTL fix [re-admit re-extends AdmissionLog/Count TTL, has()-guarded against legacy state] + EmptyPolicy #27 [reject a fully-open room: !require_membership AND no gates] + N1 doc + N3 backend gate-addr validation; wasm 7ca7aab8 -> 6571b74b; storage preserved, room_count=19 survived, demo still admitted, #27 verified live)",
+    "wasm_size_bytes": 69221,
+    "wasm_size_note": "Exceeds the legacy 64KiB guideline (the DR5 baseline was already 55KB; DR6's functions + structs make sub-64KiB impossible without gutting docs/functionality). Protocol-26 testnet accepts it — the 71,905-B raw upload (tx 6418152a) succeeded, so the actual max_contract_size is >= 71.9KB.",
+    "no_new_guest": "DR6 adds NO new RISC0 guest. The composite is an on-chain cross-call AND across already-proven legs (the W8 fundraise pattern, generalized): membership (DR2 guest 9550a12e) ∧ compliance.is_granted (gate CDSA3PUL) ∧ accredited.is_granted (gate CCLSXZBO). No new gateway kind / worker bin.",
+    "composition": "request_room_admission(room, accessor) — PERMISSIONLESS: load policy (RoomPolicyNotSet #21 if unset) -> not revoked (AccessRevoked #25) -> membership Self::is_granted (MembershipRequired #22, root- & revoke-aware) -> if policy.compliance_gate: GateClient.try_is_granted (NotCompliant #23, fail-closed) -> if policy.accredited_gate: try_is_granted (NotAccredited #24) -> record Admission + emit. is_admitted = the same AND, re-evaluated live (drops on revoke/expiry). The membership leg's NEW-5 holder sig (pk==accessor) carries consent off-chain, so admission needs no require_auth.",
+    "revocation": "revoke_access(room, accessor, revoked) [room-owner auth] toggles a per-room Revoked set; is_granted now returns false for a revoked accessor (so the DR3 keypers refuse shares + is_admitted drops) WITHOUT re-pinning the eligible root (others unaffected) or a guest change. The revoked member can't re-enter (room nullifier spent). is_access_revoked read.",
+    "key_rotation": "rotate_committee_document(room, doc, content_hash, k_commitment, blob_pointer) [room-owner auth] updates the CommitteeDoc in place + bumps KeyEpoch (CommitteeDocNotFound #26 if absent). Off-chain the dealer re-splits a fresh K' to the keypers + re-encrypts the blob; honest members re-collect new shares (grant still valid), the old K is useless. get_committee_key_epoch read.",
+    "policy": "set_room_policy(room, require_membership, compliance_gate: Option<Address>, accredited_gate: Option<Address>) [room-owner auth]. Per-room PUBLIC config (which legs apply); None gate = leg not required. The privacy is the requester's hidden attributes satisfying it. get_room_policy read.",
+    "errors_added": "RoomPolicyNotSet=21, MembershipRequired=22, NotCompliant=23, NotAccredited=24, AccessRevoked=25, CommitteeDocNotFound=26, EmptyPolicy=27",
+    "datakeys_added": "RoomPolicy(room), Revoked(room,accessor), Admission(room,accessor), AdmissionCount(room), AdmissionLog(room,idx), KeyEpoch(room,doc) — appended, no retype; DR1-DR5 storage preserved (config intact, room_count=15 survived).",
+    "cargo_tests": "90/90 (+21 DR6: full composite, denial #22/#23/#24, revoke->denied+#25+unrevoke, broken-gate fail-closed #23, rotate epoch 0->1 + #26, owner-auth negatives, is_admitted totality, admission-log dedup idempotent, membership-optional revocation drops is_admitted + #25, + 2nd-pass: EmptyPolicy #27 rejects-open-room + allows-gate-only)",
+    "reviews": "security-blockchain-security-auditor SOUND for the demo (all 4 invariants hold: composite AND fails-closed on every missing/false/broken leg, revocation effective+surgical+re-entry-proof via spent nullifier, mutators room-owner-gated + admission safely permissionless, rotation owner-only/shape-preserving/denies-revoked; nothing cross-user exploitable; credential-pooling = documented by-design gap). engineering-code-reviewer Ship-it (byte/field + Option<Address> + composition AND + read-only MCP all consistent). Fixes applied: LOW-1 admission-log dedup (permissionless re-call no longer inflates the log/count); code-review #1 is_admitted explicit revoke check (write/read paths now agree for membership-optional rooms); #2 uniform accessorToHex across DR6 routes; #3 rotate-doc partial-redeal caveat; #4 frontend epoch label; #5 parseGateArg unconfigured-gate warn; SDK getAdmission/canAccessRoom doc hardening (LOW-2/INFO-1). Re-upgraded in place (upgrade_tx_2); full DR6 e2e re-run GREEN. **2nd review pass (deeper, both agents): auditor SOUND + code-reviewer Ship-it — confirmed the Ch6 fixes correct + reentrancy sound; found 1 NEW bug introduced by the LOW-1 fix (re-admit no longer re-extended AdmissionLog/Count TTL -> audit-log eviction asymmetry, audit-only) -> fixed (has()-guarded re-extend); + EmptyPolicy #27 guard (open-room footgun); + N1 stale-comment + N3 backend gate-addr 400-validation. Re-upgraded (upgrade_tx_3); cargo 90/90, smoke/selftest/Playwright GREEN, #27 verified on-chain.",
+    "costs_simulate_testnet": {
+      "request_room_admission_composite_AND": "6,739,533 instr (6.74%), 121,666 stroops (~0.0122 XLM) — no Groth16, just 3 cross-call reads; ~5x cheaper than a single leg's proof-verify (~35M instr / ~0.057 XLM)",
+      "is_admitted_live_read": "6,150,231 instr, 21,065 stroops (~0.0021 XLM)",
+      "set_room_policy": "3,417,256 instr, 21,197 stroops",
+      "revoke_access": "3,381,036 instr, 106,072 stroops (~0.0106 XLM, persistent write rent)",
+      "get_room_policy": "3,186,487 instr, 16,235 stroops"
+    },
+    "acceptance_testnet": {
+      "note": "Full DR6 e2e GREEN (backend/scripts/dr6-e2e.mjs, real proofs worker-first GPU). 3 legs proved (membership 9550a12e / compliance 54d5921c / accredited 26d74373), all bound to ONE pseudonymous accessor.",
+      "denials": "member-only -> #23 NotCompliant; member+compliant -> #24 NotAccredited",
+      "admitted_tx": "99e0ee330e51685e731aa5ee61e3fea2cfb85bd8cc2c3b4903e23148dff90fd2 (the composite AND -> ADMITTED)",
+      "revocation": "revoke -> is_admitted false + membership is_granted false -> request_room_admission #25 AccessRevoked; unrevoke -> admitted again",
+      "key_rotation": "seal committee doc -> open MATCH -> rotate (epoch 0->1, tx 9c46bc2f) -> open with K' -> NEW content MATCH; revoke -> keyper share release 403"
+    },
+    "stable_demo": {
+      "note": "Reproducible idempotent demo (backend/scripts/dr6-anchor-demo.mjs): the fixed demo member (id 0x11/0x22, holder 0x03 -> accessor ed4928c6) ADMITTED under member ∧ compliance ∧ accredited + a committee doc for the rotation demo. Read live with canAccessRoom / isAdmitted.",
+      "room": "db16742cf50b4443db1336b65ece5a532515487d7d4f7b6feab87bbb87396489",
+      "accessor": "ed4928c628d1c2c6eae90338905995612959273a5c63f93636c14614ac8737d1",
+      "committee_doc": "8b041fe3998194a15fab4bf9d32db0cc528ef12eec9a6b521ec5124ad66508a6",
+      "compliance_gate": "CDSA3PUL7OZ5HKLIT73ZTG64TLYK4QTO5ZHZKHA3JBS76R5L5Q2EO4FV",
+      "accredited_gate": "CCLSXZBOPCAJQS6L54EAGZQHTD5QUES2OSYCFX5XJT6ZXSICRPS4QKQZ"
+    },
+    "honest_gaps": "(1) Credential pooling: each leg is bound to the accessor but the compliance/accredited gates only COMMIT it (no holder-sig there) — colluding parties could pool credentials onto one accessor; the membership leg IS holder-bound (NEW-5). Production fix = bind all legs to a shared in-circuit id_commitment. (2) Per-accessor revocation needs no guest change; full re-admit-after-rotation needs epoch-nullifiers (documented, not built). (3) The policy is public; only attributes are private (truly-hidden policies = a guest change, out of scope).",
+    "sdk_mcp": "v0.14.0 (read-only, no key custody). SDK: getRoomPolicy/isAdmitted/isAccessRevoked/getAdmission*/getCommitteeKeyEpoch + canAccessRoom (per-leg breakdown, reads gates at the policy-pinned addresses). DEMO_DATAROOM_POLICY. smoke GREEN. MCP: 4 read tools (get_room_policy/can_access_room/is_access_revoked/get_committee_key_epoch); NO admit/revoke/rotate/policy-set tool (writes backend-only); selftest GREEN.",
+    "frontend": "/dataroom DR6 card (composite-policy admission per-leg breakdown via canAccessRoom + live Numbers panel reading on-chain grants/admissions/key-epoch) + Playwright dataroom-dr6.spec.ts; full suite 14/14 GREEN.",
+    "numbers_report": "development/Build-Plan/dataroom/DR6-NUMBERS.md (local) + the in-app /dataroom DR6 Numbers panel (live)."
+  }
+}

@@ -1,0 +1,68 @@
+# ── Reference & ideation material (large vendored clones, research docs, build plan) ──
+# Lives on local disk only; not part of the shipped build.
+/development/
+
+# ── Project guidance for Claude Code / contributors (local-only) ──
+/CLAUDE.md
+
+# ── Installed agent skills & tooling (regenerable via the stellar-build installer) ──
+/.codex/
+/.stellar/
+/.claude/skills/
+/.claude/settings.local.json
+
+# ── IDE / OS ──
+/.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+
+# ── Node / JS / TS ──
+node_modules/
+dist/
+build/
+.next/
+out/
+coverage/
+*.log
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnp.*
+.cache/
+
+# ── Rust / Soroban ──
+target/
+**/*.rs.bk
+
+# ── zkorage runtime artifacts ──
+/backend/data/
+/contract/.contract_id.*
+/contract/.token_id.*
+/contract/.policy_id.*
+/contract/_*.txt
+/prover/proof.txt
+/prover/bundle.json
+/frontend/test-results/
+/frontend/tests/*.png
+test-results/
+playwright-report/
+
+# ── Env & secrets ──
+.env
+.env.*
+!.env.example
+# Frontend production build config = the public backend URL (not a secret); track it so the prod
+# build is reproducible and the deploy target is explicit in version control.
+!/frontend/.env.production
+*.key
+identity-*.toml
+/contract/.gate_id.*
+/contract/.dataroom_id.*
+/.claude/agents/
+
+# ── UX redesign scratch (palette swatches) ──
+/.ux-swatches/
+/frontend/dist-a/
+/frontend/dist-b/

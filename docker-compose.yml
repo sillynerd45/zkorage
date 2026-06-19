@@ -1,0 +1,39 @@
+# zkorage Frontend + Backend, containerized for durable internet exposure (Cloudflare Tunnel).
+# Mirrors the prover's Docker model. Runs in the WSL2 Docker engine; published ports forward to
+# Windows localhost, so `cloudflared` (on Windows) reaches them:
+#   zkorage.wazowsky.id -> http://localhost:4173   (frontend)
+#   apizk.wazowsky.id   -> http://localhost:8787   (backend)
+#
+# Usage (from the repo root in WSL2):
+#   docker compose up -d --build      # build + start both, detached
+#   docker compose ps                 # status + health
+#   docker compose logs -f backend    # tail logs
+#   docker compose down               # stop + remove
+# restart: unless-stopped -> both survive a reboot (with Docker set to start on boot) and session end.
+
+services:
+  backend:
+    container_name: zkorage-backend
+    build:
+      context: .
+      dockerfile: deploy/backend.Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    ports:
+      - "8787:8787"
+    volumes:
+      # State + secrets at runtime (NOT baked into the image): blob store, demo bundles,
+      # the DR4 issuer key, the DR2 eligible set. Read-write so new blobs/state persist.
+      - ./backend/data:/app/backend/data
+
+  frontend:
+    container_name: zkorage-frontend
+    build:
+      context: .
+      dockerfile: deploy/frontend.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "4173:4173"
