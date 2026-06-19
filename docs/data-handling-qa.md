@@ -5,7 +5,8 @@ the question "does the prover save my uploaded document, or only hold it in memo
 the code so you can check it yourself. Accurate as of 2026-06-20.
 
 This is a demo on testnet with a mocked attester, so read the residual risks at the end as honest limits,
-not as a finished security posture.
+not as a finished security posture. For why we prove with RISC Zero and how it compares to Noir and Circom,
+see [proving-systems-qa.md](proving-systems-qa.md).
 
 ## Two senses of "the prover"
 
