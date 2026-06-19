@@ -1766,6 +1766,196 @@ fn test_request_admission_revoked_rejected_when_membership_not_required() {
     f.dr.request_room_admission(&room_id, &accessor);
 }
 
+// ---- Pattern 2: prove-a-policy self-serve, PER-DOCUMENT access policy (set_doc_policy / is_doc_admitted) ----
+
+/// setup_composite (membership grant for ACCESSOR1 + two mock gates) PLUS a committee document anchored in
+/// the room, so a per-document policy can be set on it. Returns the composite tuple.
+fn setup_doc<'a>(
+    env: &'a Env,
+    f: &Fixture<'a>,
+) -> (Address, Address, MockGateClient<'a>, Address, MockGateClient<'a>) {
+    let composite = setup_composite(env, f);
+    f.dr.put_committee_document(
+        &BytesN::from_array(env, &ROOM),
+        &BytesN::from_array(env, &DOC),
+        &BytesN::from_array(env, &CONTENT),
+        &BytesN::from_array(env, &KCOMMIT),
+        &Bytes::from_slice(env, b"r2://doc"),
+    );
+    composite
+}
+
+/// Full per-document composite: a doc policy of member AND compliance AND accredited; all granted for the
+/// SAME accessor -> is_doc_admitted true. get_doc_policy round-trips.
+#[test]
+fn test_doc_policy_full_composite() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let f = setup(&env);
+    let (_o, comp_id, comp, acc_id, acc) = setup_doc(&env, &f);
+    let room_id = BytesN::from_array(&env, &ROOM);
+    let doc_id = BytesN::from_array(&env, &DOC);
+    let accessor = BytesN::from_array(&env, &ACCESSOR1);
+    f.dr.set_doc_policy(&room_id, &doc_id, &true, &Some(comp_id.clone()), &Some(acc_id.clone()));
+    assert!(!f.dr.is_doc_admitted(&room_id, &doc_id, &accessor)); // gates not granted yet
+    comp.set_granted(&accessor, &true);
+    acc.set_granted(&accessor, &true);
+    assert!(f.dr.is_doc_admitted(&room_id, &doc_id, &accessor));
+    let p = f.dr.get_doc_policy(&room_id, &doc_id).unwrap();
+    assert!(p.require_membership);
+    assert_eq!(p.compliance_gate, Some(comp_id));
+    assert_eq!(p.accredited_gate, Some(acc_id));
+}
+
+/// A per-document policy is used OVER the room policy. Room policy = membership-only (accessor passes); doc
+/// policy = member AND compliance (accessor lacks compliance) -> is_admitted(room) true, is_doc_admitted false.
+#[test]
+fn test_doc_policy_overrides_room_policy() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let f = setup(&env);
+    let (_o, comp_id, comp, _a, _ac) = setup_doc(&env, &f);
+    let room_id = BytesN::from_array(&env, &ROOM);
+    let doc_id = BytesN::from_array(&env, &DOC);
+    let accessor = BytesN::from_array(&env, &ACCESSOR1);
+    let none: Option<Address> = None;
+    f.dr.set_room_policy(&room_id, &true, &none, &none); // room: membership-only
+    f.dr.set_doc_policy(&room_id, &doc_id, &true, &Some(comp_id.clone()), &none); // doc: stricter
+    assert!(f.dr.is_admitted(&room_id, &accessor)); // passes the room policy (membership only)
+    assert!(!f.dr.is_doc_admitted(&room_id, &doc_id, &accessor)); // but NOT the stricter doc policy
+    comp.set_granted(&accessor, &true);
+    assert!(f.dr.is_doc_admitted(&room_id, &doc_id, &accessor)); // now passes the doc policy
+}
+
+/// No per-document policy -> is_doc_admitted falls back to the ROOM policy.
+#[test]
+fn test_doc_admitted_falls_back_to_room_policy() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let f = setup(&env);
+    let (_o, comp_id, comp, _a, _ac) = setup_doc(&env, &f);
+    let room_id = BytesN::from_array(&env, &ROOM);
+    let doc_id = BytesN::from_array(&env, &DOC);
+    let accessor = BytesN::from_array(&env, &ACCESSOR1);
+    let none: Option<Address> = None;
+    f.dr.set_room_policy(&room_id, &true, &Some(comp_id), &none); // room: member AND compliance
+    assert!(f.dr.get_doc_policy(&room_id, &doc_id).is_none()); // no doc policy
+    assert!(!f.dr.is_doc_admitted(&room_id, &doc_id, &accessor)); // compliance not granted
+    comp.set_granted(&accessor, &true);
+    assert!(f.dr.is_doc_admitted(&room_id, &doc_id, &accessor)); // room policy satisfied
+}
+
+/// No doc policy AND no room policy -> is_doc_admitted falls back to the bare DR2 membership grant
+/// (backward-compatible with pre-policy committee documents). ACCESSOR1 is granted; ACCESSOR2 is not.
+#[test]
+fn test_doc_admitted_falls_back_to_membership() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let f = setup(&env);
+    let _ = setup_doc(&env, &f); // ACCESSOR1 has a membership grant; NO room/doc policy set
+    let room_id = BytesN::from_array(&env, &ROOM);
+    let doc_id = BytesN::from_array(&env, &DOC);
+    assert!(f.dr.is_doc_admitted(&room_id, &doc_id, &BytesN::from_array(&env, &ACCESSOR1)));
+    assert!(!f.dr.is_doc_admitted(&room_id, &doc_id, &BytesN::from_array(&env, &ACCESSOR2)));
+}
+
+/// Revocation drops is_doc_admitted (the keypers refuse), then unrevoke restores it.
+#[test]
+fn test_doc_admitted_revocation_drops_then_restores() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let f = setup(&env);
+    let (_o, comp_id, comp, acc_id, acc) = setup_doc(&env, &f);
+    let room_id = BytesN::from_array(&env, &ROOM);
+    let doc_id = BytesN::from_array(&env, &DOC);
+    let accessor = BytesN::from_array(&env, &ACCESSOR1);
+    f.dr.set_doc_policy(&room_id, &doc_id, &true, &Some(comp_id), &Some(acc_id));
+    comp.set_granted(&accessor, &true);
+    acc.set_granted(&accessor, &true);
+    assert!(f.dr.is_doc_admitted(&room_id, &doc_id, &accessor));
+    f.dr.revoke_access(&room_id, &accessor, &true);
+    assert!(!f.dr.is_doc_admitted(&room_id, &doc_id, &accessor));
+    f.dr.revoke_access(&room_id, &accessor, &false);
+    assert!(f.dr.is_doc_admitted(&room_id, &doc_id, &accessor));
+}
+
+/// A gate-only doc policy (require_membership = false) still drops on revocation (the top-level revoke
+/// check, regardless of which legs the policy has).
+#[test]
+fn test_doc_admitted_gate_only_revocation_drops() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let f = setup(&env);
+    let (_o, comp_id, comp, _a, _ac) = setup_doc(&env, &f);
+    let room_id = BytesN::from_array(&env, &ROOM);
+    let doc_id = BytesN::from_array(&env, &DOC);
+    let accessor = BytesN::from_array(&env, &ACCESSOR1);
+    let none: Option<Address> = None;
+    f.dr.set_doc_policy(&room_id, &doc_id, &false, &Some(comp_id), &none);
+    comp.set_granted(&accessor, &true);
+    assert!(f.dr.is_doc_admitted(&room_id, &doc_id, &accessor));
+    f.dr.revoke_access(&room_id, &accessor, &true);
+    assert!(!f.dr.is_doc_admitted(&room_id, &doc_id, &accessor));
+}
+
+/// set_doc_policy must require the ROOM owner's auth.
+#[test]
+fn test_set_doc_policy_requires_room_owner_auth() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let f = setup(&env);
+    let (owner, comp_id, _cc, acc_id, _ac) = setup_doc(&env, &f);
+    let room_id = BytesN::from_array(&env, &ROOM);
+    let doc_id = BytesN::from_array(&env, &DOC);
+    f.dr.set_doc_policy(&room_id, &doc_id, &true, &Some(comp_id), &Some(acc_id));
+    let auths = env.auths();
+    assert!(
+        auths.iter().any(|entry| entry.0 == owner),
+        "set_doc_policy must require the room owner's auth; got {:?}",
+        auths,
+    );
+}
+
+/// set_doc_policy on a (room, doc) with no committee document -> CommitteeDocNotFound.
+#[test]
+#[should_panic(expected = "Error(Contract, #26)")] // CommitteeDocNotFound
+fn test_set_doc_policy_requires_committee_doc() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let f = setup(&env);
+    let (_o, comp_id, _cc, _a, _ac) = setup_composite(&env, &f); // room exists, but NO committee doc
+    let room_id = BytesN::from_array(&env, &ROOM);
+    let doc_id = BytesN::from_array(&env, &DOC);
+    f.dr.set_doc_policy(&room_id, &doc_id, &true, &Some(comp_id), &None);
+}
+
+/// An empty doc policy (no membership, no gates) is rejected (it would admit everyone).
+#[test]
+#[should_panic(expected = "Error(Contract, #27)")] // EmptyPolicy
+fn test_set_doc_policy_empty_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let f = setup(&env);
+    let _ = setup_doc(&env, &f);
+    let room_id = BytesN::from_array(&env, &ROOM);
+    let doc_id = BytesN::from_array(&env, &DOC);
+    let none: Option<Address> = None;
+    f.dr.set_doc_policy(&room_id, &doc_id, &false, &none, &none);
+}
+
+/// Totality: is_doc_admitted on an unknown room/doc with no grant -> false (fallback to is_granted), no trap.
+#[test]
+fn test_is_doc_admitted_false_unknown() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let f = setup(&env);
+    let room_id = BytesN::from_array(&env, &ROOM);
+    let doc_id = BytesN::from_array(&env, &DOC);
+    let accessor = BytesN::from_array(&env, &ACCESSOR1);
+    assert!(!f.dr.is_doc_admitted(&room_id, &doc_id, &accessor));
+    assert!(f.dr.get_doc_policy(&room_id, &doc_id).is_none());
+}
+
 /// INFO-1 fix: a policy with NO membership spine AND NO gates would admit everyone — rejected (#27 EmptyPolicy).
 #[test]
 #[should_panic(expected = "Error(Contract, #27)")] // EmptyPolicy

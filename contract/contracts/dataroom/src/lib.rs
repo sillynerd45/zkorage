@@ -227,6 +227,11 @@ pub enum DataKey {
     AdmissionLog(BytesN<32>, u32),
     /// A committee document's key-rotation epoch (persistent), keyed by (room, doc); absent ⇒ 0. Bumped on rotate.
     KeyEpoch(BytesN<32>, BytesN<32>),
+    // ---- Pattern 2: prove-a-policy self-serve, PER-DOCUMENT access policy — added in place ----
+    /// A per-document composite-admission policy (persistent), keyed by (room, doc). Reuses the `RoomPolicy`
+    /// struct. Absence ⇒ access for THIS committee document falls back to the room policy, then (if neither
+    /// is set) to the bare DR2 membership grant — see `is_doc_admitted`. Set by the room owner.
+    DocPolicy(BytesN<32>, BytesN<32>),
 }
 
 #[contracttype]
@@ -492,6 +497,17 @@ pub struct Admission {
 pub struct RoomPolicySet {
     #[topic]
     pub room_id: BytesN<32>,
+    pub require_membership: bool,
+    pub has_compliance: bool,
+    pub has_accredited: bool,
+}
+
+#[contractevent]
+pub struct DocPolicySet {
+    #[topic]
+    pub room_id: BytesN<32>,
+    #[topic]
+    pub doc_id: BytesN<32>,
     pub require_membership: bool,
     pub has_compliance: bool,
     pub has_accredited: bool,
@@ -1210,6 +1226,58 @@ impl DataRoom {
         .publish(&env);
     }
 
+    /// Set (or replace) a PER-DOCUMENT composite-admission policy for a committee document (room-owner auth).
+    /// This is the Pattern-2 "prove-a-policy self-serve" knob: it mirrors `set_room_policy` but is keyed by
+    /// (room, doc), so different documents in the same room can require different conditions. The committee
+    /// document must already exist (`CommitteeDocNotFound`). `require_membership` keeps the DR2 anonymity
+    /// spine; a key-release document MUST require it so a proof-bound `recipient_pub` exists (from the DR2
+    /// grant) for the keypers to seal shares to. The gate args are the optional compliance/accredited gates
+    /// to AND against (`None` ⇒ leg not required). An empty policy (no membership AND no gates) is rejected
+    /// (`EmptyPolicy`). The policy is PUBLIC config; the requester's attributes stay private. Absence of a
+    /// per-document policy falls back to the room policy, then to bare membership (see `is_doc_admitted`).
+    pub fn set_doc_policy(
+        env: Env,
+        room_id: BytesN<32>,
+        doc_id: BytesN<32>,
+        require_membership: bool,
+        compliance_gate: Option<Address>,
+        accredited_gate: Option<Address>,
+    ) {
+        load_config(&env).unwrap_or_else(|e| panic_with_error!(&env, e));
+        let pstore = env.storage().persistent();
+        let room: Room = pstore
+            .get(&DataKey::Room(room_id.clone()))
+            .unwrap_or_else(|| panic_with_error!(&env, DataRoomError::RoomNotFound));
+        room.owner.require_auth();
+        // The committee document must exist (a policy on a missing document is meaningless / a fat-finger).
+        if !pstore.has(&DataKey::CommitteeDoc(room_id.clone(), doc_id.clone())) {
+            panic_with_error!(&env, DataRoomError::CommitteeDocNotFound);
+        }
+        let has_compliance = compliance_gate.is_some();
+        let has_accredited = accredited_gate.is_some();
+        // Same guard as set_room_policy: reject an empty policy that would admit EVERYONE.
+        if !require_membership && !has_compliance && !has_accredited {
+            panic_with_error!(&env, DataRoomError::EmptyPolicy);
+        }
+        let policy = RoomPolicy {
+            require_membership,
+            compliance_gate,
+            accredited_gate,
+        };
+        pstore.set(&DataKey::DocPolicy(room_id.clone(), doc_id.clone()), &policy);
+        pstore.extend_ttl(&DataKey::DocPolicy(room_id.clone(), doc_id.clone()), THRESHOLD, BUMP);
+        bump_instance(&env);
+
+        DocPolicySet {
+            room_id,
+            doc_id,
+            require_membership,
+            has_compliance,
+            has_accredited,
+        }
+        .publish(&env);
+    }
+
     /// Admit `accessor` by enforcing the room's composite policy — the anonymous composite-policy AND. In
     /// order (all bound to the same pseudonymous accessor): policy set (else `RoomPolicyNotSet`); not revoked
     /// (else `AccessRevoked`); valid DR2 membership grant if required (else `MembershipRequired`); compliance
@@ -1681,6 +1749,69 @@ impl DataRoom {
             }
         }
         true
+    }
+
+    /// The composed PER-DOCUMENT admission decision (live) — the Pattern-2 self-serve key-release gate the
+    /// DR3 keypers read. The effective policy is `DocPolicy(room, doc)` if set, else `RoomPolicy(room)` if
+    /// set, else a fallback to the bare DR2 membership grant (`is_granted`) so PRE-policy committee documents
+    /// keep their original membership-gated behavior (no migration needed). Then the same leg AND as
+    /// `is_admitted`: not revoked, a valid membership grant if the policy requires it, and each configured
+    /// gate currently grants the accessor (cross-called live, fail-closed via `try_is_granted`). Drops the
+    /// moment any leg is revoked or expires.
+    pub fn is_doc_admitted(
+        env: Env,
+        room_id: BytesN<32>,
+        doc_id: BytesN<32>,
+        accessor: BytesN<32>,
+    ) -> bool {
+        let pstore = env.storage().persistent();
+        // Revocation drops access first, regardless of which legs the effective policy has (matches
+        // is_admitted) — so a surgically-revoked accessor is refused even by a gate-only doc policy.
+        if pstore.has(&DataKey::Revoked(room_id.clone(), accessor.clone())) {
+            return false;
+        }
+        // Effective policy: per-document, else per-room, else the bare membership fallback (legacy docs).
+        let policy: RoomPolicy = match pstore.get(&DataKey::DocPolicy(room_id.clone(), doc_id)) {
+            Some(p) => p,
+            None => match pstore.get(&DataKey::RoomPolicy(room_id.clone())) {
+                Some(p) => p,
+                None => return Self::is_granted(env.clone(), room_id, accessor),
+            },
+        };
+        if policy.require_membership
+            && !Self::is_granted(env.clone(), room_id.clone(), accessor.clone())
+        {
+            return false;
+        }
+        if let Some(gate) = policy.compliance_gate {
+            if !matches!(
+                GateClient::new(&env, &gate).try_is_granted(&accessor),
+                Ok(Ok(true))
+            ) {
+                return false;
+            }
+        }
+        if let Some(gate) = policy.accredited_gate {
+            if !matches!(
+                GateClient::new(&env, &gate).try_is_granted(&accessor),
+                Ok(Ok(true))
+            ) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// A committee document's per-document policy, if set (else access falls back to the room policy, then
+    /// membership; see `is_doc_admitted`). Public config.
+    pub fn get_doc_policy(
+        env: Env,
+        room_id: BytesN<32>,
+        doc_id: BytesN<32>,
+    ) -> Option<RoomPolicy> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::DocPolicy(room_id, doc_id))
     }
 
     /// True iff `accessor` has been surgically revoked in this room (`revoke_access`).
