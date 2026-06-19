@@ -49,6 +49,27 @@ export async function isGranted(contractId: string, roomIdHex: string, accessorH
 }
 
 /**
+ * The LIVE per-document access decision (Pattern 2 prove-a-policy self-serve): true iff `accessor` currently
+ * satisfies the committee document's effective policy. This is exactly the contract's `is_doc_admitted`: the
+ * per-document `DocPolicy` if set, else the room policy, else a fallback to the bare DR2 membership grant
+ * (`is_granted`) so pre-policy committee documents keep working. Re-pinning the root, revoking the accessor,
+ * or any required gate dropping flips it to false at once. The keyper gates share release on THIS.
+ */
+export async function isDocAdmitted(
+  contractId: string,
+  roomIdHex: string,
+  docIdHex: string,
+  accessorHex: string,
+): Promise<boolean> {
+  const v = await readContract(contractId, "is_doc_admitted", [
+    scBytes(roomIdHex),
+    scBytes(docIdHex),
+    scBytes(accessorHex),
+  ]);
+  return v === true;
+}
+
+/**
  * The proof-bound x25519 recipient key (hex) NEW-5 committed in the DR2 grant, or null if there is no grant.
  * The keyper seals its share ONLY to this key — never to a client-supplied key — so a released share is
  * decryptable by no one but the holder of the recipient secret the eligibility proof bound.

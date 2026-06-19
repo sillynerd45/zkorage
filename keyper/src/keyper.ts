@@ -2,9 +2,10 @@
 //
 // One process per committee member (3 members, threshold 2). A keyper:
 //   • holds ONE Shamir share of each document's key K (information-theoretically blind to K on its own);
-//   • on /share, INDEPENDENTLY reads the DR2 grant from its OWN Soroban RPC (`is_granted` + `get_grant`),
-//     and only if the requester holds a live grant does it ECIES-seal its share to the proof-bound
-//     `recipient_pub` (read from chain, NEVER from the request) and return it.
+//   • on /share, INDEPENDENTLY reads the per-document admission from its OWN Soroban RPC (`is_doc_admitted`
+//     + `get_grant` for the recipient key), and only if the requester is admitted to THIS document (proved
+//     the document's policy) does it ECIES-seal its share to the proof-bound `recipient_pub` (read from
+//     chain, NEVER from the request) and return it.
 //
 // Trust story: no shared oracle, no single key holder. A non-granted caller gets nothing (403); a released
 // share is decryptable only by the holder of the recipient secret the eligibility proof bound; fewer than
@@ -19,7 +20,7 @@ import cors from "cors";
 import { randomBytes } from "node:crypto";
 import { ShareStore } from "./store.js";
 import { shareEciesSeal } from "./share-ecies.js";
-import { isGranted, getGrantRecipientPub, rpcUrl } from "./chain.js";
+import { isDocAdmitted, getGrantRecipientPub, rpcUrl } from "./chain.js";
 
 const HEX32 = /^[0-9a-f]{64}$/;
 const hexBytes = (hex: string): Uint8Array => new Uint8Array(Buffer.from(hex, "hex"));
@@ -87,9 +88,12 @@ app.post("/share", async (req: Request, res: Response) => {
   if (!shareYHex) return res.status(404).json({ error: "no share for this document" });
 
   try {
-    // (2) The LIVE access decision — this keyper's OWN RPC, no shared oracle.
-    if (!(await isGranted(CONTRACT_ID, room_id, accessor))) {
-      return res.status(403).json({ error: "accessor is not granted access to this room" });
+    // (2) The LIVE access decision — this keyper's OWN RPC, no shared oracle. Pattern 2: gate on the
+    // PER-DOCUMENT policy (is_doc_admitted = the doc policy, else the room policy, else bare DR2 membership),
+    // so a reader gets a share only by proving THIS document's policy. Backward-compatible: a committee doc
+    // with no policy falls back to membership, exactly the prior is_granted behavior.
+    if (!(await isDocAdmitted(CONTRACT_ID, room_id, doc_id, accessor))) {
+      return res.status(403).json({ error: "accessor is not admitted to this document (policy not satisfied)" });
     }
     // (3) The proof-bound recipient key — from chain, NOT the request.
     const recipientPubHex = await getGrantRecipientPub(CONTRACT_ID, room_id, accessor);

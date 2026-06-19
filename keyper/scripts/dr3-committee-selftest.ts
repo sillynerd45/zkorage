@@ -1,8 +1,9 @@
 // DR3 Ch1 — committee service self-test (drives 3 LIVE keypers against the real DataRoom contract).
 //
 // What it proves (fast, no new proof needed): the keyper service correctly (a) gates share release on the
-// on-chain DR2 grant (`is_granted`), (b) seals THIS keyper's exact share to the grant's recorded
-// recipient_pub (verified via the share tag — needs no secret), (c) rejects non-granted accessors (403),
+// on-chain per-document admission (`is_doc_admitted`, which falls back to the DR2 `is_granted` for a
+// policy-less committee doc, as here), (b) seals THIS keyper's exact share to the grant's recorded
+// recipient_pub (verified via the share tag — needs no secret), (c) rejects non-admitted accessors (403),
 // unknown documents (404), and unauthenticated /deal (401). Combined with the Ch0 crypto round-trip
 // (open + Lagrange-reconstruct + AES-GCM, proven in backend/src/committee.ts) this is the full guarantee,
 // factored: Ch1 = "the live committee seals the right share to the right recipient", Ch0 = "the right shares
@@ -98,13 +99,13 @@ async function main() {
   check("all 3 keypers agree on the on-chain recipient_pub (no client could redirect it)", onchainRecipients.size === 1, `set=${[...onchainRecipients].map((r) => r.slice(0, 8)).join(",")}`);
   check("collected ≥ t=2 valid sealed shares (committee can release)", goodSeals >= 2, `goodSeals=${goodSeals}`);
 
-  // 4) non-granted accessor → 403 (the live is_granted gate, read independently per keyper)
+  // 4) non-admitted accessor → 403 (the live is_doc_admitted gate, read independently per keyper)
   let denied = 0;
   for (let i = 0; i < 3; i++) {
     const [s] = await jpost(`${KEYPERS[i]}/share`, { room_id: ROOM, doc_id: DOC, accessor: NOT_GRANTED });
     if (s === 403) denied++;
   }
-  check("non-granted accessor → 403 from all 3 keypers (is_granted gate)", denied === 3);
+  check("non-admitted accessor → 403 from all 3 keypers (is_doc_admitted gate)", denied === 3);
 
   // 5) unknown document → 404 (keyper holds no share)
   const [noShare] = await jpost(`${KEYPERS[0]}/share`, { room_id: ROOM, doc_id: UNDEALT_DOC, accessor: GRANTED });
