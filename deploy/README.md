@@ -51,7 +51,7 @@ on the VM:
 # On the Windows dev box (Git Bash), from the repo root:
 cd frontend && npm run build && cd ..        # stamps dist/ with the current commit's short SHA
 tar czf - --exclude='backend/node_modules' --exclude='sdk/node_modules' --exclude='keyper/node_modules' \
-  --exclude='keyper/data' --exclude='*.tsbuildinfo' \
+  --exclude='backend/.env' --exclude='backend/data' --exclude='keyper/data' --exclude='*.tsbuildinfo' \
   backend sdk keyper frontend/dist frontend/serve.json deploy docker-compose.yml .dockerignore .gitattributes \
 | ssh -i ~/.ssh/id_<user>_vm <user>@<vm-host> \
   'tar xzf - -C /home/<user>/Project/Stellar/zkorage-web'
