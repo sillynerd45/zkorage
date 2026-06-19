@@ -85,8 +85,22 @@ test("wallet shows a connect button when no extension is present", async ({ page
   await expect(page.getByTestId("freighter-connect")).toContainText(/Install|Connect/);
 });
 
+// Stub the testnet account lookup so the menu's balance/friendbot logic is deterministic + offline.
+function routeHorizon(page: import("@playwright/test").Page, opts: { funded: boolean; balance?: string }) {
+  return page.route("**/horizon-testnet.stellar.org/accounts/**", (route) =>
+    opts.funded
+      ? route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ balances: [{ asset_type: "native", balance: opts.balance ?? "10000.0000000" }] }),
+        })
+      : route.fulfill({ status: 404, contentType: "application/json", body: "{}" }),
+  );
+}
+
 test("wallet silently reconnects and shows the address + menu (testnet)", async ({ page }) => {
   await page.addInitScript(freighterMock());
+  await routeHorizon(page, { funded: false });
   await page.goto("/app");
   await expect(page.getByTestId("wallet-address")).toContainText("GABF", { timeout: 5000 });
   await page.getByTestId("freighter-connect").click();
@@ -104,4 +118,24 @@ test("wallet flags a wrong network", async ({ page }) => {
   await expect(page.getByTestId("wallet-address")).toContainText("Wrong network", { timeout: 5000 });
   await page.getByTestId("freighter-connect").click();
   await expect(page.getByTestId("wallet-network")).toHaveText("PUBLIC");
+});
+
+test("wallet menu shows the balance when the account is funded (no friendbot)", async ({ page }) => {
+  await page.addInitScript(freighterMock());
+  await routeHorizon(page, { funded: true, balance: "9999.5000000" });
+  await page.goto("/app");
+  await page.getByTestId("wallet-address").waitFor({ timeout: 5000 });
+  await page.getByTestId("freighter-connect").click();
+  await expect(page.getByTestId("wallet-balance")).toContainText("9,999.5");
+  await expect(page.getByTestId("wallet-fund")).toHaveCount(0); // no friendbot when already funded
+});
+
+test("wallet menu offers friendbot only when the account is unfunded", async ({ page }) => {
+  await page.addInitScript(freighterMock());
+  await routeHorizon(page, { funded: false });
+  await page.goto("/app");
+  await page.getByTestId("wallet-address").waitFor({ timeout: 5000 });
+  await page.getByTestId("freighter-connect").click();
+  await expect(page.getByTestId("wallet-fund")).toBeVisible();
+  await expect(page.getByTestId("wallet-balance")).toHaveCount(0);
 });

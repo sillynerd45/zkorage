@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Wallet,
   ChevronDown,
@@ -15,6 +15,15 @@ import { explorer } from "@/lib/format";
 
 const FREIGHTER_INSTALL = "https://www.freighter.app/";
 const FRIENDBOT = "https://friendbot.stellar.org";
+const HORIZON = "https://horizon-testnet.stellar.org";
+
+// funded === true → account exists (show its XLM balance, hide friendbot); false → not created yet
+// (offer friendbot); null → unknown (Horizon unreachable → keep friendbot as a safe fallback).
+type Acct = { funded: boolean; balance: string } | null;
+
+function fmtXlm(b: string): string {
+  return Number(b).toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
 
 // App-shell top-right wallet control. Real Freighter integration: connect / show address / network
 // check / disconnect (see lib/wallet/WalletContext). When connected the app routes on-chain writes
@@ -25,10 +34,37 @@ export function FreighterButton() {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [funding, setFunding] = useState<null | "busy" | "done" | "error">(null);
+  const [acct, setAcct] = useState<Acct>(null);
   const popRef = useRef<HTMLDivElement>(null);
+
+  // Look up the account on testnet so the menu can show its balance and only offer friendbot when the
+  // account hasn't been created yet (a 404). Runs on connect and whenever the menu is opened.
+  const refreshAcct = useCallback(async () => {
+    if (!w.address) return;
+    try {
+      const r = await fetch(`${HORIZON}/accounts/${w.address}`);
+      if (r.ok) {
+        const j = (await r.json()) as { balances?: { asset_type: string; balance: string }[] };
+        const native = j.balances?.find((b) => b.asset_type === "native");
+        setAcct({ funded: true, balance: native?.balance ?? "0" });
+      } else if (r.status === 404) {
+        setAcct({ funded: false, balance: "0" });
+      } else {
+        setAcct(null);
+      }
+    } catch {
+      setAcct(null);
+    }
+  }, [w.address]);
+
+  useEffect(() => {
+    if (w.status === "connected" && w.address) refreshAcct();
+    else setAcct(null);
+  }, [w.status, w.address, refreshAcct]);
 
   useEffect(() => {
     if (!open) return;
+    if (w.status === "connected") refreshAcct(); // refresh balance each time the menu opens
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
     };
@@ -61,6 +97,7 @@ export function FreighterButton() {
       const r = await fetch(`${FRIENDBOT}/?addr=${encodeURIComponent(w.address)}`);
       // friendbot returns 400 if the account is already funded — treat that as success-ish.
       setFunding(r.ok || r.status === 400 ? "done" : "error");
+      await refreshAcct(); // flip the menu to the balance view
     } catch {
       setFunding("error");
     }
@@ -182,16 +219,25 @@ export function FreighterButton() {
                   <ExternalLink className="size-3.5" /> Explorer
                 </a>
               </div>
-              <MenuBtn onClick={fund} testid="wallet-fund" full disabled={funding === "busy"}>
-                <Download className="size-3.5" />
-                {funding === "busy"
-                  ? "Funding…"
-                  : funding === "done"
-                    ? "Funded ✓ (testnet XLM)"
+              {acct?.funded ? (
+                // Already funded → show the balance, no friendbot needed.
+                <div className="flex items-center justify-between px-2 py-1.5 text-xs">
+                  <span className="text-muted-foreground">Balance</span>
+                  <span className="font-mono" data-testid="wallet-balance">
+                    {fmtXlm(acct.balance)} XLM
+                  </span>
+                </div>
+              ) : (
+                // Not created yet (or status unknown) → offer friendbot.
+                <MenuBtn onClick={fund} testid="wallet-fund" full disabled={funding === "busy"}>
+                  <Download className="size-3.5" />
+                  {funding === "busy"
+                    ? "Funding…"
                     : funding === "error"
                       ? "Fund failed — retry"
                       : "Fund testnet account"}
-              </MenuBtn>
+                </MenuBtn>
+              )}
             </>
           )}
 
