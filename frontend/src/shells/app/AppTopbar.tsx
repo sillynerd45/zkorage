@@ -17,7 +17,7 @@ function pageTitle(path: string): string {
   return cap?.title ?? "zkorage";
 }
 
-// App-shell top bar. Desktop: the page title (sidebar carries the logo) + Freighter placeholder.
+// App-shell top bar. Desktop: the page title (sidebar carries the logo) + the Freighter wallet control.
 // Mobile: the logo + Freighter + theme toggle (the sidebar is hidden < lg).
 export function AppTopbar() {
   const { pathname } = useLocation();
