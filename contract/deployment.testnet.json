@@ -450,6 +450,6 @@
       "admitted_accessor": "ed4928c628d1c2c6eae90338905995612959273a5c63f93636c14614ac8737d1",
       "recipient_pub": "97a6b925 (demo x25519; secret = sha256('zkorage-demo-dataroom-recipient-key'))"
     },
-    "status": "contract DEPLOYED + verified + demo doc-policy live 2026-06-19; SDK/frontend Pattern-2 build IN PROGRESS (branch dataroom-selfserve-access)."
+    "status": "COMPLETE on branch dataroom-selfserve-access (local, NOT pushed) 2026-06-19: contract DEPLOYED + verified + demo doc-policy live; keyper (is_doc_admitted gate) + backend (doc-policy routes + wallet-owned rooms + /dataroom/rooms) + SDK/MCP v0.15.0 + frontend (Documents submenu, Browse = rooms-your-wallet-owns, dropped contents column, 'Open a shared document' reader flow folding DR6 Policy + DR3 Release) all built + self-tested: cargo 100/100, full Playwright 37/37, MCP selftest GREEN, SDK smoke GREEN. engineering-code-reviewer Ship-it (0 Crit/High; L2 hardening applied, L1/L3 documented). Awaiting user confirm to push/merge + redeploy. NOTE for redeploy: the web-VM keepers must be restarted with the new is_doc_admitted gate (they currently gate on is_granted)."
   }
 }
