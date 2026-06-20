@@ -14,8 +14,9 @@ private witness).
 
 ## Status — the full build is complete (testnet)
 Weeks 1–8 (below) **and** the post-week-8 **Confidential Data Room (DR1–DR6)** are built, deployed, and
-self-tested on Stellar testnet. A new **Bonded Proofs** pillar (a Soroban-native time-locked escrow plus a
-live **solvency proof that dies when you pull your collateral**) is also live; see below. The whole stack
+self-tested on Stellar testnet. A new **Bonded Proofs** pillar (a Soroban-native time-locked escrow plus two
+live ZK products: a **solvency proof that dies when you pull your collateral** and an **anonymous bonded
+tier**) is also live; see below. The whole stack
 runs on **RISC Zero 5.0.0-rc.1** (GPU proving on a self-hosted box, with a CPU fallback). The frontend is a
 single unified app — a **public marketing site** (`/` — landing, documentation, verify, explorer) plus a
 **sidebar app** (`/app/*` — the five proofs, the Data Room, and Bonded Proofs) in the "Precision Ink"
@@ -260,8 +261,8 @@ A second direction, motivated by Stellar's Claimable Balances. The research (in 
 found that a classic Claimable Balance can't anchor a ZK proof — a Soroban contract can't read one, and a CB
 is fully public — so the load-bearing design is a **zkorage-owned, Soroban-native time-locked escrow**: lock
 any SEP-41/SAC token until a chosen time, with a revocable self-bond or a non-revocable one-way send, and a
-gate-readable `is_locked()` / `get_lock()`. It carries the first of two ZK products — a **solvency proof that
-dies when you pull your collateral** (LIVE) — with an **anonymous tier that expires at X** still to come.
+gate-readable `is_locked()` / `get_lock()`. It carries two ZK products, both **LIVE**: a **solvency proof
+that dies when you pull your collateral**, and an **anonymous tier that expires at a chosen deadline**.
 
 - **Escrow (testnet):** `CAMQKJKAJTOMT66N5N3E3VIRTN5ACDKV6P3Z2HLYVJHLAVRGJKHZFOXC` (immutable, no admin over
   funds; only a lock's depositor/claimant can move it). Bond token `CCFHRZAP7GYUBNJ4RN7NBZL5GS7Q32F4CIXDTWTTIGPYEDWRIS2TUPA5`
@@ -274,10 +275,22 @@ dies when you pull your collateral** (LIVE) — with an **anonymous tier that ex
   VOID the instant the issuer un-bonds**. New guest `solvency_predicate` (image `d0a2f137…`, a 173-byte
   journal whose first 61 bytes are byte-identical to the PoR journal). Reviewed across three passes (security
   auditor SOUND + code reviewer Ship-it + a third fix-hunt pass) + **Codex CLEAN**.
-- **Shipped:** the `/app/bonded` pillar (Overview · My Balances · Deposit · **Prove Solvency**, frontend
-  **v0.9.1**) with a live ACTIVE→VOID badge; the `backend /escrow/*` + `/bonded/solvency/*` REST surface; a
-  9th `solvency` prover kind (gateway + GPU worker); SDK/MCP **v0.16.0** (`isSolvent`, key-free). Full record:
-  `contract/deployment.testnet.json → solvency_gate_BP3 / guest_solvency`.
+- **Anonymous tier that expires at a deadline (LIVE).** A member proves two facts at once, in zero knowledge:
+  they are in an enrolled set, and they control a non-revocable bonded lock worth at least the tier floor that
+  stays locked past the tier deadline. The proof never reveals which wallet, which lock, or the exact amount,
+  so every grant is unlinkable. The **tier gate** `CASSJSBMFDS3BCUBYKXG52SUS7GIHBCHDUM5FGQO4LY5VOWPUPPUFKZP`
+  (`claim_type=13`) verifies the Groth16 proof, binds it to the enrolled-member root and a qualifying-set root,
+  checks `now < X` (sound because qualifying locks cannot be unbonded early), and rejects a reused nullifier
+  (one grant per identity per context). The qualifying-set root is admin-published, and anyone can rebuild it
+  from the escrow's public locks to catch a dishonest set (the SDK ships `recomputeQualRoot`). New guest
+  `tier_predicate` (image `2671938b…`, a 181-byte journal that extends the membership guest with a second
+  Merkle path over the bonded commitment). Security auditor SOUND for a testnet demo + code reviewer pass +
+  **Codex CLEAN**. On-chain e2e: three members, three unlinkable grants, a reused nullifier rejected.
+- **Shipped:** the `/app/bonded` pillar (Overview · My Balances · Deposit · **Prove Solvency** · **Anonymous
+  Tier**, frontend **v0.10.0**) with a live ACTIVE→VOID solvency badge; the `backend /escrow/*` +
+  `/bonded/solvency/*` + `/bonded/tier/*` REST surface; a 9th `solvency` and 10th `tier` prover kind (gateway +
+  GPU worker); SDK/MCP **v0.17.0** (`isSolvent`, `recomputeQualRoot`, key-free). Full record:
+  `contract/deployment.testnet.json → solvency_gate_BP3 / guest_solvency / tier_gate_BP5 / guest_tier`.
 
 ## Run the Week-2 slice
 ```bash
