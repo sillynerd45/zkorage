@@ -12,6 +12,7 @@ members = [
     "contracts/dataroom",
     "contracts/escrow",
     "contracts/solvency-gate",
+    "contracts/tier-gate",
     "tools/build-utils",
 ]
 resolver = "3"

@@ -8,12 +8,13 @@ Public  : POST /prove {kind?, envelope_hex, signature_hex, issuer_pubkey_hex, th
                               "dataroom_seal" (DR1; doc_key + recipient_pubkey + content_hash + room_id + doc_id) |
                               "membership" (DR2; anonymous eligibility: holder sig + Merkle witness + nullifier) |
                               "docauth" (DR4; doc-authenticity/zkPDF: RSA-2048 signed-statement verify + value>=threshold) |
-                              "solvency" (BP3; PoR predicate reserves>=supply BOUND to a bonded escrow lock)
+                              "solvency" (BP3; PoR predicate reserves>=supply BOUND to a bonded escrow lock) |
+                              "tier" (BP5; anonymous bonded tier: member ∧ qualifying-lock Merkle membership + nullifier)
                        -> {job_id}
           GET  /prove/<id> -> {status, by, bundle?, error?}
           GET  /health
 Worker  : GET  /jobs/next -> {job_id, kind, ...inputs} | 204   (X-Worker-Token if WORKER_TOKEN set)
-                             (ANY kind is offered — the worker runs all EIGHT canonical host bins, so it
+                             (ANY kind is offered — the worker runs all TEN canonical host bins, so it
                               emits the pinned image_ids; it routes by `kind`. Worker-first, VM-fallback.)
           POST /jobs/<id>/result {bundle|error}
 Fallback: if a job is not claimed by a worker within FALLBACK_SECS, prove on the VM's OWN CPU,
@@ -39,6 +40,7 @@ HOST_DATAROOM_SEAL_BIN = os.environ.get("HOST_DATAROOM_SEAL_BIN", os.path.join(P
 HOST_MEMBERSHIP_BIN = os.environ.get("HOST_MEMBERSHIP_BIN", os.path.join(PROVER_DIR, "target/release/host_membership"))
 HOST_DOCAUTH_BIN = os.environ.get("HOST_DOCAUTH_BIN", os.path.join(PROVER_DIR, "target/release/host_docauth"))
 HOST_SOLVENCY_BIN = os.environ.get("HOST_SOLVENCY_BIN", os.path.join(PROVER_DIR, "target/release/host_solvency"))
+HOST_TIER_BIN = os.environ.get("HOST_TIER_BIN", os.path.join(PROVER_DIR, "target/release/host_tier"))
 PORT = int(os.environ.get("PORT", "8080"))
 FALLBACK_SECS = int(os.environ.get("FALLBACK_SECS", "30"))
 CLAIM_TIMEOUT = int(os.environ.get("CLAIM_TIMEOUT", "1800"))  # worker claimed but never returned
@@ -76,6 +78,14 @@ REQUIRED = {
     # on-chain (escrow id, lock_id, min_amount, bond token id, supply token id). threshold = the supply.
     "solvency": ["envelope_hex", "signature_hex", "issuer_pubkey_hex", "threshold",
                  "escrow_hex", "lock_id", "min_amount", "bond_token_hex", "supply_token_hex"],
+    # tier (BP5): anonymous bonded tier. NEW-5 holder sig (pk == accessor) + a depth-20 sha256-Merkle
+    # ENROLLED-member witness AND a second depth-20 QUALIFYING-lock witness (over c = sha256(0x03 ‖ id_secret
+    # ‖ "escrow"), the commitment the depositor stored in the escrow lock) + per-context nullifier.
+    # id_secret/id_trapdoor/both leaf indices are PRIVATE — they reach the self-hosted prover (which already
+    # sees plaintext per the project rule); anonymity is vs the on-chain verifier + the public, not the prover.
+    "tier": ["sig_hex", "pk_hex", "accessor_hex", "id_secret_hex", "id_trapdoor_hex", "context_hex",
+             "threshold", "unlock_after", "member_siblings_hex", "member_leaf_index",
+             "qual_siblings_hex", "qual_leaf_index"],
 }
 
 jobs = {}            # id -> dict
@@ -85,7 +95,8 @@ lock = threading.Lock()
 def run_host_local(inputs, kind):
     """VM-CPU fallback: write the job file and run the matching host bin in job mode. Line count differs
     by kind (reserves/identity/accredited = 4 lines; compliance = 5; payroll = 6; dataroom_seal = 5;
-    membership = 9 incl. the holder sig + Merkle witness; docauth = 5: n/sig/statement/threshold/room_id)."""
+    membership = 9 incl. the holder sig + Merkle witness; docauth = 5: n/sig/statement/threshold/room_id;
+    solvency = 9; tier = 12: holder sig + TWO Merkle witnesses [member + qualifying] + context/threshold/X)."""
     if kind == "payroll":
         bin_path = HOST_PAYROLL_BIN
         lines = [inputs["envelope_hex"], inputs["signature_hex"], inputs["issuer_pubkey_hex"],
@@ -120,6 +131,13 @@ def run_host_local(inputs, kind):
         lines = [inputs["envelope_hex"], inputs["signature_hex"], inputs["issuer_pubkey_hex"],
                  str(int(inputs["threshold"])), inputs["escrow_hex"], str(int(inputs["lock_id"])),
                  str(int(inputs["min_amount"])), inputs["bond_token_hex"], inputs["supply_token_hex"]]
+    elif kind == "tier":
+        bin_path = HOST_TIER_BIN
+        lines = [inputs["sig_hex"], inputs["pk_hex"], inputs["accessor_hex"], inputs["id_secret_hex"],
+                 inputs["id_trapdoor_hex"], inputs["context_hex"], str(int(inputs["threshold"])),
+                 str(int(inputs["unlock_after"])), inputs["member_siblings_hex"],
+                 str(int(inputs["member_leaf_index"])), inputs["qual_siblings_hex"],
+                 str(int(inputs["qual_leaf_index"]))]
     else:
         bin_path = HOST_BIN
         lines = [inputs["envelope_hex"], inputs["signature_hex"], inputs["issuer_pubkey_hex"],
@@ -185,7 +203,7 @@ class H(BaseHTTPRequestHandler):
                 return self._send(401, {"error": "bad worker token"})
             with lock:
                 for j in sorted(jobs.values(), key=lambda x: x["created"]):
-                    # Offer ANY queued job to the worker — it runs all eight CANONICAL host bins and
+                    # Offer ANY queued job to the worker — it runs all ten CANONICAL host bins and
                     # routes by `kind`, so it emits the pinned image_ids. If no worker claims within
                     # FALLBACK_SECS the VM proves it locally (worker-first, VM-fallback).
                     if j["status"] == "queued":
@@ -285,6 +303,35 @@ class H(BaseHTTPRequestHandler):
                     if v < 0 or v > 0xFFFFFFFFFFFFFFFF:
                         return self._send(400, {"error": f"{f} out of u64 range", "kind": kind})
                     inputs[f] = str(v)
+            # tier (BP5): validate the witness shapes at the PUBLIC boundary so a malformed direct request is
+            # rejected here rather than panicking the host bin downstream. sig = 64 bytes; the four keyed
+            # 32-byte fields; member_siblings + qual_siblings = depth-20 paths (640 bytes); the two leaf
+            # indices < 2^20 (depth-20 tree capacity; only the low 20 bits drive the fold); unlock_after a u64.
+            # threshold is already validated + normalized by the shared threshold block above.
+            if kind == "tier":
+                for f in ("pk_hex", "accessor_hex", "id_secret_hex", "id_trapdoor_hex", "context_hex"):
+                    if not _HEX32.match(str(inputs.get(f, ""))):
+                        return self._send(400, {"error": f"{f} must be 32-byte hex (64 hex chars)", "kind": kind})
+                if not _HEX64.match(str(inputs.get("sig_hex", ""))):
+                    return self._send(400, {"error": "sig_hex must be 64-byte hex (128 hex chars)", "kind": kind})
+                for f in ("member_siblings_hex", "qual_siblings_hex"):
+                    if not _HEX_SIBLINGS.match(str(inputs.get(f, ""))):
+                        return self._send(400, {"error": f"{f} must be depth-20 (1280 hex chars)", "kind": kind})
+                try:
+                    ua = int(str(inputs["unlock_after"]).strip())
+                except (ValueError, TypeError):
+                    return self._send(400, {"error": "unlock_after must be an integer", "kind": kind})
+                if ua < 0 or ua > 0xFFFFFFFFFFFFFFFF:
+                    return self._send(400, {"error": "unlock_after out of u64 range", "kind": kind})
+                inputs["unlock_after"] = str(ua)
+                for f in ("member_leaf_index", "qual_leaf_index"):
+                    try:
+                        li = int(str(inputs[f]).strip())
+                    except (ValueError, TypeError):
+                        return self._send(400, {"error": f"{f} must be an integer", "kind": kind})
+                    if li < 0 or li >= (1 << 20):
+                        return self._send(400, {"error": f"{f} out of range (must be < 2^20, the depth-20 tree capacity)", "kind": kind})
+                    inputs[f] = str(li)
             jid = uuid.uuid4().hex[:12]
             with lock:
                 jobs[jid] = {"id": jid, "kind": kind, "inputs": inputs,

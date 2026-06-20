@@ -1742,6 +1742,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tier-gate"
+version = "0.1.0"
+dependencies = [
+ "risc0-interface",
+ "soroban-sdk",
+]
+
+[[package]]
 name = "time"
 version = "0.3.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
