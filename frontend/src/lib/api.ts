@@ -855,3 +855,54 @@ export const getBondBalance = (owner: string) =>
 // can try a deposit. Not wallet-signed.
 export const escrowFaucet = (to: string): Promise<WalletWriteResult & { minted?: string }> =>
   post<WalletWriteResult & { minted?: string }>("/escrow/faucet", { to });
+
+// ── Bonded Proofs: solvency proof that dies when you pull your collateral (BP3/BP4) ──
+// Prove `reserves >= supply` (reserves PRIVATE) bound to a revocable lock; the gate reads that lock LIVE,
+// so the grant flips ACTIVE -> VOID the instant you unbond. prove (worker-first) -> poll getProveStatus ->
+// submitSolvency (the lock owner signs) -> poll getSolvencyStatus for the live badge.
+
+export interface SolvencyInfo {
+  solvencyGateId: string;
+  solvencyImageId: string;
+  auditorPub: string;
+  escrowId: string;
+  bondTokenId: string;
+  supplyTokenId: string;
+  claimType: number;
+}
+
+export interface SolvencyRecord {
+  index: number;
+  depositor: string;
+  issuer_id: string;
+  supply: string;
+  lock_id: string;
+  min_amount: string;
+  expiry: string;
+  nonce: string;
+  ledger: number;
+  timestamp: string;
+}
+
+export interface SolvencyStatus {
+  depositor: string;
+  is_granted: boolean;
+  record: SolvencyRecord | null;
+  solvencyGateId: string;
+}
+
+export const getSolvencyInfo = () => fetch(`${BASE}/bonded/solvency/info`).then(j<SolvencyInfo>);
+
+export const getSolvencyStatus = (depositor: string) =>
+  fetch(`${BASE}/bonded/solvency/status?depositor=${depositor}`).then(j<SolvencyStatus>);
+
+export const proveSolvency = (lockId: number, opts?: { reserves?: string; min_amount?: string }) =>
+  post<{ jobId: string; supply: string; lockId: number; minAmount: string; issuerId: string }>(
+    "/bonded/solvency/prove",
+    { lock_id: lockId, ...(opts ?? {}) },
+  );
+
+// Submit the bonded-solvency proof to the gate. Always wallet-signed: the gate requires the lock owner's
+// auth (the ownership binding), and the connected wallet IS that owner.
+export const submitSolvency = (bundle: Bundle, signer: TxSigner): Promise<WalletWriteResult> =>
+  writeViaWallet("/bonded/solvency/submit", { ...bundle }, signer);

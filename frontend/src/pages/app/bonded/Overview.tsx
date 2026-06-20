@@ -26,13 +26,17 @@ export default function BondedOverview() {
     <div className="grid gap-4" data-testid="bonded-overview">
       <Panel title="What this is">
         <p className="max-w-3xl text-[14px] leading-relaxed text-muted-foreground">
-          A time-locked escrow on Stellar. You lock tokens until a time you choose, and until then the
-          funds cannot move. The lock is the bond behind the time-bound proofs we are building next: a proof
-          a verifier should trust only while real money stays locked, and which you can void by pulling the
-          bond. There is no ZK here yet; this tab is the escrow and your balances.
+          A time-locked escrow on Stellar, plus the first proof built on it. You lock tokens until a time you
+          choose, and until then the funds cannot move. On the Prove Solvency tab you can prove that your
+          reserves cover the circulating supply, without revealing the reserve figure, bonded to one of those
+          locks. The gate reads the lock on every check, so the proof counts as live only while the bond stays
+          locked, and goes void the instant you pull it.
         </p>
         <div className="mt-5 flex flex-wrap gap-3">
-          <Link to="/app/bonded/deposit" className={buttonVariants({ variant: "brand" })}>
+          <Link to="/app/bonded/prove" className={buttonVariants({ variant: "brand" })}>
+            Prove solvency
+          </Link>
+          <Link to="/app/bonded/deposit" className={buttonVariants({ variant: "outline" })}>
             Lock tokens
           </Link>
           <Link to="/app/bonded/balances" className={buttonVariants({ variant: "outline" })}>
