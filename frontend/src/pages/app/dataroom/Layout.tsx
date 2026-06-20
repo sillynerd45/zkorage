@@ -1,24 +1,25 @@
+import { useEffect, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
-import { FolderLock } from "lucide-react";
 import { DATAROOM_TABS } from "@/lib/content";
 import { cn } from "@/lib/utils";
-import { PageHeader } from "@/components/app/blocks";
+import { getCommitteeInfo, type CommitteeInfoResp } from "@/lib/api";
+import { CommitteePill, DataRoomHeader } from "@/components/app/dataroom/kit";
 
 export default function DataRoomLayout() {
+  // The committee pill now lives in the header (so it shows on every Data Room sub-page, not just Overview).
+  // Read-only liveness; failures are swallowed so the header still renders if the keepers can't be reached.
+  const [committee, setCommittee] = useState<CommitteeInfoResp | null>(null);
+  useEffect(() => {
+    getCommitteeInfo().then(setCommittee).catch(() => {});
+  }, []);
+
   return (
     <>
-      <PageHeader
-        icon={FolderLock}
-        title="Data Room"
-        lead={
-          <>
-            Keep sensitive files private and decide who can open them. New here? Start with Overview.
-          </>
-        }
-      />
+      <DataRoomHeader aside={committee ? <CommitteePill c={committee} /> : undefined} />
 
       {/* B segmented tab bar (filled active, matches sidebar active style). w-fit so the pill hugs the tabs
-          instead of stretching the full width; max-w-full + overflow-x-auto keep it scrollable when narrow. */}
+          instead of stretching the full width; max-w-full + overflow-x-auto keep it scrollable when narrow.
+          Tab/submenu styling is intentionally unchanged in this pass. */}
       <div className="mb-3 flex w-fit max-w-full gap-1 overflow-x-auto rounded-2xl border bg-card p-1.5">
         {DATAROOM_TABS.map((t) => (
           <NavLink

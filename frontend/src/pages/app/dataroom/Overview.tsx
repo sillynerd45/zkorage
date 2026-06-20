@@ -1,115 +1,85 @@
-import { useEffect, useState } from "react";
+import { ExternalLink, BadgeCheck, EyeOff, Files, KeyRound, Lock, Users, UserCheck, type LucideIcon } from "lucide-react";
 import { Link } from "react-router-dom";
-import { ChevronRight, ExternalLink } from "lucide-react";
 import { GlossaryTip } from "@/components/GlossaryTip";
 import { Disclosure } from "@/components/Disclosure";
 import { DataRow } from "@/components/app/blocks";
+import { TaskCard, GroupLabel, type DRCategory } from "@/components/app/dataroom/kit";
 import { useDataroomInfo } from "@/lib/hooks/useDataroomInfo";
-import { getCommitteeInfo, type CommitteeInfoResp } from "@/lib/api";
 import { short, explorer } from "@/lib/format";
 
-// Task-oriented landing: lead with "what do you want to do?", grouped by the user's actual goals, each
-// linking straight to the right page (the document tasks deep-link to sections of /dataroom/documents).
-// The concept and the on-chain addresses are demoted behind expanders, not what greets a new user.
+// Task-oriented landing: one featured "Store a document" card, then an even grid of the remaining six
+// tasks. Each card carries a category chip (Documents / Access / Share / Authenticity) instead of a
+// fragmented section header, so the grid stays a clean 3 rows of 2. The header (title + one-line lead +
+// committee pill) lives in the layout, so this page no longer repeats the description.
 interface Task {
   to: string;
   label: string;
   blurb: string;
   testid: string;
+  icon: LucideIcon;
+  category?: DRCategory;
   star?: boolean;
 }
-interface Group {
-  title: string;
-  tasks: Task[];
-}
 
-const GROUPS: Group[] = [
+const HERO: Task = {
+  to: "/app/dataroom/documents#store",
+  label: "Store a document",
+  blurb: "Encrypt a file and post only a tamper-evident fingerprint. The contents never leave the prover you run.",
+  testid: "task-store",
+  icon: Lock,
+};
+
+const TASKS: Task[] = [
   {
-    title: "Your documents",
-    tasks: [
-      {
-        to: "/app/dataroom/documents#store",
-        label: "Store a document",
-        blurb: "Encrypt a file and post only a tamper-evident fingerprint. The contents never leave the prover you run.",
-        testid: "task-store",
-      },
-      {
-        to: "/app/dataroom/documents#open",
-        label: "Open a document",
-        blurb: "Decrypt a file in your browser with the recipient's key. Your key never leaves the page.",
-        testid: "task-open",
-      },
-      {
-        to: "/app/dataroom/documents#browse",
-        label: "Browse documents",
-        blurb: "See the rooms you own and the documents you stored. Contents stay encrypted.",
-        testid: "task-browse",
-      },
-    ],
+    to: "/app/dataroom/documents#open",
+    label: "Open a document",
+    blurb: "Decrypt a file in your browser with the recipient's key. Your key never leaves the page.",
+    testid: "task-open",
+    icon: KeyRound,
+    category: "Documents",
   },
   {
-    title: "Who gets in",
-    tasks: [
-      {
-        to: "/app/dataroom/eligibility",
-        label: "Get in anonymously",
-        blurb: "Prove you're on the approved list without revealing who you are. Each pass works once.",
-        testid: "task-eligibility",
-        star: true,
-      },
-      {
-        to: "/app/dataroom/access",
-        label: "Open a shared document",
-        blurb: "Prove a document's conditions (member, KYC'd, accredited), then its keepers release the key to you.",
-        testid: "task-access",
-      },
-    ],
+    to: "/app/dataroom/documents#browse",
+    label: "Browse documents",
+    blurb: "See the rooms you own and the documents you stored. Contents stay encrypted.",
+    testid: "task-browse",
+    icon: Files,
+    category: "Documents",
   },
   {
-    title: "Share",
-    tasks: [
-      {
-        to: "/app/dataroom/disclosure",
-        label: "Share a masked copy",
-        blurb: "Prove a fact about a sealed file, then share a redacted copy that's provably the real document.",
-        testid: "task-disclosure",
-      },
-    ],
+    to: "/app/dataroom/eligibility",
+    label: "Get in anonymously",
+    blurb: "Prove you're on the approved list without revealing who you are. Each pass works once.",
+    testid: "task-eligibility",
+    icon: UserCheck,
+    category: "Access",
+    star: true,
   },
   {
-    title: "Authenticity",
-    tasks: [
-      {
-        to: "/app/dataroom/authenticity",
-        label: "Prove a signed fact",
-        blurb: 'Prove a fact a third party signed for you (for example "balance ≥ X") without showing the statement.',
-        testid: "task-authenticity",
-      },
-    ],
+    to: "/app/dataroom/access",
+    label: "Open a shared document",
+    blurb: "Prove a document's conditions (member, KYC'd, accredited), then its keepers release the key to you.",
+    testid: "task-access",
+    icon: Users,
+    category: "Access",
+  },
+  {
+    to: "/app/dataroom/disclosure",
+    label: "Share a masked copy",
+    blurb: "Prove a fact about a sealed file, then share a redacted copy that's provably the real document.",
+    testid: "task-disclosure",
+    icon: EyeOff,
+    category: "Share",
+  },
+  {
+    to: "/app/dataroom/authenticity",
+    label: "Prove a signed fact",
+    blurb: 'Prove a fact a third party signed for you (for example "balance ≥ X") without showing the statement.',
+    testid: "task-authenticity",
+    icon: BadgeCheck,
+    category: "Authenticity",
   },
 ];
-
-// Live key-release readiness: the 2-of-3 keeper committee that hands a document's key to a reader who
-// proves they qualify. Shown here so a visitor can see the "Open a shared document" path is up before they
-// try it. Quiet by design; the per-keeper detail stays on the Open page.
-function CommitteeStatus({ c }: { c: CommitteeInfoResp }) {
-  const allUp = c.online >= c.n;
-  const someUp = c.online > 0;
-  const dot = allUp ? "bg-emerald-500" : someUp ? "bg-amber-500" : "bg-muted-foreground/40";
-  return (
-    <div
-      data-testid="overview-committee"
-      data-online={c.online}
-      title={`any ${c.threshold} of ${c.n} keepers release a document's key; ${c.online} reachable now`}
-      className="flex shrink-0 items-center gap-2 self-start rounded-full border bg-card px-3 py-1.5 text-xs"
-    >
-      <span className={`size-2 rounded-full ${dot}`} aria-hidden="true" />
-      <span className="text-muted-foreground">
-        Key committee: <b className="text-foreground">{c.online} of {c.n}</b> keepers online
-      </span>
-    </div>
-  );
-}
 
 function ExLink({ id }: { id: string }) {
   return (
@@ -126,111 +96,98 @@ function ExLink({ id }: { id: string }) {
 
 export default function DataRoomOverview() {
   const info = useDataroomInfo();
-  const [committee, setCommittee] = useState<CommitteeInfoResp | null>(null);
-  useEffect(() => {
-    getCommitteeInfo().then(setCommittee).catch(() => {});
-  }, []);
   return (
     <div data-testid="dataroom-overview" className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold tracking-tight">What do you want to do?</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            A private place to keep sensitive files and decide who can open them. Pick a task. Each one is its
-            own page.
-          </p>
+      {/* The primary action, full width. */}
+      <TaskCard
+        to={HERO.to}
+        icon={HERO.icon}
+        title={HERO.label}
+        blurb={HERO.blurb}
+        testid={HERO.testid}
+        featured
+      />
+
+      <div className="space-y-3">
+        <GroupLabel>All tasks</GroupLabel>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {TASKS.map((t) => (
+            <TaskCard
+              key={t.to}
+              to={t.to}
+              icon={t.icon}
+              title={t.label}
+              blurb={t.blurb}
+              category={t.category}
+              star={t.star}
+              testid={t.testid}
+            />
+          ))}
         </div>
-        {committee && <CommitteeStatus c={committee} />}
       </div>
 
-      <div className="space-y-5">
-        {GROUPS.map((g) => (
-          <section key={g.title}>
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              {g.title}
-            </h3>
-            <div className="grid gap-2.5 sm:grid-cols-2">
-              {g.tasks.map((t) => (
-                <Link
-                  key={t.to}
-                  to={t.to}
-                  data-testid={t.testid}
-                  className="group block focus-visible:outline-none"
-                >
-                  <div className="flex h-full items-start gap-3 rounded-2xl border bg-card p-4 transition-colors hover:border-brand/30 hover:bg-accent/40 group-focus-visible:ring-2 group-focus-visible:ring-ring">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <h4 className="font-semibold tracking-tight">{t.label}</h4>
-                        {t.star && <span aria-hidden="true">⭐</span>}
-                      </div>
-                      <p className="mt-0.5 text-sm leading-relaxed text-muted-foreground">{t.blurb}</p>
-                    </div>
-                    <ChevronRight className="size-5 shrink-0 self-center text-muted-foreground transition-colors group-hover:text-brand" />
-                  </div>
-                </Link>
-              ))}
-            </div>
-          </section>
-        ))}
+      {/* The concept + the on-chain trust anchor, demoted: there when you want them, not blocking the tasks.
+          Wrapped in one calm card so they read as a "learn more" footer, matching the task cards above. */}
+      <div className="space-y-3">
+        <GroupLabel>Learn more</GroupLabel>
+        <div className="divide-y divide-border/70 rounded-xl border bg-card px-4 shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+          <Disclosure
+            toggleTestId="overview-what-is"
+            summary={
+              <>
+                New here? <b className="text-foreground">What is a confidential data room?</b>
+              </>
+            }
+          >
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              It's a shared room of <b className="text-foreground">encrypted</b> documents. The files themselves
+              never go on the public record. Only a tamper-evident <b className="text-foreground">fingerprint</b>
+              <GlossaryTip term="fingerprint" /> of each does, so anyone can confirm a document wasn't swapped
+              out while the contents stay private.
+            </p>
+            <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+              The hard part is <b className="text-foreground">who gets in</b>. Here you prove you're allowed to
+              enter <b className="text-foreground">without revealing who you are</b>, and each pass works once.
+              That is the one thing a normal login can't give you, and it's what this room is built around.
+            </p>
+          </Disclosure>
+
+          <Disclosure
+            toggleTestId="overview-onchain"
+            summary={
+              <>
+                Check it on-chain: <b className="text-foreground">the contracts behind this room</b>
+              </>
+            }
+          >
+            <p className="mb-2 text-sm leading-relaxed text-muted-foreground">
+              These are the live contracts this room runs on. Look them up on the public ledger to re-check any
+              result here yourself.
+            </p>
+            <DataRow k="Network">testnet</DataRow>
+            {info?.dataroomId && (
+              <DataRow k="DataRoom contract">
+                <ExLink id={info.dataroomId} />
+              </DataRow>
+            )}
+            {info?.config?.verifier && (
+              <DataRow k="Proof verifier">
+                <ExLink id={info.config.verifier} />
+              </DataRow>
+            )}
+            {info && (
+              <DataRow k="Document storage" mono={false} testId="storage">
+                {info.storage === "r2" ? "Cloudflare R2" : "local stand-in"}
+              </DataRow>
+            )}
+            {info && (
+              <DataRow k="Rooms" testId="room-count">
+                {info.roomCount}
+              </DataRow>
+            )}
+          </Disclosure>
+        </div>
       </div>
-
-      {/* The concept, demoted: there when you want it, not blocking the tasks. */}
-      <Disclosure
-        toggleTestId="overview-what-is"
-        summary={
-          <>
-            New here? <b className="text-foreground">What is a confidential data room?</b>
-          </>
-        }
-      >
-        <p className="text-sm leading-relaxed text-muted-foreground">
-          It's a shared room of <b className="text-foreground">encrypted</b> documents. The files themselves
-          never go on the public record. Only a tamper-evident <b className="text-foreground">fingerprint</b>
-          <GlossaryTip term="fingerprint" /> of each does, so anyone can confirm a document wasn't swapped
-          out while the contents stay private.
-        </p>
-        <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-          The hard part is <b className="text-foreground">who gets in</b>. Here you prove you're allowed to
-          enter <b className="text-foreground">without revealing who you are</b>, and each pass works once.
-          That is the one thing a normal login can't give you, and it's what this room is built around.
-        </p>
-      </Disclosure>
-
-      {/* The trust anchor: the live contracts, so a skeptic can re-check everything. One place, explained. */}
-      <Disclosure
-        toggleTestId="overview-onchain"
-        summary={
-          <>
-            Check it on-chain: <b className="text-foreground">the contracts behind this room</b>
-          </>
-        }
-      >
-        <p className="mb-2 text-sm leading-relaxed text-muted-foreground">
-          These are the live contracts this room runs on. Look them up on the public ledger to re-check any
-          result here yourself.
-        </p>
-        <DataRow k="Network">testnet</DataRow>
-        {info?.dataroomId && (
-          <DataRow k="DataRoom contract">
-            <ExLink id={info.dataroomId} />
-          </DataRow>
-        )}
-        {info?.config?.verifier && (
-          <DataRow k="Proof verifier">
-            <ExLink id={info.config.verifier} />
-          </DataRow>
-        )}
-        {info && (
-          <DataRow k="Document storage" mono={false} testId="storage">
-            {info.storage === "r2" ? "Cloudflare R2" : "local stand-in"}
-          </DataRow>
-        )}
-        {info && (
-          <DataRow k="Rooms" testId="room-count">
-            {info.roomCount}
-          </DataRow>
-        )}
-      </Disclosure>
 
       <p className="text-sm text-muted-foreground" data-testid="overview-verify-note">
         Every result here is <b className="text-foreground">checkable by anyone</b>, directly on the public
