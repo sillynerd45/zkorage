@@ -62,6 +62,11 @@ import {
   SOLVENCY_GATE_ID, SOLVENCY_IMAGE_ID, SOLVENCY_SUPPLY_TOKEN_ID,
   isSolvencyGranted, getSolvencyRecord, getSolvencyConfig, supplyTokenSupply, guardLock, buildSolvencyJob,
 } from "./solvency.js";
+import {
+  TIER_GATE_ID, TIER_IMAGE_ID, TIER_MIN_ANON_SET, TIER_MEMBER_SET_ID,
+  buildTierJob, buildQualSet, freshTierIdentity,
+  isTierGranted, getTierGrant, isTierNullifierUsed, getTierConfig, getTierMemberRoot, getTierQualRing,
+} from "./tier.js";
 import { verifyBundle, cliRecipe, type AuditContext } from "./audit.js";
 
 const PORT = Number(process.env.PORT || 8787);
@@ -3343,6 +3348,239 @@ app.get("/bonded/solvency/status", async (req, res) => {
     res.json({ depositor, is_granted: granted, record, solvencyGateId: SOLVENCY_GATE_ID });
   } catch (e) {
     res.status(500).json({ error: err(e) });
+  }
+});
+
+// ───────────────────────────────────────────────────────────────────────────────────────────────
+// Bonded Proofs (BP5) — an anonymous bonded tier / membership expiring at X. A member proves, WITHOUT
+// revealing which wallet / which lock / the exact amount, that they are enrolled AND control a qualifying
+// non-revocable bonded lock (amount >= threshold, unlock_time >= X), with a per-context nullifier (one
+// unlinkable grant per identity per context). Freshness is deadline-encoded (now < X), sound because the
+// qualifying locks are non-revocable. The qual_root is published from the escrow's PUBLIC state and is
+// publicly recomputable. enroll → set-member-root → (deposit anon lock via /escrow/deposit) → qual-root →
+// prove (worker-first) → poll /prove-status → submit → status. The id_secret/id_trapdoor are PRIVATE
+// witness; they reach the self-hosted (trusted) prover, never the chain.
+// ───────────────────────────────────────────────────────────────────────────────────────────────
+const TIER_DEFAULT_CONTEXT = "07".repeat(32); // demo "gold tier" nullifier context (matches host_tier demo)
+
+app.get("/bonded/tier/info", async (_req, res) => {
+  try {
+    const memberCommitments = getEligible(TIER_MEMBER_SET_ID).map((h) => fromHex(h));
+    const memberRoot = memberCommitments.length ? toHex(buildEligibleTree(memberCommitments).root) : null;
+    res.json({
+      tierGateId: TIER_GATE_ID || null,
+      tierImageId: TIER_IMAGE_ID,
+      claimType: 13,
+      treeDepth: 20,
+      minAnonSet: TIER_MIN_ANON_SET,
+      memberSetId: TIER_MEMBER_SET_ID,
+      enrolledCount: memberCommitments.length,
+      computedMemberRoot: memberRoot,
+      pinnedMemberRoot: TIER_GATE_ID ? await getTierMemberRoot().catch(() => null) : null,
+      escrowId: ESCROW_ID,
+      bondTokenId: BOND_TOKEN_ID,
+      qualCommitmentScheme: "sha256(0x03 ‖ id_secret ‖ 'escrow') — store this in the escrow lock's commitment",
+      config: TIER_GATE_ID ? await getTierConfig().catch(() => null) : null,
+    });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// Enroll a member in the tier system. Body: { idCommitment?, mint? }. With `mint` (or no commitment) the
+// DEMO backend mints a fresh identity and RETURNS its secrets (id_secret/id_trapdoor/holderSeed) PLUS the
+// qual commitment to store in an escrow lock. In production the member generates these client-side.
+app.post("/bonded/tier/enroll", (req, res) => {
+  try {
+    let memberCommitmentHex: string;
+    let minted: Record<string, string> | undefined;
+    if (req.body?.idCommitment && !req.body?.mint) {
+      memberCommitmentHex = toHex(hex32(req.body.idCommitment, "idCommitment"));
+    } else {
+      const id = freshTierIdentity();
+      memberCommitmentHex = toHex(id.memberCommitment);
+      minted = {
+        idSecret: toHex(id.idSecret),
+        idTrapdoor: toHex(id.idTrapdoor),
+        holderSeed: toHex(id.holderSeed),
+        accessor: toHex(id.accessor),
+        qualCommitment: toHex(id.qualCommitment),
+        note: "DEMO ONLY — in production the member holds these client-side. Store `qualCommitment` in an escrow lock's commitment field (non-revocable, amount >= threshold, unlock_time >= X).",
+      };
+    }
+    const { index, added, total } = addEligible(TIER_MEMBER_SET_ID, memberCommitmentHex);
+    const commitments = getEligible(TIER_MEMBER_SET_ID).map((h) => fromHex(h));
+    const { root } = buildEligibleTree(commitments);
+    res.json({
+      ok: true,
+      memberIndex: index,
+      added,
+      memberCount: total,
+      memberCommitment: memberCommitmentHex,
+      memberRoot: toHex(root),
+      minted,
+      note: "call POST /bonded/tier/set-member-root to pin this root on-chain.",
+    });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+// Pin the enrolled-member root on-chain (set_member_root, admin relay).
+app.post("/bonded/tier/set-member-root", async (_req, res) => {
+  if (!TIER_GATE_ID) return res.status(503).json({ error: "TIER_GATE_ID not configured" });
+  try {
+    const commitments = getEligible(TIER_MEMBER_SET_ID).map((h) => fromHex(h));
+    if (commitments.length === 0) return res.status(400).json({ error: "no members enrolled" });
+    const { root } = buildEligibleTree(commitments);
+    const rootHex = toHex(root);
+    const out = await invokeContract(TIER_GATE_ID, "set_member_root", [scBytes(rootHex)]);
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, memberRoot: rootHex, memberCount: commitments.length });
+  } catch (e) {
+    res.json({ ok: false, error: err(e) });
+  }
+});
+
+// The live qualifying set for a tier (anonymity-set size + the gate's accepted-root ring). Used by the UI
+// to surface the anon-set-size warning before proving.
+app.get("/bonded/tier/qual-set", async (req, res) => {
+  try {
+    const threshold = BigInt(String(req.query.threshold ?? "0"));
+    const unlockAfter = Number(req.query.unlock_after ?? 0);
+    if (threshold <= 0n) return res.status(400).json({ error: "threshold (positive integer) required" });
+    if (!Number.isInteger(unlockAfter) || unlockAfter <= 0) return res.status(400).json({ error: "unlock_after (unix timestamp) required" });
+    const qual = await buildQualSet(threshold, unlockAfter);
+    const ring = TIER_GATE_ID ? await getTierQualRing(threshold, unlockAfter).catch(() => [] as string[]) : [];
+    res.json({
+      threshold: threshold.toString(),
+      unlockAfter,
+      anonSetSize: qual.size,
+      minAnonSet: TIER_MIN_ANON_SET,
+      belowMin: qual.size < TIER_MIN_ANON_SET,
+      computedRoot: qual.root,
+      published: ring.includes(qual.root),
+      ringLen: ring.length,
+      locks: qual.locks,
+    });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// Rebuild the current qualifying root from the escrow's public state and publish it on-chain (set_qual_root,
+// admin relay). Idempotent (no-op if it is already the gate's head root).
+app.post("/bonded/tier/qual-root", async (req, res) => {
+  if (!TIER_GATE_ID) return res.status(503).json({ error: "TIER_GATE_ID not configured" });
+  try {
+    const threshold = BigInt(String(req.body?.threshold ?? "0"));
+    const unlockAfter = Number(req.body?.unlock_after);
+    if (threshold <= 0n) return res.status(400).json({ error: "threshold (positive integer) required" });
+    if (!Number.isInteger(unlockAfter) || unlockAfter <= 0) return res.status(400).json({ error: "unlock_after (unix timestamp) required" });
+    const qual = await buildQualSet(threshold, unlockAfter);
+    if (qual.size === 0) return res.status(400).json({ error: "no qualifying locks for this tier yet" });
+    const out = await invokeContract(TIER_GATE_ID, "set_qual_root", [scU64(threshold), scU64(unlockAfter), scBytes(qual.root)]);
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, threshold: threshold.toString(), unlockAfter, qualRoot: qual.root, anonSetSize: qual.size });
+  } catch (e) {
+    res.json({ ok: false, error: err(e) });
+  }
+});
+
+// Build the tier witness (enrolled-member path + live qualifying-lock path) + the NEW-5 holder signature,
+// then enqueue the tier proof (kind=tier) worker-first. Auto-ensures the member root + qual root are pinned
+// on-chain so the later submit passes. Enforces the minimum anonymity-set size. Poll /prove-status/:id.
+app.post("/bonded/tier/prove", async (req, res) => {
+  if (!PROVER_URL) return res.status(503).json({ error: "PROVER_URL not configured" });
+  if (!TIER_GATE_ID) return res.status(503).json({ error: "TIER_GATE_ID not configured" });
+  let idSecret: Uint8Array, idTrapdoor: Uint8Array, holderSeed: Uint8Array, contextHex: string, threshold: bigint, unlockAfter: number;
+  try {
+    idSecret = hex32(req.body?.idSecret, "idSecret");
+    idTrapdoor = hex32(req.body?.idTrapdoor, "idTrapdoor");
+    holderSeed = hex32(req.body?.holderSeed, "holderSeed");
+    contextHex = req.body?.context ? toBytes32(req.body.context) : TIER_DEFAULT_CONTEXT;
+    threshold = BigInt(String(req.body?.threshold ?? "0"));
+    unlockAfter = Number(req.body?.unlock_after);
+    if (threshold <= 0n) throw new Error("threshold (positive integer) required");
+    if (!Number.isInteger(unlockAfter) || unlockAfter <= 0) throw new Error("unlock_after (unix timestamp) required");
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const memberCommitmentHex = toHex(idCommitment(idSecret, idTrapdoor));
+    const memberIndex = indexOfCommitment(TIER_MEMBER_SET_ID, memberCommitmentHex);
+    if (memberIndex < 0) return res.status(400).json({ error: "not enrolled — call /bonded/tier/enroll first", memberCommitment: memberCommitmentHex });
+    const memberCommitments = getEligible(TIER_MEMBER_SET_ID).map((h) => fromHex(h));
+    const built = await buildTierJob({
+      idSecret, idTrapdoor, holderSeed, context: fromHex(contextHex), threshold, unlockAfter, memberCommitments, memberIndex,
+    });
+    // Auto-ensure the on-chain bindings match (idempotent): member root pinned + qual root in the ring.
+    const pinnedMember = await getTierMemberRoot().catch(() => null);
+    if (pinnedMember !== built.memberRoot) {
+      await invokeContract(TIER_GATE_ID, "set_member_root", [scBytes(built.memberRoot)]);
+    }
+    const ring = await getTierQualRing(threshold, unlockAfter).catch(() => [] as string[]);
+    if (!ring.includes(built.qualRoot)) {
+      await invokeContract(TIER_GATE_ID, "set_qual_root", [scU64(threshold), scU64(unlockAfter), scBytes(built.qualRoot)]);
+    }
+    const r = await fetch(`${PROVER_URL}/prove`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(built.job),
+    });
+    const j = (await r.json()) as { job_id?: string; error?: string };
+    if (!r.ok || !j.job_id) return res.status(502).json({ error: j.error || "prover submit failed" });
+    res.json({
+      jobId: j.job_id,
+      memberRoot: built.memberRoot,
+      qualRoot: built.qualRoot,
+      nullifier: built.nullifier,
+      accessor: built.accessor,
+      context: contextHex,
+      threshold: threshold.toString(),
+      unlockAfter,
+      anonSetSize: built.qualSize,
+      note: "poll /prove-status/<jobId>; on done, POST /bonded/tier/submit {seal,image_id,journal}",
+    });
+  } catch (e) {
+    res.status(502).json({ error: err(e) });
+  }
+});
+
+// Submit a tier proof to the gate: submit_tier_proof (PERMISSIONLESS — the in-guest NEW-5 holder sig carries
+// the accessor's consent; the server is just the relayer/fee-payer). Grant or #NullifierUsed.
+app.post("/bonded/tier/submit", async (req, res) => {
+  if (!TIER_GATE_ID) return res.status(503).json({ error: "TIER_GATE_ID not configured" });
+  const b = req.body as Bundle;
+  if (!b?.seal || !b?.image_id || !b?.journal) {
+    return res.status(400).json({ error: "seal, image_id, journal (raw hex) required" });
+  }
+  try {
+    const out = await invokeContract(TIER_GATE_ID, "submit_tier_proof", [scBytes(b.seal), scBytes(b.image_id), scBytes(b.journal)]);
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, grant: jsonSafe(out.returnValue), tierGateId: TIER_GATE_ID });
+  } catch (e) {
+    res.json({ ok: false, error: err(e), tierGateId: TIER_GATE_ID });
+  }
+});
+
+// The live tier decision for an accessor (is_granted = grant exists AND now < X). Plus the raw grant.
+app.get("/bonded/tier/status", async (req, res) => {
+  if (!TIER_GATE_ID) return res.status(503).json({ error: "TIER_GATE_ID not configured" });
+  try {
+    const accessorHex = toHex(hex32(req.query.accessor, "accessor"));
+    const [granted, grant] = await Promise.all([isTierGranted(accessorHex), getTierGrant(accessorHex)]);
+    res.json({ accessor: accessorHex, is_granted: granted, grant, tierGateId: TIER_GATE_ID });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+app.get("/bonded/tier/nullifier/:nullifier", async (req, res) => {
+  if (!TIER_GATE_ID) return res.status(503).json({ error: "TIER_GATE_ID not configured" });
+  try {
+    const nullifierHex = toHex(hex32(req.params.nullifier, "nullifier"));
+    const used = await isTierNullifierUsed(nullifierHex);
+    res.json({ nullifier: nullifierHex, used, tierGateId: TIER_GATE_ID });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
   }
 });
 
