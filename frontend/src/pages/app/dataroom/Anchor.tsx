@@ -122,7 +122,8 @@ export default function Anchor() {
               />
             </div>
 
-            {/* What you're storing: the room, a file (drop zone), or typed text instead. */}
+            {/* What you're storing: the room, then ONE of a file or pasted text (a segmented switcher picks
+                the mode, so only the active input shows instead of both at once). */}
             <div className="mt-5 space-y-3">
               <GroupLabel>What you're storing</GroupLabel>
               <label className="flex flex-col gap-1.5 text-[13px] text-muted-foreground">
@@ -139,80 +140,103 @@ export default function Anchor() {
                 </div>
               </label>
 
+              {/* Input-mode switcher (segmented, matching the section tabs). A radiogroup, not a tablist:
+                  it picks which form field is shown, it does not navigate. Switching preserves both inputs. */}
               <div
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  setDragOver(true);
-                }}
-                onDragLeave={() => setDragOver(false)}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  setDragOver(false);
-                  const f = e.dataTransfer.files?.[0];
-                  if (f) a.pickFile(f);
-                }}
-                className={cn(
-                  "rounded-xl border border-dashed px-4 py-6 text-center transition-colors",
-                  dragOver ? "border-brand bg-brand/5" : "border-input bg-muted/30",
-                )}
+                role="radiogroup"
+                aria-label="Input method"
+                className="flex w-fit max-w-full gap-1 rounded-2xl border bg-card p-1.5"
               >
-                <Upload className="mx-auto size-6 text-muted-foreground" aria-hidden="true" />
-                <p className="mt-2 text-sm font-medium">Drag a file here, or browse</p>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  Encrypted in your browser before anything is posted. PDF, image, any file up to 8 MB.
-                </p>
-                <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
-                  <input
-                    type="file"
-                    onChange={(e) => a.pickFile(e.target.files?.[0] ?? null)}
-                    aria-label="document file"
-                    data-testid="doc-file"
-                    className="block max-w-full text-xs text-muted-foreground file:mr-3 file:rounded-md file:border file:border-input file:bg-background file:px-3 file:py-1.5 file:text-xs file:font-medium hover:file:bg-accent"
-                  />
-                </div>
-                {a.file && (
-                  <span
-                    data-testid="doc-file-chip"
-                    className="mt-3 inline-flex items-center gap-2 rounded-full border bg-card px-3 py-1 text-xs"
+                {([
+                  ["file", "File"],
+                  ["text", "Text"],
+                ] as const).map(([m, label]) => (
+                  <button
+                    key={m}
+                    role="radio"
+                    aria-checked={a.storeMode === m}
+                    onClick={() => a.setStoreMode(m)}
+                    data-testid={`store-mode-${m}`}
+                    className={cn(
+                      "rounded-xl px-3.5 py-2 text-[13px] font-medium transition-colors",
+                      a.storeMode === m
+                        ? "bg-primary text-primary-foreground"
+                        : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                    )}
                   >
-                    <span className="max-w-[16rem] truncate font-medium" title={a.file.name}>
-                      {a.file.name}
-                    </span>
-                    <span className="text-muted-foreground">{(a.file.size / 1024).toFixed(1)} KB</span>
-                    <button
-                      type="button"
-                      onClick={a.clearFile}
-                      aria-label="remove file"
-                      data-testid="doc-file-clear"
-                      className="text-muted-foreground hover:text-foreground"
-                    >
-                      <X className="size-3.5" aria-hidden="true" />
-                    </button>
-                  </span>
-                )}
-                {a.fileErr && (
-                  <p className="mt-2 text-xs text-destructive" data-testid="doc-file-error">
-                    {a.fileErr}
-                  </p>
-                )}
+                    {label}
+                  </button>
+                ))}
               </div>
 
-              <div>
-                <GroupLabel className="mb-1.5">Or paste text instead</GroupLabel>
+              {a.storeMode === "file" ? (
+                <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setDragOver(true);
+                  }}
+                  onDragLeave={() => setDragOver(false)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setDragOver(false);
+                    const f = e.dataTransfer.files?.[0];
+                    if (f) a.pickFile(f);
+                  }}
+                  className={cn(
+                    "rounded-xl border border-dashed px-4 py-6 text-center transition-colors",
+                    dragOver ? "border-brand bg-brand/5" : "border-input bg-muted/30",
+                  )}
+                >
+                  <Upload className="mx-auto size-6 text-muted-foreground" aria-hidden="true" />
+                  <p className="mt-2 text-sm font-medium">Drag a file here, or browse</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Encrypted in your browser before anything is posted. PDF, image, any file up to 8 MB.
+                  </p>
+                  <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+                    <input
+                      type="file"
+                      onChange={(e) => a.pickFile(e.target.files?.[0] ?? null)}
+                      aria-label="document file"
+                      data-testid="doc-file"
+                      className="block max-w-full text-xs text-muted-foreground file:mr-3 file:rounded-md file:border file:border-input file:bg-background file:px-3 file:py-1.5 file:text-xs file:font-medium hover:file:bg-accent"
+                    />
+                  </div>
+                  {a.file && (
+                    <span
+                      data-testid="doc-file-chip"
+                      className="mt-3 inline-flex items-center gap-2 rounded-full border bg-card px-3 py-1 text-xs"
+                    >
+                      <span className="max-w-[16rem] truncate font-medium" title={a.file.name}>
+                        {a.file.name}
+                      </span>
+                      <span className="text-muted-foreground">{(a.file.size / 1024).toFixed(1)} KB</span>
+                      <button
+                        type="button"
+                        onClick={a.clearFile}
+                        aria-label="remove file"
+                        data-testid="doc-file-clear"
+                        className="text-muted-foreground hover:text-foreground"
+                      >
+                        <X className="size-3.5" aria-hidden="true" />
+                      </button>
+                    </span>
+                  )}
+                  {a.fileErr && (
+                    <p className="mt-2 text-xs text-destructive" data-testid="doc-file-error">
+                      {a.fileErr}
+                    </p>
+                  )}
+                </div>
+              ) : (
                 <textarea
-                  className="min-h-[70px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:border-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-50"
+                  className="min-h-[88px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:border-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
                   value={a.content}
                   onChange={(e) => a.setContent(e.target.value)}
                   aria-label="document content"
                   data-testid="doc-content"
-                  disabled={!!a.file}
+                  placeholder="Paste the document text…"
                 />
-                {a.file && (
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    A chosen file replaces typed text. Remove it to type instead.
-                  </p>
-                )}
-              </div>
+              )}
             </div>
 
             {/* Who can open it: the recipient's x25519 public key. */}
