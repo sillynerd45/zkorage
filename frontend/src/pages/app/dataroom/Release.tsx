@@ -22,7 +22,7 @@ export default function Release() {
             split among 3 keepers <span aria-hidden="true">⚠️</span>
           </span>
         </div>
-        <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
+        <p className="text-sm leading-relaxed text-muted-foreground">
           A document's key is <b className="text-foreground">split into 3 parts</b>
           <GlossaryTip term="split key" /> held by separate
           <b className="text-foreground"> keepers</b>.{" "}

@@ -25,7 +25,7 @@ export default function DisclosureRoute() {
             prove a fact about a sealed file; share a masked copy <span aria-hidden="true">🪪</span>
           </span>
         </div>
-        <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
+        <p className="text-sm leading-relaxed text-muted-foreground">
           A <b className="text-foreground">verified preview</b>
           <GlossaryTip term="verified preview" /> proves a public fact about a{" "}
           <b className="text-foreground">sealed</b> document (for example,{" "}

@@ -28,7 +28,7 @@ export default function Authenticity() {
             a fact a bank signed, without showing the document
           </span>
         </div>
-        <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
+        <p className="text-sm leading-relaxed text-muted-foreground">
           Prove a fact from a document someone else signed, such as a bank statement,{" "}
           <b className="text-foreground">without showing the whole file</b>. zkorage re-checks the real{" "}
           <b className="text-foreground">digital signature</b> inside a{" "}

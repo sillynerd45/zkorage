@@ -23,7 +23,7 @@ export default function Policy() {
             get in only if you meet every condition, anonymously
           </span>
         </div>
-        <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
+        <p className="text-sm leading-relaxed text-muted-foreground">
           You're let in <b className="text-foreground">only if you meet every condition at once</b>. You're a{" "}
           <b className="text-foreground">member</b>, <b className="text-foreground">ID-checked</b>,
           <b className="text-foreground"> accredited</b>, and{" "}
@@ -79,7 +79,7 @@ export default function Policy() {
             read-only · runs in your browser
           </span>
         </div>
-        <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
+        <p className="text-sm leading-relaxed text-muted-foreground">
           The public record shows only the stand-in ID, never your name, which member you are, or any of your
           details.
         </p>
