@@ -389,12 +389,25 @@ async function writeViaWallet(
   return post<WalletWriteResult>("/tx/submit", { signedXdr });
 }
 
-/** Format base units (7 dp) as a human token amount. */
+/** Format base units (7 dp) as a human token amount, keeping any fractional part (trailing zeros trimmed). */
 export function fmtAmount(base: string | bigint, decimals = 7): string {
-  const v = BigInt(base);
+  let v = BigInt(base);
+  const neg = v < 0n;
+  if (neg) v = -v;
   const d = 10n ** BigInt(decimals);
-  const whole = v / d;
-  return whole.toLocaleString("en-US");
+  const whole = (v / d).toLocaleString("en-US");
+  const frac = (v % d).toString().padStart(decimals, "0").replace(/0+$/, "");
+  return (neg ? "-" : "") + whole + (frac ? "." + frac : "");
+}
+
+/** Parse a human token amount (e.g. "100.5") to base units exactly (no float drift). Null if invalid. */
+export function toBaseUnits(input: string, decimals = 7): string | null {
+  const s = input.trim();
+  if (!/^\d*(\.\d*)?$/.test(s) || s === "" || s === ".") return null;
+  const [w, f = ""] = s.split(".");
+  if (f.length > decimals) return null; // more precision than the token supports
+  const v = BigInt((w || "0") + f.padEnd(decimals, "0"));
+  return v > 0n ? v.toString() : null;
 }
 
 // ─────────────────────────── Week 8: Fundraising (composition) ───────────────────────────
@@ -832,3 +845,13 @@ export const escrowSetTimelock = (
   signer: TxSigner,
 ): Promise<WalletWriteResult> =>
   writeViaWallet("/escrow/set-timelock", { lock_id: lockId, new_unlock_time: newUnlock }, signer);
+
+export const getBondBalance = (owner: string) =>
+  fetch(`${BASE}/escrow/balance?owner=${owner}`).then(
+    j<{ owner: string; balance: string; bondTokenId: string }>,
+  );
+
+// Demo faucet: server-relayed mint of test zkUSD (the relay signer is the token admin), so a fresh wallet
+// can try a deposit. Not wallet-signed.
+export const escrowFaucet = (to: string): Promise<WalletWriteResult & { minted?: string }> =>
+  post<WalletWriteResult & { minted?: string }>("/escrow/faucet", { to });

@@ -6,6 +6,7 @@ import { Panel } from "@/components/app/blocks";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { fmtAmount, toBaseUnits } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 // now + 1 hour, formatted for a datetime-local input (local time, minute precision).
@@ -44,13 +45,13 @@ export default function BondedDeposit() {
   const submit = async () => {
     setErr(null);
     setOk(null);
-    const amt = Number(amount);
-    if (!(amt > 0)) return setErr("Enter an amount greater than zero.");
+    const base = toBaseUnits(amount);
+    if (!base) return setErr("Enter a valid amount (up to 7 decimals).");
+    if (BigInt(base) > BigInt(b.balance)) return setErr(`You only have ${fmtAmount(b.balance)} zkUSD. Get more from the faucet.`);
     if (!unlockUnix || unlockUnix <= Math.floor(Date.now() / 1000)) return setErr("Pick an unlock time in the future.");
     const claimant = mode === "send" ? recipient.trim() : b.address!;
     const rev = mode === "send" ? false : revocable;
     if (mode === "send" && !/^G[A-Z2-7]{55}$/.test(claimant)) return setErr("Enter a valid recipient address (G…).");
-    const base = BigInt(Math.round(amt * 1e7)).toString();
     const r = await b.deposit({ amount: base, unlock_time: unlockUnix, revocable: rev, claimant });
     if (r.ok) {
       setOk(`Locked. tx ${r.txHash ?? ""}`);
@@ -66,9 +67,19 @@ export default function BondedDeposit() {
     <Panel title="Lock tokens" className="max-w-xl">
       <div className="grid gap-4" data-testid="bonded-deposit">
         <div>
-          <Label htmlFor="amt">Amount (zkUSD)</Label>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Label htmlFor="amt">Amount (zkUSD)</Label>
+            <span className="text-[12px] text-muted-foreground" data-testid="deposit-balance">
+              Balance: {fmtAmount(b.balance)} zkUSD
+            </span>
+          </div>
           <Input id="amt" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} className="mt-1 w-48" data-testid="deposit-amount" />
-          <p className="mt-1 text-[12px] text-muted-foreground">The demo bond token. Mint some on-chain first if your balance is low.</p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <Button type="button" variant="outline" size="sm" disabled={b.busy === "faucet"} onClick={() => void b.fundFaucet()} data-testid="bonded-faucet">
+              {b.busy === "faucet" ? "Minting…" : "Get 1,000 test zkUSD"}
+            </Button>
+            <span className="text-[12px] text-muted-foreground">A demo bond token, minted to your wallet.</span>
+          </div>
         </div>
 
         <div>
@@ -79,7 +90,7 @@ export default function BondedDeposit() {
 
         <div>
           <Label>Type</Label>
-          <div className="mt-1 flex w-fit gap-1 rounded-xl border bg-card p-1" role="radiogroup">
+          <div className="mt-1 flex w-fit gap-1 rounded-xl border bg-card p-1" role="radiogroup" aria-label="Lock type">
             {(["bond", "send"] as const).map((m) => (
               <button
                 key={m}

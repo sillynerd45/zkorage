@@ -57,7 +57,7 @@ import { demoDenyTree, DENY_DEPTH } from "./denylist.js";
 import { verifyOnChain, type Bundle } from "./verify.js";
 import { readContract, invokeContract, buildUnsignedXdr, submitSignedXdr, scBytes, scAddress, scOptAddress, scI128, scU32, scU64, scBool, jsonSafe } from "./chain.js";
 import { recordRoom, listRoomsByOwner } from "./rooms-store.js";
-import { ESCROW_ID, BOND_TOKEN_ID, listLocks, getLock as escrowGetLock, isLocked as escrowIsLocked } from "./escrow.js";
+import { ESCROW_ID, BOND_TOKEN_ID, listLocks, getLock as escrowGetLock, isLocked as escrowIsLocked, bondBalance as escrowBondBalance } from "./escrow.js";
 import { verifyBundle, cliRecipe, type AuditContext } from "./audit.js";
 
 const PORT = Number(process.env.PORT || 8787);
@@ -3123,8 +3123,40 @@ app.get("/dataroom/committee/key-epoch/:roomId/:docId", async (req, res) => {
 // XDR when `source` is present, else the server relay). No ZK here; this is the escrow + "my balances".
 // ───────────────────────────────────────────────────────────────────────────────────────────────
 const ESCROW_ZERO32 = "0".repeat(64);
+// Demo faucet: the relay signer is the bond-token admin, so it can mint test zkUSD to any address. Capped
+// + lightly rate-limited so a fresh wallet can try a deposit without an out-of-band mint.
+const FAUCET_AMOUNT = process.env.ESCROW_FAUCET_AMOUNT || "10000000000"; // 1000 zkUSD (7 dp)
+const faucetSeen = new Map<string, number>();
 
 app.get("/escrow/info", (_req, res) => res.json({ escrowId: ESCROW_ID, bondTokenId: BOND_TOKEN_ID }));
+
+app.get("/escrow/balance", async (req, res) => {
+  const owner = String(req.query.owner ?? "");
+  if (!StrKey.isValidEd25519PublicKey(owner)) return res.status(400).json({ error: "owner (G-address) required" });
+  try {
+    const balance = await escrowBondBalance(owner);
+    res.json({ owner, balance, bondTokenId: BOND_TOKEN_ID });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+app.post("/escrow/faucet", async (req, res) => {
+  const to = String((req.body as { to?: string })?.to ?? "");
+  if (!StrKey.isValidEd25519PublicKey(to)) return res.status(400).json({ error: "to (G-address) required" });
+  const now = Date.now();
+  if (now - (faucetSeen.get(to) ?? 0) < 60_000) {
+    return res.status(429).json({ ok: false, error: "faucet rate-limited; try again in a minute" });
+  }
+  faucetSeen.set(to, now);
+  try {
+    const out = await invokeContract(BOND_TOKEN_ID, "mint", [scAddress(to), scI128(FAUCET_AMOUNT)]);
+    res.json({ ok: true, txHash: out.hash, minted: FAUCET_AMOUNT, bondTokenId: BOND_TOKEN_ID });
+  } catch (e) {
+    faucetSeen.delete(to); // a failed mint shouldn't burn the cooldown
+    res.json({ ok: false, error: err(e) });
+  }
+});
 
 app.get("/escrow/lock/:id", async (req, res) => {
   const id = Number(req.params.id);
@@ -3165,6 +3197,10 @@ app.post("/escrow/deposit", async (req, res) => {
   if (!/^[1-9]\d*$/.test(amount)) return res.status(400).json({ error: "amount must be a positive integer (base units)" });
   if (!Number.isInteger(unlock) || unlock <= Math.floor(Date.now() / 1000)) return res.status(400).json({ error: "unlock_time must be a future unix timestamp" });
   if (!/^[0-9a-f]{64}$/.test(commitment)) return res.status(400).json({ error: "commitment must be 32-byte hex" });
+  // On the user-signed path the wallet only authorises its own address, so `from` must be the signer —
+  // fail fast with a clean 400 rather than a confusing signing error later.
+  const src = userSource(req);
+  if (src && from !== src) return res.status(400).json({ error: "from must equal the signing source" });
   // A revocable lock must be a self-bond (the contract enforces this too).
   if (b.revocable && claimant !== from) return res.status(400).json({ error: "a revocable lock must be a self-bond (claimant == from)" });
   try {

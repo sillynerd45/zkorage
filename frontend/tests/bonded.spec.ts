@@ -58,6 +58,9 @@ test("bonded: deposit form, mode switcher reveals the recipient", async ({ page 
   await page.goto("/app/bonded/deposit");
   await expect(page.getByTestId("bonded-deposit")).toBeVisible();
   await expect(page.getByTestId("deposit-amount")).toBeVisible();
+  // the deployer holds 950 zkUSD on the live escrow — wait for the async balance read to land
+  await expect(page.getByTestId("deposit-balance")).toContainText("950", { timeout: 30_000 });
+  await expect(page.getByTestId("bonded-faucet")).toBeVisible(); // demo faucet
   await expect(page.getByTestId("deposit-unlock")).toBeVisible();
   await expect(page.getByTestId("deposit-revocable")).toBeVisible(); // bond mode default
   await expect(page.getByTestId("deposit-submit")).toBeVisible();

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Wallet, RefreshCw, AlertTriangle } from "lucide-react";
 import { useBonded } from "@/lib/hooks/useBonded";
@@ -22,6 +22,9 @@ export default function BondedBalances() {
   const [extendId, setExtendId] = useState<number | null>(null);
   const [extendAt, setExtendAt] = useState("");
   const [result, setResult] = useState<{ id: number; r: WalletWriteResult } | null>(null);
+
+  // Drop a stale action result when the wallet switches.
+  useEffect(() => setResult(null), [b.address]);
 
   const act = async (id: number, p: Promise<WalletWriteResult>) => {
     setResult(null);
