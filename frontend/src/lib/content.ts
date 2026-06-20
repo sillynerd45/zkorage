@@ -202,6 +202,7 @@ export const BONDED_TABS: BondedTab[] = [
   { slug: "balances", label: "My Balances", blurb: "The locks your connected wallet can act on." },
   { slug: "deposit", label: "Deposit", blurb: "Lock tokens until a time you choose." },
   { slug: "prove", label: "Prove Solvency", blurb: "Prove reserves cover supply, bonded to a lock that you can pull at any time." },
+  { slug: "tier", label: "Anonymous Tier", blurb: "Prove you bonded enough to qualify for a tier, without revealing which wallet or how much." },
 ];
 
 export const bondedTab = (slug: string) => BONDED_TABS.find((t) => t.slug === slug);

@@ -906,3 +906,91 @@ export const proveSolvency = (lockId: number, opts?: { reserves?: string; min_am
 // auth (the ownership binding), and the connected wallet IS that owner.
 export const submitSolvency = (bundle: Bundle, signer: TxSigner): Promise<WalletWriteResult> =>
   writeViaWallet("/bonded/solvency/submit", { ...bundle }, signer);
+
+// ── Bonded Proofs: anonymous bonded tier / membership expiring at X (BP5) ──
+// Prove you are an enrolled member AND control a qualifying non-revocable bonded lock (amount >= threshold,
+// locked until >= X), WITHOUT revealing which wallet or how much. The grant is keyed to a fresh anonymous
+// accessor. Submit is permissionless (the in-guest holder signature is the consent) — a relayer pays, so the
+// member never signs from a funded wallet. enroll -> bond a qualifying lock -> prove (worker-first) ->
+// poll getProveStatus -> submitTier (relay) -> poll getTierStatus for the badge.
+
+export interface TierInfo {
+  tierGateId: string | null;
+  tierImageId: string;
+  claimType: number;
+  minAnonSet: number;
+  enrolledCount: number;
+  escrowId: string;
+  bondTokenId: string;
+}
+
+/** A demo tier identity minted by the backend (in production the member holds these client-side). */
+export interface TierIdentity {
+  idSecret: string;
+  idTrapdoor: string;
+  holderSeed: string;
+  accessor: string;
+  qualCommitment: string;
+}
+
+export interface TierQualSet {
+  threshold: string;
+  unlockAfter: number;
+  anonSetSize: number;
+  minAnonSet: number;
+  belowMin: boolean;
+  computedRoot: string;
+  published: boolean;
+  ringLen: number;
+}
+
+export interface TierGrant {
+  index: number;
+  accessor: string;
+  threshold: string;
+  unlock_after: string;
+  context: string;
+  nullifier: string;
+  member_root: string;
+  qual_root: string;
+  ledger: number;
+  timestamp: string;
+}
+
+export interface TierStatus {
+  accessor: string;
+  is_granted: boolean;
+  grant: TierGrant | null;
+  tierGateId: string;
+}
+
+export const getTierInfo = () => fetch(`${BASE}/bonded/tier/info`).then(j<TierInfo>);
+
+export const enrollTier = () =>
+  post<{ ok: boolean; memberIndex: number; memberCount: number; memberRoot: string; minted: TierIdentity }>(
+    "/bonded/tier/enroll",
+    { mint: true },
+  );
+
+export const getTierQualSet = (threshold: string, unlockAfter: number) =>
+  fetch(`${BASE}/bonded/tier/qual-set?threshold=${threshold}&unlock_after=${unlockAfter}`).then(j<TierQualSet>);
+
+export const proveTier = (body: {
+  idSecret: string;
+  idTrapdoor: string;
+  holderSeed: string;
+  threshold: string;
+  unlock_after: number;
+}) =>
+  post<{ jobId: string; accessor: string; nullifier: string; qualRoot: string; memberRoot: string; anonSetSize: number }>(
+    "/bonded/tier/prove",
+    body,
+  );
+
+// Submit the tier proof to the gate. PERMISSIONLESS — the in-guest holder signature carries the accessor's
+// consent, so the backend relays (the member never reveals or pays from a funded wallet).
+export const submitTier = (bundle: Bundle) =>
+  post<WalletWriteResult & { grant?: TierGrant }>("/bonded/tier/submit", { ...bundle });
+
+export const getTierStatus = (accessor: string) =>
+  fetch(`${BASE}/bonded/tier/status?accessor=${accessor}`).then(j<TierStatus>);
