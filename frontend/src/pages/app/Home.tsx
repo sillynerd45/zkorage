@@ -21,7 +21,7 @@ export default function Home() {
       <div className="mb-7">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand">Welcome to zkorage</p>
         <h1 className="mt-1.5 text-3xl font-bold tracking-tight">Prove a private fact. Verify it on-chain.</h1>
-        <p className="mt-2 max-w-2xl text-[15px] leading-relaxed text-muted-foreground">
+        <p className="mt-2 text-[15px] leading-relaxed text-muted-foreground">
           Pick a capability below, or start with the Data Room. Every result here is re-checkable by
           anyone on Stellar. No wallet, no account.
         </p>

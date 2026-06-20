@@ -28,7 +28,7 @@ export function PageHeader({
         )}
         <div>
           <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">{title}</h1>
-          {lead && <p className="mt-2 max-w-2xl text-[15px] leading-relaxed text-muted-foreground">{lead}</p>}
+          {lead && <p className="mt-2 text-[15px] leading-relaxed text-muted-foreground">{lead}</p>}
         </div>
       </div>
       {actions && <div className="mt-5 flex flex-wrap gap-3">{actions}</div>}
