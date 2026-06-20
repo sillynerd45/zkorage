@@ -28,7 +28,7 @@ export default function BondedOverview() {
         <p className="max-w-3xl text-[14px] leading-relaxed text-muted-foreground">
           A time-locked escrow on Stellar, plus the first proof built on it. You lock tokens until a time you
           choose, and until then the funds cannot move. On the Prove Solvency tab you can prove that your
-          reserves cover the circulating supply, without revealing the reserve figure, bonded to one of those
+          reserves are at least the circulating supply, without revealing the reserve figure, bonded to one of those
           locks. The gate reads the lock on every check, so the proof counts as live only while the bond stays
           locked, and goes void the instant you pull it.
         </p>

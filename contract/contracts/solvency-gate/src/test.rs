@@ -198,7 +198,11 @@ fn test_submit_happy_then_self_void() {
     f.escrow.set_lock(&released);
     assert!(!f.gate.is_granted(&f.depositor), "self-void: unbonded lock must revoke the grant");
 
-    // re-bonding (a fresh active lock) restores the LIVE grant without re-proving
+    // is_granted is a PURE LIVE read with no caching: point the mock's slot back at an active lock and the
+    // grant reads true again. NOTE this only works because MockEscrow has ONE mutable slot it can resurrect.
+    // The REAL escrow's lock-id counter is monotonic and `released` is permanent, so a genuinely unbonded
+    // lock stays void forever and a re-bond is a NEW lock_id that needs a fresh proof — see
+    // `test_real_escrow_self_void`, which asserts the true semantics against the actual escrow.
     f.escrow.set_lock(&good_lock(&f, &env));
     assert!(f.gate.is_granted(&f.depositor));
 }
@@ -447,6 +451,21 @@ fn test_insufficient_bond() {
     assert_eq!(res, Err(Ok(SolvencyError::InsufficientBond)));
 }
 
+#[test]
+fn test_min_amount_zero_rejected() {
+    // a zero floor is not a bond claim — rejected ON-CHAIN, not just by the backend (the gate is permissionless).
+    let env = Env::default();
+    env.mock_all_auths();
+    let f = setup(&env);
+    f.escrow.set_lock(&good_lock(&f, &env));
+    let j = make_journal(
+        &env, 1, CLAIM_TYPE, &ISSUER, SUPPLY, 1, FAR_EXPIRY, &ESCROW_ID, 1, 0, &BOND_TOKEN_ID,
+        &SUPPLY_TOKEN_ID,
+    );
+    let res = f.gate.try_submit_solvency_proof(&f.seal, &f.image, &j);
+    assert_eq!(res, Err(Ok(SolvencyError::InsufficientBond)));
+}
+
 // ============================ OWNERSHIP BINDING ============================
 
 #[test]
@@ -630,4 +649,26 @@ fn test_real_escrow_self_void() {
     // pull the collateral through the REAL escrow -> the gate's live read catches it
     escrow.unbond(&lock_id);
     assert!(!gate.is_granted(&depositor), "self-void: unbond revokes the grant on-chain");
+
+    // A re-bond is a NEW lock_id (the escrow counter is monotonic and `released` is permanent), so the OLD
+    // record still points at the now-dead lock: re-bonding ALONE must NOT restore the grant. Only a fresh
+    // proof against the new lock does. (This is the real-escrow truth that the MockEscrow single-slot test
+    // in test_submit_happy_then_self_void cannot model.)
+    let lock_id2 = escrow.deposit(
+        &depositor,
+        &token_id,
+        &100_000i128,
+        &9_000_000u64,
+        &depositor,
+        &commitment,
+        &true,
+    );
+    assert_ne!(lock_id2, lock_id);
+    assert!(!gate.is_granted(&depositor), "re-bond alone must NOT restore the grant (old record points at the dead lock)");
+    let j2 = make_journal(
+        &env, 1, CLAIM_TYPE, &ISSUER, SUPPLY, 2, FAR_EXPIRY, &ESCROW_ID, lock_id2, MIN_AMOUNT,
+        &BOND_TOKEN_ID, &SUPPLY_TOKEN_ID,
+    );
+    gate.submit_solvency_proof(&seal, &image, &j2);
+    assert!(gate.is_granted(&depositor), "a fresh proof against the new lock restores the grant");
 }

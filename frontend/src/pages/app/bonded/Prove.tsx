@@ -33,6 +33,12 @@ export default function BondedProve() {
       alive.current = false;
     };
   }, []);
+  // Tracks the LATEST connected address so an in-flight prove (whose closure captured the click-time `b`)
+  // can detect a wallet switch and bail rather than submit a proof against the wrong signer.
+  const addrRef = useRef(b.address);
+  useEffect(() => {
+    addrRef.current = b.address;
+  }, [b.address]);
 
   // Live status polling — re-reads the gate's is_granted (which itself re-reads the escrow lock), so the
   // badge flips ACTIVE -> VOID on its own the moment the bond is released. This is the self-void.
@@ -66,20 +72,31 @@ export default function BondedProve() {
   const hadProof = Boolean(status?.record);
   const boundLock = status?.record ? Number(status.record.lock_id) : null;
   const busyFlow = phase === "proving" || phase === "submitting";
+  // A void has four possible causes; name the real one when the bound lock is known, rather than always
+  // blaming a release. (is_granted can drop on unbond, unlock, supply change, or attestation expiry.)
+  const boundLockView = boundLock != null ? b.locks.find((l) => l.id === boundLock) : undefined;
+  const voidReason = boundLockView?.released
+    ? "The bond was released, so the proof is void."
+    : boundLockView && !boundLockView.is_locked
+      ? "The lock reached its unlock time, so the proof is void."
+      : "The proof is no longer live: the supply moved, the attestation lapsed, or the bond was pulled.";
 
   const prove = async (lock: LockView) => {
-    if (!b.signer) {
+    if (!b.signer || !b.address) {
       setPhase("error");
       setMsg("Connect your wallet on testnet first.");
       return;
     }
+    const startedFor = b.address; // bail if the wallet switches before we submit
     setWorkingLock(lock.id);
     setPhase("proving");
-    setMsg("Attesting reserves and proving on the self-hosted prover. This takes a few seconds.");
+    setMsg("Attesting reserves and proving on the self-hosted prover. This is usually seconds on the GPU prover.");
     try {
       const { jobId } = await proveSolvency(lock.id);
       let bundle: Bundle | undefined;
-      for (let i = 0; i < 75 && alive.current; i++) {
+      // Poll generously: the GPU worker is ~seconds, but if it is offline the VM CPU fallback can take
+      // several minutes. ~15 min (225 * 4s) comfortably covers the fallback so we never abort a live job.
+      for (let i = 0; i < 225 && alive.current && addrRef.current === startedFor; i++) {
         await new Promise((r) => setTimeout(r, 4000));
         const st = await getProveStatus(jobId);
         if (st.status === "done" && st.bundle) {
@@ -88,7 +105,11 @@ export default function BondedProve() {
         }
         if (st.status === "error") throw new Error(st.error || "proving failed");
       }
-      if (!bundle) throw new Error("proving timed out, please try again");
+      if (!alive.current || addrRef.current !== startedFor) {
+        setPhase("idle"); // unmounted or wallet switched mid-prove — drop quietly
+        return;
+      }
+      if (!bundle) throw new Error("still proving on the fallback prover — leave this tab open and re-check in a minute");
       setPhase("submitting");
       setMsg("Proof ready. Submitting it to the gate. Approve the signature in your wallet.");
       const r = await submitSolvency(bundle, b.signer);
@@ -135,7 +156,7 @@ export default function BondedProve() {
       {/* What this is — the inverted model, stated plainly. */}
       <Panel title="A proof that dies when you pull your collateral">
         <p className="text-[13px] leading-relaxed text-muted-foreground">
-          You prove that your reserves cover the circulating supply, without revealing the reserve figure.
+          You prove that your reserves are at least the circulating supply, without revealing the reserve figure.
           The proof is tied to a revocable lock in the escrow. The gate reads that lock on every check, so
           the proof counts as live only while the bond stays locked. The moment you release the collateral,
           the proof goes void in the same breath. Your identity is public here; the zero-knowledge part hides
@@ -159,7 +180,7 @@ export default function BondedProve() {
             </span>
           ) : hadProof ? (
             <span className="inline-flex items-center gap-2 rounded-full bg-destructive/10 px-3 py-1.5 text-[13px] font-semibold text-destructive">
-              <ShieldX className="size-4" /> Void — collateral released
+              <ShieldX className="size-4" /> Void — proof no longer live
             </span>
           ) : (
             <span className="inline-flex items-center gap-2 rounded-full bg-muted px-3 py-1.5 text-[13px] font-medium text-muted-foreground">
@@ -169,10 +190,14 @@ export default function BondedProve() {
           <span className="font-mono text-[12px] text-muted-foreground">{b.address ? short(b.address, 5) : ""}</span>
         </div>
 
+        {hadProof && !granted && (
+          <p className="mt-2 text-[12px] text-muted-foreground" data-testid="solvency-void-reason">{voidReason}</p>
+        )}
+
         {status?.record && (
           <div className="mt-3 grid gap-0.5">
             <DataRow k="Bonded lock">#{status.record.lock_id}</DataRow>
-            <DataRow k="Reserves cover">{fmtAmount(status.record.supply)} zUSD supply</DataRow>
+            <DataRow k="Reserves ≥">{fmtAmount(status.record.supply)} zUSD supply</DataRow>
             <DataRow k="At least bonded">{fmtAmount(status.record.min_amount)} zkUSD</DataRow>
           </div>
         )}

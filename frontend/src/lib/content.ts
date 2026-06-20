@@ -50,7 +50,7 @@ export const CAPABILITIES: Capability[] = [
     to: "/app/reserves",
     group: "prove",
     icon: Landmark,
-    blurb: "Prove reserves cover the circulating supply. The reserve figure stays private.",
+    blurb: "Prove reserves are at least the circulating supply. The reserve figure stays private.",
     proves: "reserves ≥ supply",
     cta: "Open Proof-of-Reserves",
   },

@@ -28,8 +28,9 @@
 //! 6. **Supply binding** — `journal.supply_token == Config.supply_token_id` AND
 //!    `supply_token.total_supply() == journal.supply` (cross-call; the proven liability is the REAL one).
 //! 7. **Bond binding** — `journal.bond_token == Config.bond_token_id`; then cross-read `escrow.get_lock`:
-//!    the lock is active (`!released && now < unlock_time`), `revocable == true`, `lock.token ==
-//!    Config.bond_token`, and `lock.amount >= journal.min_amount`.
+//!    `min_amount > 0` (a zero floor is not a bond claim), the lock is active (`!released && now <
+//!    unlock_time`), `revocable == true`, `lock.token == Config.bond_token`, and `lock.amount >=
+//!    journal.min_amount`.
 //! 8. **Ownership** — `lock.depositor.require_auth()`.
 //! 9. **Persist** — store a `SolvencyRecord` keyed by depositor (+ append-only log) and emit.
 //!
@@ -243,6 +244,11 @@ fn check_lock_bonded(
     min_amount: u64,
     now: u64,
 ) -> Result<(), SolvencyError> {
+    // A zero floor is not a bond claim ("bonded by at least nothing"). Reject it ON-CHAIN — the gate is
+    // permissionless, so a direct submit must not rely on the backend's off-chain `min_amount > 0` guard.
+    if min_amount == 0 {
+        return Err(SolvencyError::InsufficientBond);
+    }
     if lock.released || now >= lock.unlock_time {
         return Err(SolvencyError::LockNotActive);
     }
@@ -457,7 +463,9 @@ impl SolvencyGate {
         if rec.expiry <= now {
             return false;
         }
-        // proven supply still equals the live circulating supply (any mint/burn drops it until re-proof)
+        // proven supply still equals the live circulating supply (any mint/burn drops it until re-proof).
+        // Fail-closed: a broken/archived supply token reads as not-granted (indistinguishable from a
+        // supply change), which is the safe default for a relying party.
         let ts: i128 = match SupplyTokenClient::new(&env, &cfg.supply_token).try_total_supply() {
             Ok(Ok(v)) => v,
             _ => return false,
