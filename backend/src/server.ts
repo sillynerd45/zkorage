@@ -3363,6 +3363,17 @@ app.get("/bonded/solvency/status", async (req, res) => {
 // ───────────────────────────────────────────────────────────────────────────────────────────────
 const TIER_DEFAULT_CONTEXT = "07".repeat(32); // demo "gold tier" nullifier context (matches host_tier demo)
 
+// Serialize the tier admin-relay writes (set_member_root / set_qual_root). They all sign from the SAME
+// relay key, and invokeContract reads the signer's sequence number per call — concurrent provers would
+// otherwise fetch the same sequence and one tx would fail txBadSeq. A single-process promise chain is
+// enough (this backend is the only writer); each queued write runs after the previous settles.
+let tierAdminChain: Promise<unknown> = Promise.resolve();
+function withTierAdminLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = tierAdminChain.then(fn, fn);
+  tierAdminChain = run.catch(() => {});
+  return run as Promise<T>;
+}
+
 app.get("/bonded/tier/info", async (_req, res) => {
   try {
     const memberCommitments = getEligible(TIER_MEMBER_SET_ID).map((h) => fromHex(h));
@@ -3434,7 +3445,7 @@ app.post("/bonded/tier/set-member-root", async (_req, res) => {
     if (commitments.length === 0) return res.status(400).json({ error: "no members enrolled" });
     const { root } = buildEligibleTree(commitments);
     const rootHex = toHex(root);
-    const out = await invokeContract(TIER_GATE_ID, "set_member_root", [scBytes(rootHex)]);
+    const out = await withTierAdminLock(() => invokeContract(TIER_GATE_ID, "set_member_root", [scBytes(rootHex)]));
     res.json({ ok: true, txHash: out.hash, cost: out.cost, memberRoot: rootHex, memberCount: commitments.length });
   } catch (e) {
     res.json({ ok: false, error: err(e) });
@@ -3477,8 +3488,18 @@ app.post("/bonded/tier/qual-root", async (req, res) => {
     if (threshold <= 0n) return res.status(400).json({ error: "threshold (positive integer) required" });
     if (!Number.isInteger(unlockAfter) || unlockAfter <= 0) return res.status(400).json({ error: "unlock_after (unix timestamp) required" });
     const qual = await buildQualSet(threshold, unlockAfter);
-    if (qual.size === 0) return res.status(400).json({ error: "no qualifying locks for this tier yet" });
-    const out = await invokeContract(TIER_GATE_ID, "set_qual_root", [scU64(threshold), scU64(unlockAfter), scBytes(qual.root)]);
+    // Refuse to publish a root below the minimum anonymity-set size. The gate accepts ANY root in its ring,
+    // so publishing a sub-N root would let a size-1 (de-anonymizing) grant through. By never publishing one,
+    // the minimum is enforced one layer above the (count-blind) gate. This is the on-chain-adjacent half of
+    // the defense in depth (the backend prove path already refuses below N via buildTierJob).
+    if (qual.size < TIER_MIN_ANON_SET) {
+      return res.status(400).json({
+        error: `qualifying set too small (${qual.size} < ${TIER_MIN_ANON_SET}); publishing it would weaken anonymity`,
+        anonSetSize: qual.size,
+        minAnonSet: TIER_MIN_ANON_SET,
+      });
+    }
+    const out = await withTierAdminLock(() => invokeContract(TIER_GATE_ID, "set_qual_root", [scU64(threshold), scU64(unlockAfter), scBytes(qual.root)]));
     res.json({ ok: true, txHash: out.hash, cost: out.cost, threshold: threshold.toString(), unlockAfter, qualRoot: qual.root, anonSetSize: qual.size });
   } catch (e) {
     res.json({ ok: false, error: err(e) });
@@ -3512,14 +3533,19 @@ app.post("/bonded/tier/prove", async (req, res) => {
     const built = await buildTierJob({
       idSecret, idTrapdoor, holderSeed, context: fromHex(contextHex), threshold, unlockAfter, memberCommitments, memberIndex,
     });
-    // Auto-ensure the on-chain bindings match (idempotent): member root pinned + qual root in the ring.
+    // Auto-ensure the on-chain bindings match (idempotent + serialized): member root pinned + qual root in
+    // the ring. Both roots are computed by the backend (the member root from its own eligible-store, the
+    // qual root from the live escrow scan) — never caller-controlled — so a caller can only force a re-pin of
+    // the HONEST current roots, not inject a forged one. buildTierJob already refused below the min anon set,
+    // so the published qual root here always reflects a set >= TIER_MIN_ANON_SET. Writes go through the admin
+    // lock so concurrent provers don't collide on the relay key's sequence number.
     const pinnedMember = await getTierMemberRoot().catch(() => null);
     if (pinnedMember !== built.memberRoot) {
-      await invokeContract(TIER_GATE_ID, "set_member_root", [scBytes(built.memberRoot)]);
+      await withTierAdminLock(() => invokeContract(TIER_GATE_ID, "set_member_root", [scBytes(built.memberRoot)]));
     }
     const ring = await getTierQualRing(threshold, unlockAfter).catch(() => [] as string[]);
     if (!ring.includes(built.qualRoot)) {
-      await invokeContract(TIER_GATE_ID, "set_qual_root", [scU64(threshold), scU64(unlockAfter), scBytes(built.qualRoot)]);
+      await withTierAdminLock(() => invokeContract(TIER_GATE_ID, "set_qual_root", [scU64(threshold), scU64(unlockAfter), scBytes(built.qualRoot)]));
     }
     const r = await fetch(`${PROVER_URL}/prove`, {
       method: "POST",
@@ -3552,6 +3578,18 @@ app.post("/bonded/tier/submit", async (req, res) => {
   const b = req.body as Bundle;
   if (!b?.seal || !b?.image_id || !b?.journal) {
     return res.status(400).json({ error: "seal, image_id, journal (raw hex) required" });
+  }
+  // Shape pre-check (defense in depth — the gate re-validates everything on-chain, but fail fast with a
+  // clear message rather than a contract revert): hex fields, the 181-byte journal, the pinned tier image.
+  const isHex = (s: string) => /^[0-9a-fA-F]*$/.test(s) && s.length % 2 === 0;
+  if (!isHex(b.seal) || !isHex(b.image_id) || !isHex(b.journal)) {
+    return res.status(400).json({ error: "seal/image_id/journal must be raw hex" });
+  }
+  if (b.journal.length !== 362) {
+    return res.status(400).json({ error: "journal must be the 181-byte tier journal (362 hex chars)" });
+  }
+  if (b.image_id.toLowerCase() !== TIER_IMAGE_ID.toLowerCase()) {
+    return res.status(400).json({ error: "image_id is not the pinned tier guest image" });
   }
   try {
     const out = await invokeContract(TIER_GATE_ID, "submit_tier_proof", [scBytes(b.seal), scBytes(b.image_id), scBytes(b.journal)]);

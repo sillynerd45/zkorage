@@ -72,7 +72,13 @@ function nodeHash(a: Uint8Array, b: Uint8Array): Uint8Array {
 }
 
 /** Qualifying-lock commitment = sha256(0x03 ‖ id_secret ‖ "escrow") — the value the depositor stores in the
- *  escrow lock's `commitment`. The frontend derives the SAME value at deposit time. */
+ *  escrow lock's `commitment`. The frontend derives the SAME value at deposit time.
+ *
+ *  SEMANTICS (by design): the commitment is INDEPENDENT of (threshold, X). One bonded lock therefore lands
+ *  in the qualifying set of EVERY tier whose floor + deadline it satisfies, so a single bigger/longer bond
+ *  earns a member the lower tiers too (one grant per tier, since the nullifier is per-context). If a future
+ *  product needs a dedicated bond PER tier, bind the tier into the tag (sha256(0x03 ‖ id_secret ‖ "escrow"
+ *  ‖ threshold ‖ X)) in the guest + here + the indexer together. */
 export function qualCommitment(idSecret: Uint8Array): Uint8Array {
   const t = new Uint8Array(1);
   t[0] = QUAL_TAG;
@@ -158,6 +164,13 @@ function isContractError(reason: unknown): boolean {
  * still-locked ∧ NON-revocable ∧ in the bond token ∧ a non-zero commitment. This root is publicly auditable
  * (anyone reruns this from on-chain state). Commitments are deduped (a member with two qualifying locks of
  * the same commitment is one anonymity member) and ordered by lock id.
+ *
+ * Scan bound: lock ids are sequential from 1 and `get_lock` keeps returning a record for RELEASED locks
+ * (released = true, not LockNotFound), so a released lock never opens a gap that ends the scan early — the
+ * scan stops only on a fully-not-found batch (past the highest id) or on `SCAN_MAX` (default 200). A
+ * qualifying lock beyond the cap is invisible to BOTH this indexer and the SDK's recomputeQualRoot, so the
+ * published root and any recompute agree with each other while excluding it. Raise ESCROW_MAX_SCAN if the
+ * escrow ever grows past the cap.
  */
 export async function buildQualSet(threshold: bigint, unlockAfter: number): Promise<QualSet> {
   const now = Math.floor(Date.now() / 1000);
@@ -345,15 +358,6 @@ export async function getTierQualRing(threshold: bigint, unlockAfter: number): P
   const { value } = await readContract(requireGate(), "get_qual_ring", [scU64(threshold), scU64(unlockAfter)]);
   if (!Array.isArray(value)) return [];
   return (value as unknown[]).map((v) => toHex(new Uint8Array(v as Uint8Array)));
-}
-
-export async function isQualRootAccepted(threshold: bigint, unlockAfter: number, qualRootHex: string): Promise<boolean> {
-  const { value } = await readContract(requireGate(), "is_qual_root_accepted", [
-    scU64(threshold),
-    scU64(unlockAfter),
-    scBytes(qualRootHex),
-  ]);
-  return Boolean(value);
 }
 
 export { toHex, fromHex };

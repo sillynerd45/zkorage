@@ -446,6 +446,9 @@ export interface RecomputedQualRoot {
   size: number; // anonymity-set size (number of unique qualifying commitments)
   commitments: string[]; // the qualifying-lock commitments, in lock-id order
   accepted: boolean; // whether this recomputed root is in the gate's accepted ring for (threshold, X)
+  /** true iff the lock scan reached a natural end (a fully-not-found batch) rather than hitting the scan cap.
+   *  A false here means the recomputed root may omit locks beyond the cap — do NOT treat it as authoritative. */
+  complete: boolean;
 }
 
 export interface TierChecklist {

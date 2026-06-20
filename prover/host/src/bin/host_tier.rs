@@ -71,6 +71,11 @@ fn nullifier(id_secret: &[u8; 32], context: &[u8; 32]) -> [u8; 32] {
 /// Build a DEMO zero-subtree witness with `member_leaf_val` at index 0 and `empty` in every other slot.
 /// Returns (siblings bottom->top, root). The backend builds the same-shaped tree with real leaves at
 /// arbitrary indices.
+///
+/// NOTE the two trees use DIFFERENT empty leaves: the member tree's empty slot is `member_leaf(0,0) =
+/// sha256(0x00‖0^32‖0^32)`, the qualifying tree's is `0^32`. The guest's `fold_root` is empty-agnostic (it
+/// only consumes siblings), so the correct per-tree empty leaf MUST be baked into the zero-subtree siblings
+/// here and in the backend builder — keep the two empties distinct or the roots diverge from the indexer's.
 fn demo_witness(leaf: &[u8; 32], empty: &[u8; 32]) -> (Vec<u8>, [u8; 32]) {
     let mut z = *empty; // empty-subtree root at the current level
     let mut siblings = Vec::with_capacity(TREE_DEPTH * 32);

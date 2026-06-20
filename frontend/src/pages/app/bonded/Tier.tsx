@@ -31,6 +31,15 @@ const IDENTITY_KEY = "zkorage-tier-identity";
 const fmtDate = (u: number) => new Date(u * 1000).toLocaleString();
 type Phase = "idle" | "proving" | "submitting" | "done" | "error";
 
+// BigInt() throws on a non-numeric string; never let a stray balance crash the render.
+const safeBig = (s: string): bigint => {
+  try {
+    return BigInt(s);
+  } catch {
+    return 0n;
+  }
+};
+
 function loadIdentity(): TierIdentity | null {
   try {
     const raw = localStorage.getItem(IDENTITY_KEY);
@@ -100,6 +109,10 @@ export default function BondedTier() {
   const granted = Boolean(status?.is_granted);
   const hasIdentity = Boolean(identity?.accessor);
   const busyFlow = phase === "proving" || phase === "submitting";
+  // This demo tier has a FIXED deadline. Past it, no lock can qualify (the escrow rejects a past unlock time
+  // and the indexer requires unlock_time >= X), so disable bonding + proving with a clear note rather than
+  // letting the user hit confusing errors. A production tier would publish its active deadline from the gate.
+  const tierExpired = Date.now() >= TIER_X * 1000;
 
   const createIdentity = async () => {
     setPhase("idle");
@@ -241,14 +254,14 @@ export default function BondedTier() {
             <div className="flex flex-wrap items-center gap-2">
               <Button
                 variant="brand"
-                disabled={!hasIdentity || b.busy === "deposit"}
+                disabled={!hasIdentity || tierExpired || b.busy === "deposit"}
                 onClick={() => void bondQualifying()}
                 data-testid="tier-bond"
               >
                 {b.busy === "deposit" ? <Loader2 className="size-4 animate-spin" /> : <Lock className="size-4" />}
                 Bond {fmtAmount(TIER_THRESHOLD)} zkUSD
               </Button>
-              {BigInt(b.balance || "0") < BigInt(TIER_THRESHOLD) && (
+              {safeBig(b.balance) < safeBig(TIER_THRESHOLD) && (
                 <Button variant="outline" disabled={b.busy === "faucet"} onClick={() => void b.fundFaucet()} data-testid="tier-faucet">
                   {b.busy === "faucet" ? <Loader2 className="size-4 animate-spin" /> : null} Get test zkUSD
                 </Button>
@@ -303,16 +316,18 @@ export default function BondedTier() {
         <div className="mt-4">
           <Button
             variant="brand"
-            disabled={!hasIdentity || busyFlow || belowMin}
+            disabled={!hasIdentity || busyFlow || belowMin || tierExpired}
             onClick={() => void prove()}
             data-testid="tier-prove"
           >
             {busyFlow ? <Loader2 className="size-4 animate-spin" /> : <ShieldCheck className="size-4" />}
             Prove anonymous tier
           </Button>
-          {belowMin && hasIdentity && (
+          {tierExpired ? (
+            <p className="mt-2 text-[12px] text-warning" data-testid="tier-expired">This demo tier has passed its deadline. Nothing more can qualify for it.</p>
+          ) : belowMin && hasIdentity ? (
             <p className="mt-2 text-[12px] text-muted-foreground">Proving is held until the anonymity set reaches {minSet}.</p>
-          )}
+          ) : null}
         </div>
       </Panel>
 

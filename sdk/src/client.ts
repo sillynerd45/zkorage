@@ -215,6 +215,13 @@ function normalizeTierGrant(raw: unknown): TierGrant | null {
   };
 }
 
+/** A rejection from `get_lock` on a nonexistent id is a CONTRACT error (LockNotFound = past the end of the
+ *  scan); a network/RPC failure is not. Mirrors the backend indexer so the trustless audit treats the two
+ *  the same way the published root was built. */
+function isContractError(reason: unknown): boolean {
+  return /contract/i.test(String((reason as Error)?.message ?? reason));
+}
+
 /** Fold a depth-20 sparse Merkle root over ordered leaves: node = sha256(0x01‖L‖R), empty leaf = 0^32.
  *  Matches the tier guest + the backend qual-tree builder (a root-only recompute for the trustless audit). */
 function merkleRootDepth20(leaves: Uint8Array[]): Uint8Array {
@@ -1094,13 +1101,19 @@ export class ZkorageClient {
     const found: { id: number; commitment: string }[] = [];
     const seen = new Set<string>();
     const batchSize = 8;
+    let complete = false; // set true when a fully-not-found batch ends the scan (vs hitting the cap)
     for (let start = 1; start <= maxScan; start += batchSize) {
       const ids: number[] = [];
       for (let i = 0; i < batchSize && start + i <= maxScan; i++) ids.push(start + i);
       const settled = await Promise.allSettled(ids.map((id) => this.simRead(this.cfg.contracts.escrow, "get_lock", [scU64(id)])));
       let anyFound = false;
+      let transient = false; // a network/RPC failure (NOT a LockNotFound contract error)
       settled.forEach((r, i) => {
-        if (r.status !== "fulfilled" || !r.value) return;
+        if (r.status === "rejected") {
+          if (!isContractError(r.reason)) transient = true;
+          return;
+        }
+        if (!r.value) return;
         anyFound = true;
         const l = r.value as Record<string, unknown>;
         const commitment = bytesToHex(l.commitment).toLowerCase();
@@ -1118,14 +1131,22 @@ export class ZkorageClient {
           found.push({ id: ids[i], commitment });
         }
       });
-      if (!anyFound) break;
+      // A transient RPC failure must NOT be read as "past the end" — that would silently drop qualifying
+      // locks and report the gate's HONEST root as dishonest (a false anti-rug negative). Fail loudly instead.
+      if (transient && !anyFound) {
+        throw new Error("could not reach the network while recomputing the qualifying set");
+      }
+      if (!anyFound) {
+        complete = true;
+        break;
+      }
     }
     found.sort((a, b) => a.id - b.id);
     const commitments = found.map((f) => f.commitment);
     const root = toHex(merkleRootDepth20(commitments.map((h) => fromHex(h))));
     let accepted = false;
     try { accepted = await this.isTierQualRootAccepted(thr, unlockAfter, root); } catch { /* gate not configured */ }
-    return { root, size: commitments.length, commitments, accepted };
+    return { root, size: commitments.length, commitments, accepted, complete };
   }
 
   /** Re-verify a TIER proof bundle against the public chain: recompute sha256(journal), check the gate's

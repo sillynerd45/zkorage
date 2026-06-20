@@ -20,9 +20,24 @@
 //! recompute it from the escrow's public `get_lock` state (the SDK ships `recomputeQualRoot`) and reject a
 //! dishonest root. We do NOT use an indexer signature (it would only ADD a trust assumption that public
 //! recomputation already removes). The gate keeps a small RING of the last `RING_CAP` accepted roots per
-//! tier, so a proof against a root the indexer rotated away from a moment ago still verifies — and that is
-//! sound because the qualifying set only GROWS within a tier's life (non-revocable, unlock >= X), so any
-//! older/smaller root is a subset of the current one.
+//! tier, so a proof against a root the indexer rotated away from a moment ago still verifies.
+//!
+//! Why accepting an OLD ring root is sound (the load-bearing invariant — stated precisely so a future
+//! maintainer does not break it): a member named in an older accepted root can ONLY have left the qualifying
+//! set by its lock ceasing to be live, and for a lock created `revocable = false` with `unlock_time >= X` the
+//! ONLY way out is `withdraw`/`claim`, which the escrow rejects until `now >= unlock_time >= X`. So a lock
+//! cannot depart the set while `now < X`. Combined with the gate's own `now < X` freshness check, every
+//! prover against any ring root is provably still funded at submit time. (The earlier "the set only grows, so
+//! old roots are subsets" framing was the WRONG reason — a withdraw at/after X does shrink the live set; what
+//! actually saves us is that such a departure requires `now >= X`, which the freshness gate already rejects.)
+//! This invariant DEPENDS on the escrow being non-revocable + extend-only — never relax those, and never
+//! point the gate at an escrow with an early-exit path.
+//!
+//! ## Bond-token precondition (clawback / AUTH_REQUIRED)
+//! Because the gate reads NO lock, it cannot observe a token clawback or de-authorization. The configured
+//! bond token MUST therefore be clawback-disabled and not AUTH_REQUIRED — otherwise the issuer could empty a
+//! bonded balance while `now < X` and the grant would survive against funds that no longer exist. zkorage's
+//! zkUSD bond instance is clawback-disabled; verify this before pointing a tier at any other token.
 //!
 //! ## Anonymity-set size (the de-anonymization trap)
 //! A qualifying set of size 1 de-anonymizes the prover by elimination. The gate cannot count members from a

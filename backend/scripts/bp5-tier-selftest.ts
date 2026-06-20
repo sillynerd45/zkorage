@@ -2,6 +2,7 @@
 // derivations match the values the RISC0 tier guest emitted in its exec smoke for the demo inputs
 //   id_secret = 0x11*32, id_trapdoor = 0x22*32, context = 0x07*32, holder_seed = 0x03*32
 // (host_tier EXEC_ONLY journal). Run: npx tsx scripts/bp5-tier-selftest.ts
+import { sha256 } from "@noble/hashes/sha256";
 import { idCommitment, buildEligibleTree, nullifier } from "../src/membership.js";
 import { qualCommitment, buildSparseTree, tierHolderSign } from "../src/tier.js";
 import { toHex } from "../src/envelope.js";
@@ -42,8 +43,29 @@ check("qual_root  ", qualRoot, EXPECT.qualRoot);
 check("nullifier  ", nf, EXPECT.nullifier);
 check("accessor   ", accessorHex, EXPECT.accessor);
 
+// Multi-leaf witness round-trip: build a 3-leaf qual tree and confirm each witness folds back to the root
+// using the SAME node hash + low-bit direction the guest uses (catches any off-by-one in the sibling path).
+function nodeHash(a: Uint8Array, b: Uint8Array): Uint8Array {
+  const buf = new Uint8Array(1 + a.length + b.length);
+  buf[0] = 0x01;
+  buf.set(a, 1);
+  buf.set(b, 1 + a.length);
+  return sha256(buf);
+}
+const leaves = [fill(0xa1), fill(0xb2), fill(0xc3)].map((s) => qualCommitment(s));
+const tree = buildSparseTree(leaves, ZERO32);
+for (let idx = 0; idx < leaves.length; idx++) {
+  const { siblings, leafIndex } = tree.witness(idx);
+  let node = leaves[idx];
+  for (let i = 0; i < 20; i++) {
+    const sib = siblings.slice(i * 32, i * 32 + 32);
+    node = ((leafIndex >> i) & 1) === 0 ? nodeHash(node, sib) : nodeHash(sib, node);
+  }
+  check(`witness[${idx}]→root`, toHex(node), toHex(tree.root));
+}
+
 if (!ok) {
   console.error("\nMISMATCH — the backend derivations diverge from the canonical guest.");
   process.exit(1);
 }
-console.log("\nAll four match the canonical tier guest. Backend is byte-exact.");
+console.log("\nAll four match the canonical tier guest + the 3-leaf witness round-trips. Backend is byte-exact.");
