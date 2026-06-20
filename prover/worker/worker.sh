@@ -14,10 +14,11 @@ HOST_ACCREDITED_BIN="${HOST_ACCREDITED_BIN:-/prover/target/release/host_accredit
 HOST_DATAROOM_SEAL_BIN="${HOST_DATAROOM_SEAL_BIN:-/prover/target/release/host_dataroom_seal}" # dataroom seal (DR1)
 HOST_MEMBERSHIP_BIN="${HOST_MEMBERSHIP_BIN:-/prover/target/release/host_membership}"           # membership (DR2)
 HOST_DOCAUTH_BIN="${HOST_DOCAUTH_BIN:-/prover/target/release/host_docauth}"                    # docauth (DR4)
+HOST_SOLVENCY_BIN="${HOST_SOLVENCY_BIN:-/prover/target/release/host_solvency}"                 # solvency (BP3)
 POLL="${POLL_SECONDS:-3}"
 AUTH=(); [ -n "$TOKEN" ] && AUTH=(-H "X-Worker-Token: $TOKEN")
 
-echo "zkorage worker -> $VM_URL (poll ${POLL}s, kinds: reserves/identity/compliance/payroll/accredited/dataroom_seal/membership/docauth)"
+echo "zkorage worker -> $VM_URL (poll ${POLL}s, kinds: reserves/identity/compliance/payroll/accredited/dataroom_seal/membership/docauth/solvency)"
 while true; do
   RESP="$(curl -sf "${AUTH[@]}" "$VM_URL/jobs/next" || true)"
   JID="$(printf '%s' "$RESP" | jq -r '.job_id // empty' 2>/dev/null || true)"
@@ -36,6 +37,7 @@ while true; do
     dataroom_seal) BIN="$HOST_DATAROOM_SEAL_BIN"; FIELDS=('.doc_key_hex' '.recipient_pubkey_hex' '.content_hash_hex' '.room_id_hex' '.doc_id_hex') ;;
     membership)    BIN="$HOST_MEMBERSHIP_BIN";    FIELDS=('.sig_hex' '.pk_hex' '.accessor_hex' '.recipient_pubkey_hex' '.id_secret_hex' '.id_trapdoor_hex' '.room_id_hex' '.siblings_hex' '.leaf_index') ;;
     docauth)       BIN="$HOST_DOCAUTH_BIN";       FIELDS=('.n_hex' '.sig_hex' '.statement_hex' '.threshold' '.room_id_hex') ;;
+    solvency)      BIN="$HOST_SOLVENCY_BIN";      FIELDS=("${COMMON[@]}" '.threshold' '.escrow_hex' '.lock_id' '.min_amount' '.bond_token_hex' '.supply_token_hex') ;;
     *)             BIN="$HOST_BIN";               FIELDS=("${COMMON[@]}" '.threshold') ;;
   esac
   # Build the job file, FAIL-CLOSED on any missing field: `jq -e` exits non-zero on null, so a field-list

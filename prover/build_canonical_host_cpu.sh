@@ -15,6 +15,7 @@ export ZKORAGE_ACCREDITED_ELF=$M/guest-accredited/$D/accredited_predicate.bin
 export ZKORAGE_DATAROOM_SEAL_ELF=$M/guest-dataroom-seal/$D/dataroom_seal_predicate.bin
 export ZKORAGE_MEMBERSHIP_ELF=$M/guest-membership/$D/membership_predicate.bin
 export ZKORAGE_DOCAUTH_ELF=$M/guest-docauth/$D/docauth_predicate.bin
+export ZKORAGE_SOLVENCY_ELF=$M/guest-solvency/$D/solvency_predicate.bin
 cd $HOME/zkorage-r5/prover
 echo "=== build non-cuda canonical host ==="
 cargo build --release -p host 2>&1 | tail -3
