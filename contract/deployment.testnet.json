@@ -309,7 +309,10 @@
     ],
     "auditor_note": "mock bonded reserve auditor (ed25519 seed [19;32]); distinct from PoR [7]/KYC [9]/payroll [11]/accredited [13]/revenue [15]/appraiser [17].",
     "init_tx": "5cb1f64cada113f55b037a146a489ebbd11526beb77958b6da41d330449c9470",
-    "wasm_size_bytes": 23726,
+    "wasm_size_bytes": 23732,
+    "upgrade_tx": "80edb3530d5cabd54df7427984e79a6045cadd5d3e91aca74d8ad09d147109a3",
+    "upgrade_wasm_hash": "e415aa2d119f01fe19593c9718df5940ee4e73ab8925d94668662ffa06aece7b",
+    "upgrade_note": "third-review hardening: reject min_amount==0 on-chain (a zero floor is not a bond claim; closes a direct-submit bypass of the backend guard). Storage preserved (get_config + the demo grant on lock 4 survived). cargo 29/29.",
     "binds": "submit_solvency_proof(seal,image_id,journal): image pin -> on-chain sha256(173-B journal) -> bare-verifier cross-call -> result==1 & claim_type==12 & auditor allow-listed & expiry>now -> journal.escrow==escrow_id -> journal.supply_token==supply_token_id & supply_token.total_supply()==journal.supply -> journal.bond_token==bond_token_id & escrow.get_lock(lock_id): active(!released & now<unlock_time) & revocable & token==bond_token & amount>=min_amount -> lock.depositor.require_auth() -> record keyed by depositor. is_granted(depositor) recomputes the bond liveness + supply + freshness LIVE (no stored grant expiry) => flips false the instant you unbond.",
     "acceptance_testnet": "worker-first solvency proof (image d0a2f137, 173-B journal, supply 1e13, lock 2, min 5e8) -> submit_solvency_proof (tx 9df31c2a) -> is_granted(deployer)=true (SOLVENT). unbond lock 2 (tx 9737aa89) -> is_granted(deployer)=false (VOID), lock released. The self-void money-shot, on-chain.",
     "supersedes": "the literal 'ZK proof tied to a classic Claimable Balance' idea (research-killed: Soroban can't read classic CBs + CBs are public = theater)."
