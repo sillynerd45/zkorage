@@ -40,7 +40,7 @@ SNARK over BN254. The Soroban verifier (`NethermindEth/stellar-risc0-verifier`, 
 |---|---|---|---|
 | Programming model | Write Rust, reuse crates. No circuit thinking. | Rust-like circuit DSL; the compiler hides much of the constraint work. | Lowest level: wire signals and constraints by hand. |
 | Trusted setup | Universal: one setup for the whole zkVM. Change a guest freely. | Universal/updatable SRS; no per-circuit setup. | **Per-circuit**: a new ceremony for each circuit, and again whenever it changes. |
-| Soroban verification | Groth16 over BN254. Ready verifier exists. | Honk over BN254. **No Soroban verifier exists.** | Groth16 over BN254. Reuses the same verifier primitive with a per-circuit key. The closest fit. |
+| Soroban verification | Groth16 over BN254. Ready verifier exists. | Honk over BN254. A community verifier exists (`rs-soroban-ultrahonk`): testnet-proven, unaudited, ~24 KB WASM, ~81M instr, ~14.6 KB proof. | Groth16 over BN254. Reuses the same verifier primitive with a per-circuit key. The closest fit. |
 | Proof size | ~200 bytes, one pairing check. | A few KB, heavier verification. | ~200 bytes, one pairing check. |
 | Prover cost | Heavy: proves a whole RISC-V trace. | Light per circuit. | Light per circuit. |
 | Client-side proving | Not feasible (too heavy). | Feasible for modest circuits (Barretenberg WASM). | Feasible for modest circuits (snarkjs WASM). |
@@ -57,7 +57,8 @@ With Circom + Groth16 the setup is **per circuit**. zkorage proves many predicat
 (reserves, KYC, compliance, payroll, fundraising, RSA-signed PDFs, anonymous membership). In a Circom world
 each one needs its own ceremony, and changing a predicate means another ceremony plus a fresh trust
 assumption. A zkVM's one-time universal setup is exactly what lets the predicate set grow without that
-burden. (Noir + UltraHonk also avoids per-circuit setup, but it has no Soroban verifier, see below.)
+burden. (Noir + UltraHonk also avoids per-circuit setup via its universal SRS, and a Soroban verifier for it
+does exist as a community reference, see below.)
 
 ## Q: How does each verify on Soroban?
 
@@ -65,11 +66,35 @@ burden. (Noir + UltraHonk also avoids per-circuit setup, but it has no Soroban v
 - **Circom + Groth16:** also Groth16 over BN254. It reuses the **same** pairing-based verifier primitive,
   configured with the circuit's own verifying key. Of the three alternatives it is the most Soroban-ready,
   because the on-chain check is the same kind we already run.
-- **Noir + UltraHonk:** Honk-family proofs over BN254. There is no Honk verifier on Soroban. Adding one means
-  writing and deploying a new, larger verifier against the BN254 host functions and fitting it under the
-  64 KiB WASM limit. That is the hard blocker for a Noir path.
+- **Noir + UltraHonk:** Honk-family proofs over BN254. A Soroban verifier does exist as a community
+  reference (see the next question), so a Noir path is feasible. The trade is a much larger proof and a
+  heavier verify, against a verifier that is unaudited and covers only the non-ZK, non-recursive path.
 
 (All three use BN254 here, which matches our hard rule: this engine is on BN254, not BLS12-381.)
+
+## Q: Does a Soroban UltraHonk verifier actually exist?
+
+Yes. `rs-soroban-ultrahonk` (the community repo `yugocabrio/rs-soroban-ultrahonk`, MIT) is a Soroban contract
+plus a `no_std` Rust crate (`ultrahonk-soroban-verifier`) that verify Noir/UltraHonk proofs on-chain using
+Soroban's BN254 host functions (`bn254_g1_msm`, `pairing_check`). It targets the native UltraFlavor path that
+Nargo 1.0.0-beta.9 and Barretenberg 0.87.0 produce: a Keccak-256 transcript, a non-ZK sumcheck over 26
+subrelations, and Shplemini batch opening (Gemini plus Shplonk plus KZG). It ships example circuits (identity,
+tornado, range-heavy, lookup-heavy) and runs the full deploy-and-verify pipeline on Stellar testnet.
+
+Reported numbers from its identity example: contract about **24 KB WASM**, verify about **81M CPU
+instructions** on Protocol 26, proof **14,592 bytes**, and roughly **0.014 XLM** per verify on testnet. The
+verifying key is set once in the constructor and is immutable, so changing the circuit means redeploying with
+a new VK. For comparison, a RISC Zero Groth16 proof is about 200 bytes and verifies more cheaply, and the
+~81M-instruction UltraHonk verify sits close to the ~100M instruction budget, which leaves little headroom for
+larger circuits.
+
+Caveats worth stating plainly: it is **unaudited** (it does carry a detailed `VERIFIER_PROVENANCE.md` that
+maps the Rust code 1:1 to Barretenberg, but that is a self-review, not a third-party audit), and it implements
+**only the non-ZK, non-recursive** path (no UltraZKFlavor hiding polynomial, no recursion, no Goblin or Mega,
+no IPA or Grumpkin, Keccak transcript only). So it removes the "no verifier" objection to a Noir path and is a
+solid reference to build on, but it is not a production-hardened component.
+
+This corrects an earlier version of this doc, which said no Soroban UltraHonk verifier existed.
 
 ## Q: I remember Circom needs a file on the client whose size grows with the circuit. What is it?
 
@@ -109,8 +134,11 @@ which is why proving is self-hosted on a GPU or a strong CPU rather than in the 
 
 Not as a toggle. It would be a **parallel engine**, for three reasons:
 
-1. The verifier. Noir needs a Soroban Honk verifier that does not exist; Circom would reuse our Groth16
-   verifier but with a per-circuit verifying key (and a per-circuit ceremony).
+1. The verifier and its maturity. A Soroban UltraHonk verifier does exist (`rs-soroban-ultrahonk`), so Noir is
+   no longer blocked on verification, but that verifier is unaudited and covers only the non-ZK, non-recursive
+   path, and its verify cost (~81M instructions) sits close to the budget. Circom would reuse our Groth16
+   verifier with a per-circuit verifying key. Either way each circuit becomes its own deployed verifier with
+   its VK pinned at deploy.
 2. Every predicate would be rewritten as a circuit, including RSA-2048 and ed25519, which are large and
    awkward in a circuit DSL but a few lines of Rust with a crate in RISC Zero.
 3. It does not improve the trust or privacy story (see the next two questions).
@@ -164,8 +192,10 @@ for private-data proofs.
 
 For an engine that proves many evolving predicates over real cryptography and verifies cheaply on Soroban,
 RISC Zero wins on developer reach (write Rust), on setup (one universal ceremony), on UX (no proving key for
-the user to download), and on having a ready on-chain verifier. Circom is the most Soroban-compatible
-alternative because it shares the Groth16 and BN254 path, and it can prove client-side, but per-circuit
-trusted setups, the large client-side `.zkey`, hand-written circuits, and the under-constraint audit burden
-make it a parallel engine rather than a switch. Noir + UltraHonk shares the client-side-proving upside but
-lacks a Soroban verifier today.
+the user to download), and on a ready on-chain verifier with small, cheap-to-verify proofs. Circom is the most
+Soroban-compatible alternative because it shares the Groth16 and BN254 path, and it can prove client-side, but
+per-circuit trusted setups, the large client-side `.zkey`, hand-written circuits, and the under-constraint
+audit burden make it a parallel engine rather than a switch. Noir + UltraHonk is more viable on Soroban than a
+first look suggests, because a community verifier (`rs-soroban-ultrahonk`) already runs it on testnet; the
+trade is a ~14.6 KB proof and a ~81M-instruction verify against an unaudited, non-ZK-only verifier, plus
+rewriting each predicate as a circuit. Client-side proving stays the genuine upside of either circuit path.
