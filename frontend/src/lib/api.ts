@@ -775,3 +775,60 @@ export const getCommitteeDocument = (roomId: string, docId: string) =>
   fetch(`${BASE}/dataroom/committee/document/${roomId}/${docId}`).then(
     j<{ roomId: string; docId: string; document: CommitteeDoc | null; dataroomId: string }>,
   );
+
+// ── Bonded Proofs: the Soroban-native time-locked escrow (BP2) ──
+// Reads are public; writes are always wallet-signed (the depositor/claimant authorises). No ZK yet.
+
+export interface LockView {
+  id: number;
+  depositor: string;
+  claimant: string;
+  token: string;
+  amount: string; // base units, decimal string
+  unlock_time: number; // unix seconds
+  commitment: string; // 32-byte hex
+  revocable: boolean;
+  released: boolean;
+  is_locked: boolean;
+  role: "depositor" | "claimant" | "self";
+}
+
+export interface EscrowInfo {
+  escrowId: string;
+  bondTokenId: string;
+}
+
+export const getEscrowInfo = () => fetch(`${BASE}/escrow/info`).then(j<EscrowInfo>);
+
+export const listEscrowLocks = (owner: string) =>
+  fetch(`${BASE}/escrow/locks?owner=${owner}`).then(
+    j<{ owner: string; count: number; locks: LockView[]; escrowId: string }>,
+  );
+
+export interface DepositReq {
+  amount: string; // base units
+  unlock_time: number; // unix seconds (must be in the future)
+  revocable: boolean;
+  claimant?: string; // defaults to the depositor (a self-bond)
+  token?: string; // defaults to the bond token
+  commitment?: string; // 32-byte hex; defaults to all-zero
+}
+
+export const escrowDeposit = (req: DepositReq, signer: TxSigner): Promise<WalletWriteResult> =>
+  writeViaWallet("/escrow/deposit", { ...req }, signer);
+
+export const escrowWithdraw = (lockId: number, signer: TxSigner): Promise<WalletWriteResult> =>
+  writeViaWallet("/escrow/withdraw", { lock_id: lockId }, signer);
+
+export const escrowClaim = (lockId: number, signer: TxSigner): Promise<WalletWriteResult> =>
+  writeViaWallet("/escrow/claim", { lock_id: lockId }, signer);
+
+export const escrowUnbond = (lockId: number, signer: TxSigner): Promise<WalletWriteResult> =>
+  writeViaWallet("/escrow/unbond", { lock_id: lockId }, signer);
+
+export const escrowSetTimelock = (
+  lockId: number,
+  newUnlock: number,
+  signer: TxSigner,
+): Promise<WalletWriteResult> =>
+  writeViaWallet("/escrow/set-timelock", { lock_id: lockId, new_unlock_time: newUnlock }, signer);
