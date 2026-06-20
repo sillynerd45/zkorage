@@ -39,31 +39,38 @@ export default function Anchor() {
 
   return (
     <div className="space-y-5">
-      <p className="max-w-2xl text-sm text-muted-foreground">
-        Everything for this room's files in one place: <b className="text-foreground">store</b> a new one,{" "}
-        <b className="text-foreground">open</b> one you can decrypt, or <b className="text-foreground">browse</b>{" "}
-        what's yours.
-      </p>
-
-      {/* Documents submenu */}
-      <div className="flex gap-1 rounded-2xl border bg-card p-1.5" role="tablist" aria-label="Documents">
-        {SUBTABS.map((t) => (
-          <button
-            key={t.key}
-            role="tab"
-            aria-selected={tab === t.key}
-            onClick={() => setTab(t.key)}
-            data-testid={`doc-subtab-${t.key}`}
-            className={cn(
-              "rounded-xl px-3.5 py-2 text-[13px] font-medium transition-colors",
-              tab === t.key
-                ? "bg-primary text-primary-foreground"
-                : "text-muted-foreground hover:bg-accent hover:text-foreground",
-            )}
-          >
-            {t.label}
-          </button>
-        ))}
+      {/* The section tabs (Overview / Documents / …) live in the layout directly above this. Keep the
+          Documents sub-tabs right under them and put the one-line description below as a quiet caption, so it
+          no longer splits the two rows of navigation. The submenu pill is w-fit so it hugs its three items. */}
+      <div className="space-y-2">
+        <div
+          className="flex w-fit max-w-full gap-1 overflow-x-auto rounded-2xl border bg-card p-1.5"
+          role="tablist"
+          aria-label="Documents"
+        >
+          {SUBTABS.map((t) => (
+            <button
+              key={t.key}
+              role="tab"
+              aria-selected={tab === t.key}
+              onClick={() => setTab(t.key)}
+              data-testid={`doc-subtab-${t.key}`}
+              className={cn(
+                "rounded-xl px-3.5 py-2 text-[13px] font-medium transition-colors",
+                tab === t.key
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:bg-accent hover:text-foreground",
+              )}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Everything for this room's files in one place: <b className="text-foreground">store</b> a new one,{" "}
+          <b className="text-foreground">open</b> one you can decrypt, or <b className="text-foreground">browse</b>{" "}
+          what's yours.
+        </p>
       </div>
 
       {/* ── STORE: upload / encrypt / anchor ── */}
