@@ -25,7 +25,7 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { DataRow, Verdict } from "@/components/app/blocks";
 import { DecryptedFile } from "@/components/app/DecryptedFile";
-import { Callout, CopyIconButton, GroupLabel, StepStrip } from "@/components/app/dataroom/kit";
+import { Callout, CopyIconButton, GroupLabel, SectionLabel, StepStrip } from "@/components/app/dataroom/kit";
 
 // The Documents page is a small submenu (Store / Open / Browse) instead of one long scroll. The Overview's
 // deep links (#store / #open / #browse) select the matching sub-tab, so the entry points still work. One
@@ -125,7 +125,7 @@ export default function Anchor() {
             {/* What you're storing: the room, then ONE of a file or pasted text (a segmented switcher picks
                 the mode, so only the active input shows instead of both at once). */}
             <div className="mt-5 space-y-3">
-              <GroupLabel>What you're storing</GroupLabel>
+              <SectionLabel>What you're storing</SectionLabel>
               <label className="flex flex-col gap-1.5 text-[13px] text-muted-foreground">
                 Room
                 <div className="flex gap-2">
@@ -240,8 +240,8 @@ export default function Anchor() {
             </div>
 
             {/* Who can open it: the recipient's x25519 public key. */}
-            <div className="mt-5 space-y-3">
-              <GroupLabel>Who can open it</GroupLabel>
+            <div className="mt-6 space-y-3">
+              <SectionLabel withRule>Who can open it</SectionLabel>
               <label className="flex flex-col gap-1.5 text-[13px] text-muted-foreground">
                 Recipient's public key (hex)
                 <Input
@@ -414,7 +414,7 @@ export default function Anchor() {
           </div>
 
           <div className="mt-5 space-y-3">
-            <GroupLabel>What you're opening</GroupLabel>
+            <SectionLabel>What you're opening</SectionLabel>
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="flex flex-col gap-1.5 text-[13px] text-muted-foreground">
                 Room
@@ -445,8 +445,8 @@ export default function Anchor() {
             </div>
           </div>
 
-          <div className="mt-5 space-y-3">
-            <GroupLabel>Your key</GroupLabel>
+          <div className="mt-6 space-y-3">
+            <SectionLabel withRule>Your key</SectionLabel>
             <label className="flex flex-col gap-1.5 text-[13px] text-muted-foreground">
               Recipient's private key (hex)
               <Input

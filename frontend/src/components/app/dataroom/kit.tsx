@@ -47,11 +47,33 @@ export function CategoryChip({ category }: { category: DRCategory }) {
 }
 
 // Small sentence-case section label: ~11px, muted, light letter-spacing. Not ALL CAPS (the new convention).
+// The lightweight eyebrow/caption for grids and lists (Overview "All tasks" / "Learn more", Browse room line).
 export function GroupLabel({ children, className }: { children: ReactNode; className?: string }) {
   return (
     <p className={cn("text-[11px] font-medium tracking-[0.02em] text-muted-foreground", className)}>
       {children}
     </p>
+  );
+}
+
+// In-card form-section header: a real <h3> that out-ranks the [13px] field labels (semibold, foreground),
+// with an optional trailing hairline rule as the section separator. Used inside the Store/Open cards only;
+// the first section in a card passes no rule (the card title + edge already draw that boundary), later
+// sections pass withRule so the divider reads clearly. The rule is decorative (aria-hidden).
+export function SectionLabel({
+  children,
+  withRule = false,
+  className,
+}: {
+  children: ReactNode;
+  withRule?: boolean;
+  className?: string;
+}) {
+  return (
+    <h3 className={cn("flex items-center gap-3 text-xs font-semibold tracking-tight text-foreground", className)}>
+      {children}
+      {withRule && <span className="h-px flex-1 bg-border" aria-hidden="true" />}
+    </h3>
   );
 }
 
