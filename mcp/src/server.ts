@@ -26,11 +26,12 @@ const client = new ZkorageClient({
     accredited: process.env.ZKORAGE_ACCREDITED ?? TESTNET.contracts.accredited,
     fundraise: process.env.ZKORAGE_FUNDRAISE ?? TESTNET.contracts.fundraise,
     dataroom: process.env.ZKORAGE_DATAROOM ?? TESTNET.contracts.dataroom,
+    solvencyGate: process.env.ZKORAGE_SOLVENCY_GATE ?? TESTNET.contracts.solvencyGate,
   },
   apiBaseUrl: process.env.ZKORAGE_API_BASE, // only needed for audit-bundle / by-issuer re-verify
 });
 
-const server = new McpServer({ name: "zkorage", version: "0.15.0" });
+const server = new McpServer({ name: "zkorage", version: "0.16.0" });
 
 // 32-byte hex issuer_id — validate the format, not just the length (agents may pass arbitrary strings).
 const issuerHex = z.string().regex(/^[0-9a-fA-F]{64}$/, "must be 32-byte hex (64 hex chars)");
@@ -38,6 +39,8 @@ const issuerHex = z.string().regex(/^[0-9a-fA-F]{64}$/, "must be 32-byte hex (64
 const accessorHex = z.string().regex(/^[0-9a-fA-F]{64}$/, "must be 32-byte hex (64 hex chars)");
 // 32-byte hex room_id / doc_id (the data-room identifiers).
 const bytes32Hex = z.string().regex(/^[0-9a-fA-F]{64}$/, "must be 32-byte hex (64 hex chars)");
+// A Stellar account address (G...) — the bond depositor the solvency grant is keyed to.
+const stellarAddr = z.string().regex(/^G[A-Z2-7]{55}$/, "must be a Stellar account address (G...)");
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 const ok = (obj: unknown): ToolResult => ({ content: [{ type: "text", text: JSON.stringify(obj, null, 2) }] });
@@ -352,6 +355,22 @@ server.registerTool(
     inputSchema: { accessor: accessorHex.describe("32-byte hex accessor (Stellar account key)") },
   },
   async ({ accessor }) => { try { return ok(await client.canAccessFundraise(accessor)); } catch (e) { return err(e); } },
+);
+
+server.registerTool(
+  "is_solvent",
+  {
+    title: "Is this account's solvency proof live (and bonded)?",
+    description:
+      "BP3 — a solvency proof that dies when you pull your collateral. Returns whether a given depositor " +
+      "(a Stellar account address) currently holds a LIVE solvency grant on the solvency gate — TRUE only " +
+      "while ALL hold on-chain: the 'reserves ≥ supply' proof verified (reserve figure hidden), the proven " +
+      "supply still equals the supply token's live total_supply, the reserve attestation is unexpired, AND " +
+      "the backing escrow lock is still active + revocable + ≥ the bonded amount. It flips false the instant " +
+      "the depositor unbonds (the self-void). Also returns the raw record (lock_id, supply, min_amount). No keys.",
+    inputSchema: { depositor: stellarAddr.describe("the bond depositor's Stellar account address (G...)") },
+  },
+  async ({ depositor }) => { try { return ok(await client.isSolvent(depositor)); } catch (e) { return err(e); } },
 );
 
 server.registerTool(

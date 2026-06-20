@@ -37,6 +37,9 @@ export {
   DEMO_AUDITOR_PUB,
   DEMO_ACCREDITED_ISSUER_ID,
   DEMO_REVENUE_ATTESTER_ID,
+  SOLVENCY_IMAGE_ID,
+  CLAIM_TYPE_SOLVENCY,
+  DEMO_SOLVENCY_AUDITOR_ID,
 } from "./defaults.js";
 export {
   decodeJournal,
@@ -122,4 +125,7 @@ export type {
   RoomPolicy,
   Admission,
   RoomAccess,
+  SolvencyConfig,
+  SolvencyRecord,
+  SolvencyAnswer,
 } from "./types.js";

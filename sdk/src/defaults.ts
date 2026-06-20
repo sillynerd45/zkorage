@@ -160,6 +160,7 @@ export const TESTNET: ZkorageConfig = {
     accredited: "CCLSXZBOPCAJQS6L54EAGZQHTD5QUES2OSYCFX5XJT6ZXSICRPS4QKQZ",
     fundraise: "CDEV4METH74Z42DFV6HC3VLF3PWACXVIIS7C3PLK6CZT2B6L5I3YBC2L",
     dataroom: "CDUQITRVJOPJNVWBUINLZFI2LHPOLVFW2I7354WEFDG2W3VIG627HLNN",
+    solvencyGate: "CDHUG4NFTDIO4HX2MZH3PR77EKYUAU47HVKH4UO2WG7GSKDEF4ABWMLA",
   },
   // Any existing funded testnet account works as the read-only sim source (it never signs).
   readSource: "GDLECNXD76OZQROASQGWEP4KAMJWTJXZW2LN7OJGYPXIJDRXACWGXZY6",
@@ -196,3 +197,14 @@ export const DEMO_ACCREDITED_ISSUER_ID =
 /** The mock revenue auditor (= its ed25519 pubkey), allow-listed in the fundraise contract (W8). */
 export const DEMO_REVENUE_ATTESTER_ID =
   "d9bf2148748a85c89da5aad8ee0b0fc2d105fd39d41a4c796536354f0ae2900c";
+
+/** BP3 — Bonded Proofs solvency gate: the canonical solvency guest image_id the gate pins. */
+export const SOLVENCY_IMAGE_ID =
+  "d0a2f137812e05084aa79d0f7353d3fb7785da25facadd140494b94bed10e267";
+
+/** Solvency-bonded claim_type (reserves >= supply, bound to a revocable escrow lock). */
+export const CLAIM_TYPE_SOLVENCY = 12;
+
+/** The mock bonded reserve auditor (= its ed25519 pubkey), allow-listed in the solvency gate. */
+export const DEMO_SOLVENCY_AUDITOR_ID =
+  "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633";

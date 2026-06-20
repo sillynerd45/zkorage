@@ -94,7 +94,7 @@ export interface AuditBundle {
 export interface ZkorageConfig {
   rpcUrl: string;
   networkPassphrase: string;
-  contracts: { verifier: string; token: string; policy: string; gate: string; compliance: string; payroll: string; accredited: string; fundraise: string; dataroom: string };
+  contracts: { verifier: string; token: string; policy: string; gate: string; compliance: string; payroll: string; accredited: string; fundraise: string; dataroom: string; solvencyGate: string };
   /** A funded account used only as the read-only simulation source (never signs). */
   readSource: string;
   /** Optional REST base URL — only needed for `getAuditBundle` (the proof bundle isn't on-chain). */
@@ -351,6 +351,47 @@ export interface RevenueRecord {
   expiry: string;
   ledger: number;
   timestamp: string;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// BP3 — Bonded Proofs solvency gate. A `reserves >= supply` proof (reserves private) bound to a
+// revocable escrow lock; the gate reads the lock LIVE so the grant self-voids on unbond.
+// ---------------------------------------------------------------------------------------------------
+
+export interface SolvencyConfig {
+  admin: string;
+  verifier: string;
+  escrow: string;
+  escrow_id: string; // 32-byte hex (== journal.escrow)
+  supply_token: string;
+  supply_token_id: string; // 32-byte hex (== journal.supply_token)
+  bond_token: string;
+  bond_token_id: string; // 32-byte hex (== journal.bond_token)
+  image_id: string; // 32-byte hex (the pinned guest image)
+  claim_type: number; // 12
+}
+
+/** A solvency proof record persisted on-chain by the gate, keyed by the bond depositor. The real reserve
+ * figure is never stored — only the supply it was proven to cover. */
+export interface SolvencyRecord {
+  index?: number;
+  depositor: string; // the bond owner (Stellar address)
+  issuer_id: string; // 32-byte hex (the bonded reserve auditor)
+  supply: string; // the proven liability (== supply_token.total_supply() at submit)
+  lock_id: string; // the escrow lock backing the proof (u64)
+  min_amount: string; // the bonded amount the proof asserts (u64)
+  expiry: string;
+  nonce: string;
+  ledger: number;
+  timestamp: string;
+}
+
+/** The live solvency answer for a depositor. `answer` is the AUTHORITATIVE on-chain `is_granted`
+ * decision — it flips false the instant the depositor unbonds (or the lock unlocks / supply changes). */
+export interface SolvencyAnswer {
+  answer: boolean;
+  depositor: string;
+  record: SolvencyRecord | null;
 }
 
 /** An investor admission persisted on-chain by the fundraise contract. */
