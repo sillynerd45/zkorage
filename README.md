@@ -14,8 +14,8 @@ private witness).
 
 ## Status — the full build is complete (testnet)
 Weeks 1–8 (below) **and** the post-week-8 **Confidential Data Room (DR1–DR6)** are built, deployed, and
-self-tested on Stellar testnet. A new **Bonded Proofs** pillar (a Soroban-native time-locked escrow, the
-foundation for proofs that stay valid only while funds stay locked) is also live; see below. The whole stack
+self-tested on Stellar testnet. A new **Bonded Proofs** pillar (a Soroban-native time-locked escrow plus a
+live **solvency proof that dies when you pull your collateral**) is also live; see below. The whole stack
 runs on **RISC Zero 5.0.0-rc.1** (GPU proving on a self-hosted box, with a CPU fallback). The frontend is a
 single unified app — a **public marketing site** (`/` — landing, documentation, verify, explorer) plus a
 **sidebar app** (`/app/*` — the five proofs, the Data Room, and Bonded Proofs) in the "Precision Ink"
@@ -260,15 +260,24 @@ A second direction, motivated by Stellar's Claimable Balances. The research (in 
 found that a classic Claimable Balance can't anchor a ZK proof — a Soroban contract can't read one, and a CB
 is fully public — so the load-bearing design is a **zkorage-owned, Soroban-native time-locked escrow**: lock
 any SEP-41/SAC token until a chosen time, with a revocable self-bond or a non-revocable one-way send, and a
-gate-readable `is_locked()` / `get_lock()`. It is the foundation for two upcoming ZK products: a **solvency
-proof that dies when you pull your collateral** (a gate reads `is_locked` live, so the grant evaporates the
-instant you un-bond) and an **anonymous tier that expires at X**.
+gate-readable `is_locked()` / `get_lock()`. It carries the first of two ZK products — a **solvency proof that
+dies when you pull your collateral** (LIVE) — with an **anonymous tier that expires at X** still to come.
 
 - **Escrow (testnet):** `CAMQKJKAJTOMT66N5N3E3VIRTN5ACDKV6P3Z2HLYVJHLAVRGJKHZFOXC` (immutable, no admin over
   funds; only a lock's depositor/claimant can move it). Bond token `CCFHRZAP7GYUBNJ4RN7NBZL5GS7Q32F4CIXDTWTTIGPYEDWRIS2TUPA5`
   (a demo "zkUSD"). Two adversarial reviews; 22/22 contract tests. Full record: `contract/deployment.testnet.json → escrow_BP1`.
-- **No ZK yet.** Shipped so far: the escrow + the `/app/bonded` pillar (Overview · My Balances · Deposit,
-  frontend **v0.8.0**) + the `backend /escrow/*` REST surface (reads + wallet-signed writes + a demo faucet).
+- **Solvency proof that dies when you pull your collateral (LIVE).** An issuer proves `reserves ≥ supply`
+  (the reserve figure stays private, attested by a mock reserve auditor) bound to a revocable escrow lock.
+  The **solvency gate** `CDHUG4NFTDIO4HX2MZH3PR77EKYUAU47HVKH4UO2WG7GSKDEF4ABWMLA` (`claim_type=12`) verifies
+  the Groth16 proof, binds the proven supply to the live zUSD `total_supply()`, requires the lock owner's
+  auth, then reads `escrow.get_lock` **live** on every `is_granted` call — so the grant flips **SOLVENT →
+  VOID the instant the issuer un-bonds**. New guest `solvency_predicate` (image `d0a2f137…`, a 173-byte
+  journal whose first 61 bytes are byte-identical to the PoR journal). Reviewed across three passes (security
+  auditor SOUND + code reviewer Ship-it + a third fix-hunt pass) + **Codex CLEAN**.
+- **Shipped:** the `/app/bonded` pillar (Overview · My Balances · Deposit · **Prove Solvency**, frontend
+  **v0.9.1**) with a live ACTIVE→VOID badge; the `backend /escrow/*` + `/bonded/solvency/*` REST surface; a
+  9th `solvency` prover kind (gateway + GPU worker); SDK/MCP **v0.16.0** (`isSolvent`, key-free). Full record:
+  `contract/deployment.testnet.json → solvency_gate_BP3 / guest_solvency`.
 
 ## Run the Week-2 slice
 ```bash
