@@ -1,5 +1,17 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
+import {
+  Download,
+  FileText,
+  Fingerprint,
+  KeyRound,
+  Lock,
+  LockKeyholeOpen,
+  Search,
+  ShieldCheck,
+  Upload,
+  X,
+} from "lucide-react";
 import { useAnchor } from "@/lib/hooks/useAnchor";
 import { short, explorer } from "@/lib/format";
 import { humanError } from "@/lib/errors";
@@ -13,10 +25,12 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { DataRow, Verdict } from "@/components/app/blocks";
 import { DecryptedFile } from "@/components/app/DecryptedFile";
+import { Callout, CopyIconButton, GroupLabel, SectionLabel, StepStrip } from "@/components/app/dataroom/kit";
 
-// The Documents page is now a small submenu (Store / Open / Browse) instead of one long scroll. The
-// Overview's deep links (#store / #open / #browse) select the matching sub-tab, so the entry points still
-// work. One sub-tab shows at a time.
+// The Documents page is a small submenu (Store / Open / Browse) instead of one long scroll. The Overview's
+// deep links (#store / #open / #browse) select the matching sub-tab, so the entry points still work. One
+// sub-tab shows at a time. The tab/submenu styling is unchanged in this pass; only the body of each sub-tab
+// was reworked (calmer copy, step strips, grouped fields, callouts, a drop zone, and a document list).
 type DocTab = "store" | "open" | "browse";
 const SUBTABS: { key: DocTab; label: string }[] = [
   { key: "store", label: "Store" },
@@ -32,16 +46,30 @@ export default function Anchor() {
   const a = useAnchor();
   const { hash } = useLocation();
   const [tab, setTab] = useState<DocTab>(() => tabFromHash(hash));
+  const [dragOver, setDragOver] = useState(false);
+  const [docQuery, setDocQuery] = useState("");
   // Keep the sub-tab in sync with the URL hash so a deep link from the Overview lands on the right one.
   useEffect(() => {
     setTab(tabFromHash(hash));
   }, [hash]);
 
+  // Browse → Open hand-off: prefill the room/doc and switch to the Open sub-tab, where the reader supplies
+  // the private key. Browse is the owner view and does not know the recipient's key, so it cannot decrypt
+  // inline; this keeps every crypto step exactly where it is today.
+  const openFromBrowse = (docId: string) => {
+    a.setOpenRoom(a.browseRoom);
+    a.setOpenDoc(docId);
+    setTab("open");
+  };
+
+  const q = docQuery.trim().toLowerCase();
+  const shownDocs = q ? a.docs.filter((d) => d.doc_id.toLowerCase().includes(q)) : a.docs;
+
   return (
     <div className="space-y-5">
-      {/* The section tabs (Overview / Documents / …) live in the layout directly above this. Keep the
-          Documents sub-tabs right under them and put the one-line description below as a quiet caption, so it
-          no longer splits the two rows of navigation. The submenu pill is w-fit so it hugs its three items. */}
+      {/* The section tabs (Overview / Documents / …) live in the layout directly above this. The Documents
+          sub-tabs sit right under them, with one calm line below (the submenu pill is w-fit so it hugs its
+          three items). */}
       <div className="space-y-2">
         <div
           className="flex w-fit max-w-full gap-1 overflow-x-auto rounded-2xl border bg-card p-1.5"
@@ -66,11 +94,7 @@ export default function Anchor() {
             </button>
           ))}
         </div>
-        <p className="text-sm text-muted-foreground">
-          Everything for this room's files in one place: <b className="text-foreground">store</b> a new one,{" "}
-          <b className="text-foreground">open</b> one you can decrypt, or <b className="text-foreground">browse</b>{" "}
-          what's yours.
-        </p>
+        <p className="text-sm text-muted-foreground">Store, open, or browse this room's files.</p>
       </div>
 
       {/* ── STORE: upload / encrypt / anchor ── */}
@@ -82,11 +106,160 @@ export default function Anchor() {
               <ProofStatusBadge state={a.state} />
             </div>
             <p className="text-sm leading-relaxed text-muted-foreground">
-              Encrypt a document, keep the file private, and post only a tamper-evident{" "}
+              Encrypt a file and post only a tamper-evident{" "}
               <b className="text-foreground">fingerprint</b>
-              <GlossaryTip term="fingerprint" /> to the public record. The file never leaves the prover in the
-              clear; creating the proof takes a few minutes on the prover you run.
+              <GlossaryTip term="fingerprint" />. The contents never leave your machine. Creating the proof
+              takes a few minutes on the prover you run.
             </p>
+
+            <div className="mt-4">
+              <StepStrip
+                steps={[
+                  { icon: Lock, label: "Encrypt locally" },
+                  { icon: Fingerprint, label: "Post fingerprint" },
+                  { icon: KeyRound, label: "Grant access" },
+                ]}
+              />
+            </div>
+
+            {/* What you're storing: the room, then ONE of a file or pasted text (a segmented switcher picks
+                the mode, so only the active input shows instead of both at once). */}
+            <div className="mt-7 space-y-3">
+              <SectionLabel withRule>What you're storing</SectionLabel>
+              <label className="flex flex-col gap-1.5 text-[13px] text-muted-foreground">
+                Room
+                <div className="flex gap-2">
+                  <Input
+                    className="font-mono text-xs"
+                    value={a.roomLabel}
+                    onChange={(e) => a.setRoomLabel(e.target.value)}
+                    aria-label="room"
+                    data-testid="room-label"
+                  />
+                  <CopyIconButton value={a.roomLabel} label="room" />
+                </div>
+              </label>
+
+              {/* Input-mode switcher (segmented, matching the section tabs). A radiogroup, not a tablist:
+                  it picks which form field is shown, it does not navigate. Switching preserves both inputs. */}
+              <div
+                role="radiogroup"
+                aria-label="Input method"
+                className="flex w-fit max-w-full gap-1 rounded-2xl border bg-card p-1.5"
+              >
+                {([
+                  ["file", "File"],
+                  ["text", "Text"],
+                ] as const).map(([m, label]) => (
+                  <button
+                    key={m}
+                    role="radio"
+                    aria-checked={a.storeMode === m}
+                    onClick={() => a.setStoreMode(m)}
+                    data-testid={`store-mode-${m}`}
+                    className={cn(
+                      "rounded-xl px-3.5 py-2 text-[13px] font-medium transition-colors",
+                      a.storeMode === m
+                        ? "bg-primary text-primary-foreground"
+                        : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {a.storeMode === "file" ? (
+                <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setDragOver(true);
+                  }}
+                  onDragLeave={() => setDragOver(false)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setDragOver(false);
+                    const f = e.dataTransfer.files?.[0];
+                    if (f) a.pickFile(f);
+                  }}
+                  className={cn(
+                    "rounded-xl border border-dashed px-4 py-6 text-center transition-colors",
+                    dragOver ? "border-brand bg-brand/5" : "border-input bg-muted/30",
+                  )}
+                >
+                  <Upload className="mx-auto size-6 text-muted-foreground" aria-hidden="true" />
+                  <p className="mt-2 text-sm font-medium">Drag a file here, or browse</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Encrypted in your browser before anything is posted. PDF, image, any file up to 8 MB.
+                  </p>
+                  <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+                    <input
+                      type="file"
+                      onChange={(e) => a.pickFile(e.target.files?.[0] ?? null)}
+                      aria-label="document file"
+                      data-testid="doc-file"
+                      className="block max-w-full text-xs text-muted-foreground file:mr-3 file:rounded-md file:border file:border-input file:bg-background file:px-3 file:py-1.5 file:text-xs file:font-medium hover:file:bg-accent"
+                    />
+                  </div>
+                  {a.file && (
+                    <span
+                      data-testid="doc-file-chip"
+                      className="mt-3 inline-flex items-center gap-2 rounded-full border bg-card px-3 py-1 text-xs"
+                    >
+                      <span className="max-w-[16rem] truncate font-medium" title={a.file.name}>
+                        {a.file.name}
+                      </span>
+                      <span className="text-muted-foreground">{(a.file.size / 1024).toFixed(1)} KB</span>
+                      <button
+                        type="button"
+                        onClick={a.clearFile}
+                        aria-label="remove file"
+                        data-testid="doc-file-clear"
+                        className="text-muted-foreground hover:text-foreground"
+                      >
+                        <X className="size-3.5" aria-hidden="true" />
+                      </button>
+                    </span>
+                  )}
+                  {a.fileErr && (
+                    <p className="mt-2 text-xs text-destructive" data-testid="doc-file-error">
+                      {a.fileErr}
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <textarea
+                  className="min-h-[88px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:border-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+                  value={a.content}
+                  onChange={(e) => a.setContent(e.target.value)}
+                  aria-label="document content"
+                  data-testid="doc-content"
+                  placeholder="Paste the document text…"
+                />
+              )}
+            </div>
+
+            {/* Who can open it: the recipient's x25519 public key. */}
+            <div className="mt-7 space-y-3">
+              <SectionLabel withRule>Who can open it</SectionLabel>
+              <label className="flex flex-col gap-1.5 text-[13px] text-muted-foreground">
+                Recipient's public key (hex)
+                <Input
+                  className="font-mono text-xs"
+                  value={a.recipientPub}
+                  onChange={(e) => a.setRecipientPub(e.target.value)}
+                  aria-label="recipient pub"
+                  data-testid="recipient-input"
+                />
+              </label>
+            </div>
+
+            <div className="mt-4">
+              <Callout icon={ShieldCheck}>
+                Encryption happens locally. Only the fingerprint is posted on-chain. The file itself never
+                leaves this browser.
+              </Callout>
+            </div>
 
             {/* DR1 engine rows (the sealing program + demo recipient key), demoted behind a "Verify details"
                 expander (UX research §12); you don't need them to store a document. */}
@@ -111,81 +284,10 @@ export default function Anchor() {
               )}
             </Disclosure>
 
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <label className="flex flex-col gap-1.5 text-[13px] text-muted-foreground">
-                room
-                <Input
-                  value={a.roomLabel}
-                  onChange={(e) => a.setRoomLabel(e.target.value)}
-                  aria-label="room"
-                  data-testid="room-label"
-                />
-              </label>
-              <label className="flex flex-col gap-1.5 text-[13px] text-muted-foreground">
-                recipient's public key
-                <Input
-                  className="font-mono text-xs"
-                  value={a.recipientPub}
-                  onChange={(e) => a.setRecipientPub(e.target.value)}
-                  aria-label="recipient pub"
-                  data-testid="recipient-input"
-                />
-              </label>
-            </div>
-            <div className="mt-3">
-              <label className="flex flex-col gap-1.5 text-[13px] text-muted-foreground">
-                document text (private)
-                <textarea
-                  className="min-h-[70px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:border-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-50"
-                  value={a.content}
-                  onChange={(e) => a.setContent(e.target.value)}
-                  aria-label="document content"
-                  data-testid="doc-content"
-                  disabled={!!a.file}
-                />
-              </label>
-            </div>
-
-            {/* Or store a file instead. A chosen file (PDF, image, any bytes) overrides the text box; it is
-                read in your browser and encrypted exactly like text. The contents still never leave in the clear. */}
-            <div className="mt-3">
-              <span className="text-[13px] text-muted-foreground">
-                or store a file <span className="text-muted-foreground/70">(PDF, image, any file up to 8 MB)</span>
-              </span>
-              <div className="mt-1.5 flex flex-wrap items-center gap-2">
-                <input
-                  type="file"
-                  onChange={(e) => a.pickFile(e.target.files?.[0] ?? null)}
-                  aria-label="document file"
-                  data-testid="doc-file"
-                  className="block max-w-full text-xs text-muted-foreground file:mr-3 file:rounded-md file:border file:border-input file:bg-background file:px-3 file:py-1.5 file:text-xs file:font-medium hover:file:bg-accent"
-                />
-                {a.file && (
-                  <span
-                    data-testid="doc-file-chip"
-                    className="inline-flex items-center gap-2 rounded-full border bg-card px-3 py-1 text-xs"
-                  >
-                    <span className="max-w-[16rem] truncate font-medium" title={a.file.name}>{a.file.name}</span>
-                    <span className="text-muted-foreground">{(a.file.size / 1024).toFixed(1)} KB</span>
-                    <button
-                      type="button"
-                      onClick={a.clearFile}
-                      aria-label="remove file"
-                      data-testid="doc-file-clear"
-                      className="text-muted-foreground hover:text-foreground"
-                    >
-                      ✕
-                    </button>
-                  </span>
-                )}
-              </div>
-              {a.fileErr && (
-                <p className="mt-1.5 text-xs text-destructive" data-testid="doc-file-error">{a.fileErr}</p>
-              )}
-            </div>
             <div className="mt-4">
               <Button onClick={() => a.setConfirmAnchor(true)} disabled={a.busy} data-testid="upload">
-                {a.busy ? "Working…" : "Encrypt, prove & post"}
+                <Lock aria-hidden="true" />
+                {a.busy ? "Working…" : "Store document"}
               </Button>
             </div>
 
@@ -195,7 +297,10 @@ export default function Anchor() {
               tone="cost"
               confirmLabel="Yes, post it"
               onCancel={() => a.setConfirmAnchor(false)}
-              onConfirm={() => { a.setConfirmAnchor(false); a.onUpload(); }}
+              onConfirm={() => {
+                a.setConfirmAnchor(false);
+                a.onUpload();
+              }}
             >
               <p>
                 The document is encrypted and the key sealed to the recipient on the prover you run (the file
@@ -292,69 +397,92 @@ export default function Anchor() {
       {/* ── OPEN: recipient open (key-free, client-side) ── */}
       {tab === "open" && (
         <Card id="open" className="rounded-2xl p-6">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <h2 className="text-base font-semibold tracking-tight">Open a document</h2>
-            <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
-              the recipient opens it with their key, in your browser
-            </span>
-          </div>
-          <p className="text-sm leading-relaxed text-muted-foreground">
-            The recipient opens the document <b className="text-foreground">with their private key</b>. The
-            proof guarantees the key really is for <i>this</i> document, the encrypted file is fetched and
-            re-checked against its fingerprint, and then it's decrypted{" "}
-            <b className="text-foreground">all in your browser</b> (your key never leaves it). The field is
-            prefilled with the demo recipient's key. Paste a different key to see it{" "}
-            <b className="text-foreground">refuse to open</b>.
+          <h2 className="text-base font-semibold tracking-tight">Open a document</h2>
+          <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+            The recipient opens it with their private key. It's fetched, fingerprint-checked, and decrypted
+            entirely in your browser.
           </p>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            <label className="flex flex-col gap-1.5 text-[13px] text-muted-foreground">
-              room
-              <Input
-                className="font-mono text-xs"
-                value={a.openRoom}
-                onChange={(e) => a.setOpenRoom(e.target.value)}
-                aria-label="open room"
-                data-testid="open-room"
-              />
-            </label>
-            <label className="flex flex-col gap-1.5 text-[13px] text-muted-foreground">
-              doc
-              <Input
-                className="font-mono text-xs"
-                value={a.openDoc}
-                onChange={(e) => a.setOpenDoc(e.target.value)}
-                aria-label="open doc"
-                data-testid="open-doc"
-              />
-            </label>
+
+          <div className="mt-4">
+            <StepStrip
+              steps={[
+                { icon: Download, label: "Fetch encrypted file" },
+                { icon: Fingerprint, label: "Re-check fingerprint" },
+                { icon: LockKeyholeOpen, label: "Decrypt in your browser" },
+              ]}
+            />
           </div>
-          <div className="mt-3">
+
+          <div className="mt-7 space-y-3">
+            <SectionLabel withRule>What you're opening</SectionLabel>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="flex flex-col gap-1.5 text-[13px] text-muted-foreground">
+                Room
+                <div className="flex gap-2">
+                  <Input
+                    className="font-mono text-xs"
+                    value={a.openRoom}
+                    onChange={(e) => a.setOpenRoom(e.target.value)}
+                    aria-label="open room"
+                    data-testid="open-room"
+                  />
+                  <CopyIconButton value={a.openRoom} label="room" />
+                </div>
+              </label>
+              <label className="flex flex-col gap-1.5 text-[13px] text-muted-foreground">
+                Document
+                <div className="flex gap-2">
+                  <Input
+                    className="font-mono text-xs"
+                    value={a.openDoc}
+                    onChange={(e) => a.setOpenDoc(e.target.value)}
+                    aria-label="open doc"
+                    data-testid="open-doc"
+                  />
+                  <CopyIconButton value={a.openDoc} label="document" />
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <div className="mt-7 space-y-3">
+            <SectionLabel withRule>Your key</SectionLabel>
             <label className="flex flex-col gap-1.5 text-[13px] text-muted-foreground">
-              recipient's private key (hex)
+              Recipient's private key (hex)
               <Input
-                className="font-mono text-xs"
+                className="border-brand/40 font-mono text-xs"
                 value={a.openSecret}
                 onChange={(e) => a.setOpenSecret(e.target.value)}
                 aria-label="recipient secret"
                 data-testid="open-secret"
               />
             </label>
+            <p className="text-xs text-muted-foreground">
+              Prefilled with the demo key. Paste your own to open as yourself.
+            </p>
           </div>
-          <div className="mt-3">
+
+          <div className="mt-4">
             <Button onClick={a.onOpen} disabled={a.openBusy} data-testid="open-btn">
+              <LockKeyholeOpen aria-hidden="true" />
               {a.openBusy ? "Opening…" : "Open document"}
             </Button>
           </div>
-          <p className="mt-2 text-xs leading-relaxed text-muted-foreground" data-testid="open-secret-note">
-            <span aria-hidden="true">🔑</span> Your private key stays in this browser. We never see it and{" "}
-            <b className="text-foreground">can't recover it for you</b>. The field is prefilled with the demo
-            key. Paste your own to open as yourself.
-          </p>
+
+          <div className="mt-4">
+            <Callout icon={KeyRound} testId="open-secret-note">
+              Your private key stays in this browser. We never see it, and we can't recover it for you.
+            </Callout>
+          </div>
+
           {a.sealedToYou && (
-            <p className="mt-1 text-xs text-muted-foreground">
-              your public key: <code className="font-mono">{short(a.sealedToYou, 8)}</code>
+            <p className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              Your public key:{" "}
+              <code className="font-mono text-foreground">{short(a.sealedToYou, 8)}</code>
+              <CopyIconButton value={a.sealedToYou} label="public key" />
             </p>
           )}
+
           {a.opened && (
             <div
               data-testid="open-result"
@@ -391,12 +519,31 @@ export default function Anchor() {
       {/* ── BROWSE: your documents (rooms your wallet owns on-chain) ── */}
       {tab === "browse" && (
         <Card id="browse" className="rounded-2xl p-6">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <h2 className="text-base font-semibold tracking-tight">Your documents</h2>
-            <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
-              everything here is encrypted
-            </span>
+          <div className="mb-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-base font-semibold tracking-tight">Browse documents</h2>
+              {a.connected && (
+                <div className="relative">
+                  <Search
+                    className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                    aria-hidden="true"
+                  />
+                  <Input
+                    value={docQuery}
+                    onChange={(e) => setDocQuery(e.target.value)}
+                    placeholder="Search by doc id…"
+                    aria-label="search documents"
+                    data-testid="doc-search"
+                    className="h-9 w-56 max-w-full pl-8 text-xs"
+                  />
+                </div>
+              )}
+            </div>
+            <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+              Rooms you own and documents you've stored. Contents stay encrypted.
+            </p>
           </div>
+
           {!a.connected ? (
             <p className="text-sm leading-relaxed text-muted-foreground" data-testid="browse-connect-prompt">
               Connect your wallet to see the rooms you own and the documents you stored. This only reads the
@@ -409,13 +556,16 @@ export default function Anchor() {
               You haven't stored anything yet. Store a document and the room you own shows up here.
             </p>
           ) : (
-            <div className="space-y-3">
-              <p className="text-sm text-muted-foreground">Rooms your wallet owns. Pick one to list its documents.</p>
+            <div className="space-y-4">
               <div className="flex flex-wrap gap-2" data-testid="my-rooms">
                 {a.myRooms.map((r) => (
                   <button
                     key={r.roomId}
-                    onClick={() => { a.setBrowseRoom(r.roomId); a.refreshDocs(r.roomId); }}
+                    onClick={() => {
+                      a.setBrowseRoom(r.roomId);
+                      a.refreshDocs(r.roomId);
+                      setDocQuery("");
+                    }}
                     data-testid="my-room"
                     aria-pressed={a.browseRoom === r.roomId}
                     className={cn(
@@ -430,35 +580,56 @@ export default function Anchor() {
                   </button>
                 ))}
               </div>
-              {a.browseRoom &&
-                (a.docs.length ? (
-                  <div className="mt-2 overflow-x-auto rounded-lg border">
-                    <table className="w-full text-left text-[13px]" data-testid="dataroom-docs">
-                      <thead className="border-b bg-muted/40 text-xs text-muted-foreground">
-                        <tr>
-                          <th className="px-3 py-2 font-medium">#</th>
-                          <th className="px-3 py-2 font-medium">doc</th>
-                          <th className="px-3 py-2 font-medium">file fingerprint</th>
-                          <th className="px-3 py-2 font-medium">sealed to</th>
-                          <th className="px-3 py-2 font-medium">recorded</th>
-                        </tr>
-                      </thead>
-                      <tbody className="font-mono tabular-nums">
-                        {a.docs.map((d) => (
-                          <tr key={d.index} className="border-b last:border-0">
-                            <td className="px-3 py-2">{d.index}</td>
-                            <td className="px-3 py-2" title={d.doc_id}>{short(d.doc_id, 6)}</td>
-                            <td className="px-3 py-2" title={d.content_hash}>{short(d.content_hash, 6)}</td>
-                            <td className="px-3 py-2" title={d.recipient_pub}>x25519 {short(d.recipient_pub, 6)}</td>
-                            <td className="px-3 py-2">{d.ledger}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <p className="mt-2 text-sm text-muted-foreground">No documents in this room yet.</p>
-                ))}
+
+              {a.browseRoom && (
+                <div className="space-y-2">
+                  <GroupLabel>
+                    Room {short(a.browseRoom, 8)} · {a.docs.length} document{a.docs.length === 1 ? "" : "s"}
+                  </GroupLabel>
+                  {a.docs.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No documents in this room yet.</p>
+                  ) : shownDocs.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No documents match your search.</p>
+                  ) : (
+                    <div className="divide-y divide-border/70 rounded-xl border" data-testid="dataroom-docs">
+                      {shownDocs.map((d) => (
+                        <div
+                          key={d.index}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => openFromBrowse(d.doc_id)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              openFromBrowse(d.doc_id);
+                            }
+                          }}
+                          data-testid="doc-row"
+                          className="group/row flex cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors hover:bg-accent/40 focus-visible:bg-accent/40 focus-visible:outline-none"
+                        >
+                          <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-brand/10 text-brand">
+                            <FileText className="size-4" aria-hidden="true" />
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate font-mono text-[13px]" title={d.doc_id}>
+                              {short(d.doc_id, 10)}
+                            </div>
+                            <div className="truncate text-xs text-muted-foreground">
+                              Recorded at ledger {d.ledger} · sealed to x25519 {short(d.recipient_pub, 6)}
+                            </div>
+                          </div>
+                          <span className="inline-flex shrink-0 items-center gap-1 rounded-full border bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground">
+                            <Lock className="size-3" aria-hidden="true" /> Encrypted
+                          </span>
+                          <span className="inline-flex shrink-0 items-center gap-1 rounded-md border border-input px-2.5 py-1 text-xs font-medium text-muted-foreground opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-visible/row:opacity-100">
+                            <LockKeyholeOpen className="size-3.5" aria-hidden="true" /> Open
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </Card>

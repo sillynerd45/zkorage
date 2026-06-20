@@ -34,17 +34,24 @@ test("dataroom: recipient opens the sealed doc in-browser (faithful); wrong key 
   await page.getByTestId("anchor-engine-details").click();
   await expect(page.getByTestId("recipient-pub")).toContainText("x25519");
   await expect(page.getByTestId("seal-image")).toBeVisible();
-  // upload controls render (we do NOT trigger the ~minutes-long proof in a UI test)
+  // the File/Text switcher picks ONE input at a time. File is the default: the drop zone shows, the
+  // textarea is not rendered. (We do NOT trigger the ~minutes-long proof in a UI test.)
+  await expect(page.getByTestId("store-mode-file")).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByTestId("doc-file")).toBeVisible();
+  await expect(page.getByTestId("doc-content")).toHaveCount(0);
+  // switching to Text reveals the textarea and hides the drop zone
+  await page.getByTestId("store-mode-text").click();
   await expect(page.getByTestId("doc-content")).toBeVisible();
-  await expect(page.getByTestId("doc-file")).toBeVisible(); // store a file (PDF/image/any) too, not just text
+  await expect(page.getByTestId("doc-file")).toHaveCount(0);
+  await page.getByTestId("store-mode-file").click(); // back to the default for the rest of the test
   await expect(page.getByTestId("upload")).toBeVisible();
 
   // BROWSE sub-tab: with no wallet, it asks you to connect — Browse shows the rooms YOU own, so a fresh
   // visitor sees nothing they didn't store (no auto-loaded seeded room). There is no "contents" column
-  // either: every document is encrypted by default (the caption says so).
+  // either: every document is encrypted by default (the subtitle says so).
   await page.getByTestId("doc-subtab-browse").click();
   await expect(page.getByTestId("browse-connect-prompt")).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByText("everything here is encrypted")).toBeVisible();
+  await expect(page.getByText("Contents stay encrypted")).toBeVisible();
 
   // OPEN sub-tab — RECIPIENT OPEN (prefilled demo doc + demo recipient secret) → faithful + decrypted plaintext
   await page.getByTestId("doc-subtab-open").click();
@@ -71,11 +78,13 @@ test("dataroom: recipient opens the sealed doc in-browser (faithful); wrong key 
   expect(appErrors, appErrors.join("\n")).toHaveLength(0);
 });
 
-test("dataroom store: choosing a file shows a chip and disables the text box", async ({ page }) => {
-  // The file path (PDF/image/any) is exercised without the multi-minute proof: pick a file, assert the UI
-  // state, then remove it. setInputFiles takes an in-memory buffer, so no fixture file is needed.
+test("dataroom store: the File/Text switcher shows one input at a time and preserves a picked file", async ({ page }) => {
+  // The file path (PDF/image/any) is exercised without the multi-minute proof: pick a file, toggle the
+  // switcher, assert the UI state. setInputFiles takes an in-memory buffer, so no fixture file is needed.
   await page.goto("/app/dataroom/documents#store");
-  await expect(page.getByTestId("doc-content")).toBeVisible({ timeout: 30_000 });
+  // Default mode = File: the drop zone shows and the textarea is not rendered.
+  await expect(page.getByTestId("doc-file")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("doc-content")).toHaveCount(0);
 
   await page.getByTestId("doc-file").setInputFiles({
     name: "sample.pdf",
@@ -83,11 +92,20 @@ test("dataroom store: choosing a file shows a chip and disables the text box", a
     buffer: Buffer.from("%PDF-1.4\n%demo small pdf\n"),
   });
   await expect(page.getByTestId("doc-file-chip")).toContainText("sample.pdf");
-  await expect(page.getByTestId("doc-content")).toBeDisabled(); // a chosen file overrides the text box
 
+  // Switch to Text → the textarea shows, the drop zone (and its chip) are hidden. The file stays in state.
+  await page.getByTestId("store-mode-text").click();
+  await expect(page.getByTestId("doc-content")).toBeVisible();
+  await expect(page.getByTestId("doc-file")).toHaveCount(0);
+
+  // Switch back to File → the previously picked file is still there (switching preserves both inputs).
+  await page.getByTestId("store-mode-file").click();
+  await expect(page.getByTestId("doc-file-chip")).toContainText("sample.pdf");
+
+  // Removing the file clears the chip but stays in File mode (an empty drop zone).
   await page.getByTestId("doc-file-clear").click();
   await expect(page.getByTestId("doc-file-chip")).toHaveCount(0);
-  await expect(page.getByTestId("doc-content")).toBeEnabled();
+  await expect(page.getByTestId("doc-file")).toBeVisible();
 });
 
 test("dataroom Browse: a fresh connected wallet sees only its own rooms (empty), not a seeded doc", async ({ page }) => {
@@ -102,7 +120,11 @@ test("dataroom Browse: a fresh connected wallet sees only its own rooms (empty),
 
 test("dataroom overview: task-oriented cards route to the right place; guided-demo tab removed", async ({ page }) => {
   await page.goto("/app/dataroom");
-  await expect(page.getByRole("heading", { name: "What do you want to do?" })).toBeVisible();
+  // the landing is a featured "Store a document" hero card + an "All tasks" grid (no duplicate "what do you
+  // want to do?" description; the one-line lead lives in the header)
+  await expect(page.getByTestId("dataroom-overview")).toBeVisible();
+  await expect(page.getByText("Start here")).toBeVisible();
+  await expect(page.getByText("All tasks")).toBeVisible();
 
   // the document tasks that used to be buried under "Store a document" are now first-class + discoverable
   await expect(page.getByTestId("task-store")).toBeVisible();

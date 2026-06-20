@@ -1,6 +1,6 @@
 import { type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { ChevronRight, type LucideIcon } from "lucide-react";
+import { ArrowUpRight, Star, type LucideIcon } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { VerdictMark } from "@/components/StatusBadge";
 import { cn } from "@/lib/utils";
@@ -136,25 +136,47 @@ export function NavCard({
   proves?: string;
   star?: boolean;
 }) {
+  // Visual match to the Data Room task cards (components/app/dataroom/kit.tsx): faint shadow at rest; on
+  // hover the card lifts, the shadow deepens, the border strengthens, the icon tile inverts, and a corner
+  // arrow fades in. The "proves" pill sits in a bottom row to the LEFT of the arrow so the two never collide.
   return (
     <Link to={to} className="group block focus-visible:outline-none">
-      <div className="flex items-start gap-3.5 rounded-2xl border bg-card p-4 transition-colors hover:border-brand/30 hover:bg-accent/40 group-focus-visible:ring-2 group-focus-visible:ring-ring">
-        <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-brand/10 text-brand">
+      <div
+        className={cn(
+          "relative flex h-full items-start gap-3.5 overflow-hidden rounded-xl border bg-card p-4",
+          "shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-[transform,box-shadow,border-color] [transition-duration:180ms] ease-out",
+          "hover:-translate-y-[3px] hover:border-foreground/20 hover:shadow-[0_12px_28px_rgba(0,0,0,0.12)]",
+          "dark:hover:shadow-[0_12px_28px_rgba(0,0,0,0.45)]",
+          "group-focus-visible:ring-2 group-focus-visible:ring-ring",
+        )}
+      >
+        <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-brand/10 text-brand transition-colors [transition-duration:180ms] group-hover:bg-foreground group-hover:text-background">
           <Icon className="size-5" />
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <h3 className="font-semibold tracking-tight">{title}</h3>
-            {star && <span aria-hidden="true">⭐</span>}
+            {star && <Star className="size-4 shrink-0 fill-warning text-warning" aria-hidden="true" />}
           </div>
-          <p className="mt-0.5 text-sm leading-relaxed text-muted-foreground">{blurb}</p>
+          <p className="mt-0.5 pr-5 text-sm leading-relaxed text-muted-foreground">{blurb}</p>
           {proves && (
-            <p className="mt-2 inline-flex rounded-md bg-muted px-2 py-0.5 font-mono text-[11px] text-muted-foreground">
-              {proves}
-            </p>
+            <div className="mt-3 flex items-center justify-between gap-2">
+              <span className="inline-flex min-w-0 truncate rounded-md bg-muted px-2 py-0.5 font-mono text-[11px] text-muted-foreground">
+                {proves}
+              </span>
+              <ArrowUpRight
+                className="size-4 shrink-0 text-muted-foreground opacity-0 transition-all [transition-duration:180ms] group-hover:translate-x-[2px] group-hover:-translate-y-[2px] group-hover:opacity-100"
+                aria-hidden="true"
+              />
+            </div>
           )}
         </div>
-        <ChevronRight className="size-5 shrink-0 self-center text-muted-foreground transition-colors group-hover:text-brand" />
+        {!proves && (
+          <ArrowUpRight
+            className="absolute bottom-3 right-3 size-4 text-muted-foreground opacity-0 transition-all [transition-duration:180ms] group-hover:translate-x-[2px] group-hover:-translate-y-[2px] group-hover:opacity-100"
+            aria-hidden="true"
+          />
+        )}
       </div>
     </Link>
   );

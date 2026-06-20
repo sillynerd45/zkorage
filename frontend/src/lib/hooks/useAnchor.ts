@@ -40,9 +40,13 @@ export function useAnchor() {
 
   // --- upload / encrypt / anchor (the slow path: real proof) ---
   const [roomLabel, setRoomLabel] = useState("zkorage-dataroom-demo");
-  const [content, setContent] = useState("Confidential term sheet. Series A, $4M at $20M pre. 🔒");
-  // A chosen file (PDF, image, any bytes) overrides the text box. Read to base64 in the browser; the backend
-  // encrypts the bytes exactly like text. Capped so the base64 body stays under the backend's JSON limit.
+  const [content, setContent] = useState("Confidential term sheet. Series A, $4M at $20M pre.");
+  // The Store form asks for ONE input at a time: a file or pasted text. `storeMode` is the explicit choice
+  // (default "file"); switching modes preserves both inputs (an accidental tap is reversible), and submit
+  // sends only the active mode's input. Picking/dropping a file snaps the mode to "file".
+  const [storeMode, setStoreMode] = useState<"file" | "text">("file");
+  // A chosen file (PDF, image, any bytes). Read to base64 in the browser; the backend encrypts the bytes
+  // exactly like text. Capped so the base64 body stays under the backend's JSON limit.
   const [file, setFileState] = useState<PickedFile | null>(null);
   const [fileErr, setFileErr] = useState<string | null>(null);
   const [recipientPub, setRecipientPub] = useState(DEMO_RECIPIENT_PUB);
@@ -107,6 +111,9 @@ export function useAnchor() {
       const dataUrl = String(reader.result || "");
       const b64 = dataUrl.includes(",") ? dataUrl.slice(dataUrl.indexOf(",") + 1) : "";
       setFileState({ name: f.name, type: f.type || "application/octet-stream", size: f.size, b64 });
+      // Picking or dropping a file is an unambiguous "use a file" signal: snap to file mode (any typed text
+      // stays in state, just hidden, so the switch is reversible).
+      setStoreMode("file");
     };
     reader.readAsDataURL(f);
   }, []);
@@ -140,9 +147,14 @@ export function useAnchor() {
       setState("rejected"); setBundle(null);
       return;
     }
-    // Need something to store: a chosen file, or some text.
-    if (!file && !content.trim()) {
-      setResp({ ok: false, error: "Add some text or choose a file to store.", dataroomId: "" });
+    // Need something to store in the ACTIVE mode (the other mode's input is ignored on submit).
+    if (storeMode === "file" && !file) {
+      setResp({ ok: false, error: "Choose a file to store, or switch to Text.", dataroomId: "" });
+      setState("rejected"); setBundle(null);
+      return;
+    }
+    if (storeMode === "text" && !content.trim()) {
+      setResp({ ok: false, error: "Paste some text to store, or switch to File.", dataroomId: "" });
       setState("rejected"); setBundle(null);
       return;
     }
@@ -160,7 +172,11 @@ export function useAnchor() {
       }
       // 2. encrypt (fresh K, AES-256-GCM), upload the ciphertext, and enqueue the seal proof.
       setStep("Encrypting and uploading the ciphertext, then queuing the seal proof…");
-      const pr = await proveSeal(roomLabel, file ? { contentB64: file.b64 } : { content }, recipientPub);
+      const pr = await proveSeal(
+        roomLabel,
+        storeMode === "file" && file ? { contentB64: file.b64 } : { content },
+        recipientPub,
+      );
       if (!pr.jobId) throw new Error(pr.error || "prove-seal failed");
       const { jobId, roomId, docId, blobPointer } = pr;
       setStep("Proving (STARK then Groth16) on the self-hosted prover…");
@@ -216,6 +232,8 @@ export function useAnchor() {
     setRoomLabel,
     content,
     setContent,
+    storeMode,
+    setStoreMode,
     file,
     pickFile,
     clearFile,
