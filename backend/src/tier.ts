@@ -28,8 +28,9 @@ import {
 (ed.etc as { sha512Sync?: (...m: Uint8Array[]) => Uint8Array }).sha512Sync = (...m) =>
   sha512(ed.etc.concatBytes(...m));
 
-// Deployed on testnet (set after deploy). Override via env.
-export const TIER_GATE_ID = process.env.TIER_GATE_ID || "";
+// Deployed on testnet (BP5). Override via env.
+export const TIER_GATE_ID =
+  process.env.TIER_GATE_ID || "CASSJSBMFDS3BCUBYKXG52SUS7GIHBCHDUM5FGQO4LY5VOWPUPPUFKZP";
 export const TIER_IMAGE_ID =
   process.env.TIER_IMAGE_ID ||
   "2671938b59598c129913fee8e0ef29159e6475dd61c37c503429bdaf0fba4e69";

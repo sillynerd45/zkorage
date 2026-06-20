@@ -163,8 +163,8 @@ export const TESTNET: ZkorageConfig = {
     solvencyGate: "CDHUG4NFTDIO4HX2MZH3PR77EKYUAU47HVKH4UO2WG7GSKDEF4ABWMLA",
     escrow: "CAMQKJKAJTOMT66N5N3E3VIRTN5ACDKV6P3Z2HLYVJHLAVRGJKHZFOXC",
     bondToken: "CCFHRZAP7GYUBNJ4RN7NBZL5GS7Q32F4CIXDTWTTIGPYEDWRIS2TUPA5",
-    // BP5 tier-gate — filled in at deploy (deployment.testnet.json -> tier_gate_BP5). Overridable via config.
-    tierGate: "",
+    // BP5 tier-gate (deployment.testnet.json -> tier_gate_BP5). Overridable via config.
+    tierGate: "CASSJSBMFDS3BCUBYKXG52SUS7GIHBCHDUM5FGQO4LY5VOWPUPPUFKZP",
   },
   // Any existing funded testnet account works as the read-only sim source (it never signs).
   readSource: "GDLECNXD76OZQROASQGWEP4KAMJWTJXZW2LN7OJGYPXIJDRXACWGXZY6",

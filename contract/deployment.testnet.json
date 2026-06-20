@@ -288,12 +288,14 @@
       "dataroom_seal": "8f24842d0647a0671ed1b898f6a42c2d104ff04b3f152067c93d9449bf65a3ce",
       "membership_dr2": "9550a12e84a9b26bc3926e79e271dc0f1a740f45d86f88c19d3e3e438939011c",
       "docauth_dr4": "e4f4a356cbacde61ef901500a6d396d2fa83a666b31224be2848fd69bbff8741",
-      "solvency_bp3": "d0a2f137812e05084aa79d0f7353d3fb7785da25facadd140494b94bed10e267"
+      "solvency_bp3": "d0a2f137812e05084aa79d0f7353d3fb7785da25facadd140494b94bed10e267",
+      "tier_bp5": "2671938b59598c129913fee8e0ef29159e6475dd61c37c503429bdaf0fba4e69"
     },
     "dataroom_DR1_thru_DR6": "CDUQITRVJOPJNVWBUINLZFI2LHPOLVFW2I7354WEFDG2W3VIG627HLNN",
     "bond_token_zkUSD_BP1": "CCFHRZAP7GYUBNJ4RN7NBZL5GS7Q32F4CIXDTWTTIGPYEDWRIS2TUPA5",
     "escrow_BP1": "CAMQKJKAJTOMT66N5N3E3VIRTN5ACDKV6P3Z2HLYVJHLAVRGJKHZFOXC",
-    "solvency_gate_BP3": "CDHUG4NFTDIO4HX2MZH3PR77EKYUAU47HVKH4UO2WG7GSKDEF4ABWMLA"
+    "solvency_gate_BP3": "CDHUG4NFTDIO4HX2MZH3PR77EKYUAU47HVKH4UO2WG7GSKDEF4ABWMLA",
+    "tier_gate_BP5": "CASSJSBMFDS3BCUBYKXG52SUS7GIHBCHDUM5FGQO4LY5VOWPUPPUFKZP"
   },
   "solvency_gate_BP3": {
     "name": "zkorage solvency-gate (BP3 — a solvency proof that dies when you pull your collateral)",
@@ -509,5 +511,59 @@
     "self_deposit_auth_note": "deposit succeeds with plain source-account auth (--source covers both the escrow require_auth and the token.transfer sub-invoke); no signAuthEntry needed for self-deposit -> de-risks BP2",
     "superseded_predeploy": "first BP1 deploy (pre-review) was escrow CDZYQBRD... / token CC72G5DZ...; orphaned after the hardening redeploy",
     "plan": "development/Build-Plan/claimable/PLAN.md (BP1); next BP3/BP5 gates cross-call is_locked/get_lock"
+  },
+  "tier_gate_BP5": {
+    "name": "zkorage tier-gate (BP5 - an anonymous bonded tier / membership expiring at X)",
+    "contract_id": "CASSJSBMFDS3BCUBYKXG52SUS7GIHBCHDUM5FGQO4LY5VOWPUPPUFKZP",
+    "claim_type": 13,
+    "image_id_pinned": "2671938b59598c129913fee8e0ef29159e6475dd61c37c503429bdaf0fba4e69",
+    "verifier": "CBAPC663PTWIWDLYNCG5WAD5MIZF4SKY43U6L2NM5ZUU5XFOS4JDYAFW",
+    "escrow": "CAMQKJKAJTOMT66N5N3E3VIRTN5ACDKV6P3Z2HLYVJHLAVRGJKHZFOXC",
+    "bond_token": "CCFHRZAP7GYUBNJ4RN7NBZL5GS7Q32F4CIXDTWTTIGPYEDWRIS2TUPA5",
+    "init_tx": "cda5e5c4e352141957c93db4111b57e3a9a8dc18f05ab02069028f93c9ade8ce",
+    "wasm_hash": "d9117eece11f94622d27e9bb59de90ffeeedad4d9eab92e95a689736e160210c",
+    "wasm_size_bytes": 22078,
+    "binds": "submit_tier_proof(seal,image_id,journal): image pin -> on-chain sha256(181-B journal) -> bare-verifier cross-call -> result==1 & claim_type==13 -> journal.member_root == the admin-pinned enrolled MemberRoot -> journal.qual_root in the recent accepted QualRing(threshold,X) ring (RING_CAP=8) -> now < X (deadline-encoded freshness; SOUND because qualifying locks are NON-revocable, so a lock cannot leave the set while now<X) -> nullifier UNUSED (one grant per identity per context) -> record grant keyed by the consenting accessor (BytesN<32>), expiring at X. is_granted(accessor) = deadline-only read (now < X). PERMISSIONLESS submit (the in-guest NEW-5 holder sig pk==accessor is the off-chain consent).",
+    "anonymity": "hides WHICH wallet / WHICH lock / the EXACT amount; the member's id_secret/id_trapdoor/both Merkle indices are never committed. qual_root is admin-set + PUBLICLY auditable (SDK recomputeQualRoot rebuilds it from the escrow's public get_lock state; no indexer signature). Anon-set minimum N=3 enforced OFF-CHAIN (a Merkle root carries no member count): the indexer refuses to publish below N, the backend refuses to prove below N, the UI warns.",
+    "bond_token_precondition": "the bond token MUST be clawback-disabled (the gate reads no lock so it cannot observe a clawback). zkUSD CCFHRZAP is clawback-disabled (the SEP-41 token contract has no clawback/set_authorized/AUTH_REQUIRED path).",
+    "demo_tier": "floor 100 zkUSD (1e9 base units), X = 1800000000 (~2027-01-15, fixed so members share ONE anonymity set).",
+    "acceptance_testnet": {
+      "note": "Full BP5 e2e GREEN (backend/scripts/bp5-tier-e2e.mjs, real proofs worker-first GPU). 3 members enrolled -> 3 NON-revocable qualifying escrow locks (commitment = each member's qualCommitment) -> member root pinned -> qual root published (anon set 3) -> 3 anonymous proofs -> 3 UNLINKABLE grants -> nullifier reuse rejected -> SDK recomputeQualRoot accepted.",
+      "qualifying_locks": "escrow lock ids 5/6/7 (deployer-bonded, 100 zkUSD each, non-revocable, unlock_time = X = 1800000000)",
+      "set_member_root_tx": "6a12ff8eb0... (member root b4ead111..., 7 members)",
+      "qual_root": "9957bad643a1c694f97312329ef2f830bee67acd6ae6e29fcfe45d801e883141 (anonSetSize 3, set_qual_root tx 903e729f...)",
+      "grants": "3 worker-proved tier proofs (canonical image 2671938b) -> 3 grants (tx f0bf50b2 / 9a4ef0fd / a5d639fe), 3 distinct accessors + 3 distinct nullifiers, all is_granted = true",
+      "nullifier_reuse_rejected": "re-prove M0 with a FRESH holder key (different accessor, SAME id_secret/context => SAME nullifier) -> submit_tier_proof -> Error(Contract, #12) NullifierUsed",
+      "trustless_audit": "SDK recomputeQualRoot(1e9, X) -> accepted=true, size=3, complete=true (rebuilt the published root from the escrow's PUBLIC get_lock state)"
+    },
+    "exported_functions": [
+      "initialize",
+      "submit_tier_proof",
+      "is_granted",
+      "get_grant",
+      "is_nullifier_used",
+      "get_member_root",
+      "get_qual_ring",
+      "is_qual_root_accepted",
+      "get_latest",
+      "get_count",
+      "get_by_index",
+      "get_history",
+      "get_config",
+      "set_member_root",
+      "set_qual_root",
+      "set_image_id",
+      "set_verifier",
+      "upgrade"
+    ],
+    "reviews": "security-blockchain-security-auditor SOUND for a testnet demo (0 Critical/High that break it) + engineering-code-reviewer (fixes in 98e23d9) + Codex CLEAN.",
+    "supersedes": "the literal 'ZK proof tied to a classic Claimable Balance' idea, on the anonymity side (BP3 keeps the issuer public; BP5 keeps the member anonymous)."
+  },
+  "guest_tier": {
+    "name": "tier_predicate (RISC0 zkVM guest, BP5 anonymous bonded tier) - deterministic Docker build",
+    "canonical_image_id": "2671938b59598c129913fee8e0ef29159e6475dd61c37c503429bdaf0fba4e69",
+    "predicate": "NO attester. Extends the DR2 membership guest with a SECOND depth-20 Merkle path: (1) NEW-5 holder ed25519 sig over 'zkorage-tier-bonded-v1' | context | accessor, pk==accessor asserted; (2) member leaf id_commitment = sha256(0x00 | id_secret | id_trapdoor) folds to member_root; (3) qual leaf c = sha256(0x03 | id_secret | 'escrow') folds to qual_root (the SAME c the depositor stores as the lock's commitment; one id_secret drives BOTH leaves = the core binding); (4) nullifier = sha256(0x02 | id_secret | context). Commits a 181-byte journal {result, claim_type=13, member_root, qual_root, threshold, unlock_after=X, context, nullifier, accessor}; id_secret/id_trapdoor/both leaf indices ABSENT (anonymous).",
+    "reproducible": "ed25519 + sha256 only (no x25519) -> canonical image_id reproduces cross-machine; ruint pinned 1.17.2. Built on the WSL2 box (risc0 5.0.0-rc.1, ~/zkorage-r5).",
+    "prover_kind": "tier (gateway + worker, 10th canonical bin host_tier); fields sig/pk/accessor/context/threshold/unlock_after/id_secret/id_trapdoor/member-siblings+index/qual-siblings+index; worker-first."
   }
 }
