@@ -13,10 +13,26 @@
 //! cross-contract, which is the property the whole design needs.
 //!
 //! ## Trust model (BP1)
-//! **No admin, no upgrade, no privileged role over locked funds.** Only a lock's `depositor` may
-//! `withdraw` / `unbond` it, and only its `claimant` may `claim` it, each gated on `unlock_time`. The
-//! contract holds the tokens and returns them; nobody else can move them. Expiry is enforced by the
-//! stored `unlock_time`, never by entry TTL. **Unaudited, demo only.**
+//! **No admin, no upgrade, no privileged role over locked funds.** Funds move only via the lock's own
+//! parties:
+//!   * a **self-bond** (`claimant == depositor`, the roadmap default) is released by the depositor via
+//!     `withdraw` (after unlock) or `unbond` (early, revocable locks only);
+//!   * a **distinct-claimant** lock (`claimant != depositor`) is a one-way time-locked send: it MUST be
+//!     non-revocable, and it is releasable only by the claimant via `claim` after unlock. The depositor
+//!     cannot reclaim it. This removes the withdraw-vs-claim race (a depositor cannot front-run and take
+//!     funds advertised to a claimant).
+//!
+//! Lock expiry is enforced by the stored `unlock_time`, never by entry TTL. **Unaudited, demo only.**
+//!
+//! ## Notes for the gate authors (BP3/BP5)
+//! * `is_locked` is only trustworthy under an **atomic read-and-act in the same transaction**. A gate
+//!   that caches `is_locked == true` and grants something redeemable in a *later* transaction is wrong:
+//!   the depositor can `unbond` in between. Read-and-decide in one cross-contract call.
+//! * `get_lock` returns the full record (depositor, claimant, amount, commitment) to ANY caller, so it
+//!   is **not** anonymity-preserving. The BP5 anonymous tier must rely on the ZK proof (and at most the
+//!   boolean `is_locked`), and must never reveal a specific `lock_id` to the verifier.
+//! * Restrict bonded products to fixed-supply, non-clawback, non-`AUTH_REQUIRED` tokens (enforce in the
+//!   gate/UI, not here): a clawback/de-auth by the issuer can move funds the escrow cannot observe.
 
 #![no_std]
 
@@ -26,7 +42,9 @@ use soroban_sdk::{
 };
 
 // ~5s ledgers -> ~17,280/day. TTL is housekeeping (keeps entries from being archived), NOT a security
-// boundary: lock expiry is always enforced by the stored `unlock_time`.
+// boundary: lock expiry is always enforced by the stored `unlock_time`. We bump on read as well as on
+// write so a long-dormant lock a gate watches stays warm (an archived entry makes a read ABORT the
+// transaction, never silently return "unlocked").
 const DAY_IN_LEDGERS: u32 = 17_280;
 const TTL_THRESHOLD: u32 = DAY_IN_LEDGERS; // ~1 day
 const TTL_EXTEND: u32 = 60 * DAY_IN_LEDGERS; // ~60 days
@@ -38,14 +56,18 @@ pub struct Lock {
     pub id: u64,
     pub depositor: Address,
     pub token: Address,
+    /// The ACTUAL amount received by the contract at deposit time (measured, not the requested figure).
     pub amount: i128,
     /// Unix seconds. Funds become movable at/after this time.
     pub unlock_time: u64,
-    /// Who may `claim()` after unlock (== depositor for a self-bond).
+    /// Who may `claim()` after unlock. `== depositor` for a self-bond; a distinct claimant makes this a
+    /// non-revocable one-way send releasable only by the claimant.
     pub claimant: Address,
-    /// Hiding tag for the BP5 anonymous-tier proof; all-zero when unused.
+    /// Hiding tag for the BP5 anonymous-tier proof; all-zero when unused. NOT validated in BP1 (it is an
+    /// attacker-controlled blob today); the BP5 guest/gate must verify it against the proof.
     pub commitment: BytesN<32>,
-    /// `true` => depositor may `unbond()` early (the solvency "pull your collateral" path).
+    /// `true` => depositor may `unbond()` early (the solvency "pull your collateral" path). Enforced at
+    /// deposit time to imply a self-bond.
     pub revocable: bool,
     /// `true` once withdrawn / claimed / unbonded.
     pub released: bool,
@@ -53,7 +75,8 @@ pub struct Lock {
 
 #[contracttype]
 pub enum DataKey {
-    /// Monotonic lock-id counter (lazy-initialised; first lock is id 1).
+    /// Monotonic lock-id counter (lazy-initialised; first lock is id 1). Lives in instance storage and
+    /// survives archival/restore (restore preserves the value), so `unwrap_or(0)` never re-mints id 1.
     Counter,
     Lock(u64),
 }
@@ -68,6 +91,10 @@ pub enum Error {
     NotRevocable = 4,
     BadUnlockTime = 5,
     BadAmount = 6,
+    /// `withdraw` on a lock with a distinct claimant; only the claimant may release it (via `claim`).
+    ClaimantOnly = 7,
+    /// `deposit` with `revocable = true` requires `claimant == from` (revocable locks are self-bonds).
+    RevocableMustBeSelfBond = 8,
 }
 
 // -------- events (consumed by the BP2 indexer to build "My Balances") --------
@@ -123,7 +150,8 @@ pub struct Escrow;
 #[contractimpl]
 impl Escrow {
     /// Lock `amount` of `token` until `unlock_time`. Pulls the tokens into the contract (the `from`
-    /// address authorises the SAC transfer). Returns the new `lock_id`.
+    /// address authorises the SAC transfer) and records the ACTUAL received amount. Returns the new
+    /// `lock_id`. A revocable lock must be a self-bond (`claimant == from`).
     pub fn deposit(
         env: Env,
         from: Address,
@@ -141,9 +169,22 @@ impl Escrow {
         if unlock_time <= env.ledger().timestamp() {
             return Err(Error::BadUnlockTime);
         }
+        // A revocable lock must be a self-bond: otherwise the depositor could `unbond` early and rug a
+        // distinct claimant.
+        if revocable && claimant != from {
+            return Err(Error::RevocableMustBeSelfBond);
+        }
 
-        // Pull tokens into the contract (SAC/SEP-41 transfer; `from` authorises).
-        TokenClient::new(&env, &token).transfer(&from, &env.current_contract_address(), &amount);
+        // Pull tokens in, measuring the ACTUAL delta so a fee-on-transfer / rebasing token cannot make
+        // the stored amount exceed the held balance (which would let one lock drain another's funds).
+        let tc = TokenClient::new(&env, &token);
+        let contract = env.current_contract_address();
+        let before = tc.balance(&contract);
+        tc.transfer(&from, &contract, &amount);
+        let received = tc.balance(&contract) - before;
+        if received <= 0 {
+            return Err(Error::BadAmount);
+        }
 
         let mut id: u64 = env.storage().instance().get(&DataKey::Counter).unwrap_or(0);
         id += 1;
@@ -154,7 +195,7 @@ impl Escrow {
             id,
             depositor: from.clone(),
             token: token.clone(),
-            amount,
+            amount: received,
             unlock_time,
             claimant: claimant.clone(),
             commitment,
@@ -168,7 +209,7 @@ impl Escrow {
             claimant,
             id,
             token,
-            amount,
+            amount: received,
             unlock_time,
             revocable,
         }
@@ -198,10 +239,14 @@ impl Escrow {
         Ok(())
     }
 
-    /// Return funds to the depositor once `now >= unlock_time`. Depositor-authorised.
+    /// Return funds to the depositor once `now >= unlock_time`. **Self-bond only** — a lock with a
+    /// distinct claimant is released solely by `claim`. Depositor-authorised.
     pub fn withdraw(env: Env, lock_id: u64) -> Result<(), Error> {
         let mut lock = Self::load(&env, lock_id)?;
         lock.depositor.require_auth();
+        if lock.claimant != lock.depositor {
+            return Err(Error::ClaimantOnly);
+        }
         Self::ensure_unlocked(&env, &lock)?;
         lock.released = true;
         Self::save(&env, &lock);
@@ -219,8 +264,8 @@ impl Escrow {
         Ok(())
     }
 
-    /// Send funds to the designated `claimant` once `now >= unlock_time` (CB-style two-party).
-    /// Claimant-authorised.
+    /// Send funds to the designated `claimant` once `now >= unlock_time` (the one-way send path).
+    /// Claimant-authorised. For a self-bond this is equivalent to `withdraw`.
     pub fn claim(env: Env, lock_id: u64) -> Result<(), Error> {
         let mut lock = Self::load(&env, lock_id)?;
         lock.claimant.require_auth();
@@ -241,9 +286,9 @@ impl Escrow {
         Ok(())
     }
 
-    /// Early exit for **revocable** locks only. Flips `is_locked -> false` immediately and returns the
-    /// funds to the depositor. A solvency gate's live `is_locked` read catches this at once, voiding the
-    /// proof. Depositor-authorised.
+    /// Early exit for **revocable** locks only (which are always self-bonds). Flips `is_locked -> false`
+    /// immediately and returns the funds to the depositor. A solvency gate's live `is_locked` read
+    /// catches this at once, voiding the proof. Depositor-authorised.
     pub fn unbond(env: Env, lock_id: u64) -> Result<(), Error> {
         let mut lock = Self::load(&env, lock_id)?;
         lock.depositor.require_auth();
@@ -269,22 +314,25 @@ impl Escrow {
         Ok(())
     }
 
-    // -------- read-only views (gates call these cross-contract) --------
+    // -------- read-only views (gates call these cross-contract; see the header note on atomicity) --------
 
     /// `true` iff the lock exists, is unreleased, and `now < unlock_time`. Returns `false` for unknown
-    /// ids (fail-closed). This is what gates read.
+    /// ids (fail-closed). Bumps the entry's TTL so a watched lock stays warm. This is what gates read.
     pub fn is_locked(env: Env, lock_id: u64) -> bool {
-        match env
-            .storage()
-            .persistent()
-            .get::<DataKey, Lock>(&DataKey::Lock(lock_id))
-        {
-            Some(lock) => !lock.released && env.ledger().timestamp() < lock.unlock_time,
+        let key = DataKey::Lock(lock_id);
+        match env.storage().persistent().get::<DataKey, Lock>(&key) {
+            Some(lock) => {
+                env.storage()
+                    .persistent()
+                    .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND);
+                !lock.released && env.ledger().timestamp() < lock.unlock_time
+            }
             None => false,
         }
     }
 
-    /// Full lock record. Errors with `LockNotFound` for unknown ids.
+    /// Full lock record. Errors with `LockNotFound` for unknown ids. NOT anonymity-preserving (returns
+    /// depositor/claimant/commitment) — see the header note for BP5.
     pub fn get_lock(env: Env, lock_id: u64) -> Result<Lock, Error> {
         Self::load(&env, lock_id)
     }
@@ -292,10 +340,16 @@ impl Escrow {
     // -------- internals --------
 
     fn load(env: &Env, lock_id: u64) -> Result<Lock, Error> {
+        let key = DataKey::Lock(lock_id);
+        let lock: Lock = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(Error::LockNotFound)?;
         env.storage()
             .persistent()
-            .get(&DataKey::Lock(lock_id))
-            .ok_or(Error::LockNotFound)
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND);
+        Ok(lock)
     }
 
     fn save(env: &Env, lock: &Lock) {

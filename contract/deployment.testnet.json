@@ -290,8 +290,8 @@
       "docauth_dr4": "e4f4a356cbacde61ef901500a6d396d2fa83a666b31224be2848fd69bbff8741"
     },
     "dataroom_DR1_thru_DR6": "CDUQITRVJOPJNVWBUINLZFI2LHPOLVFW2I7354WEFDG2W3VIG627HLNN",
-    "bond_token_zkUSD_BP1": "CC72G5DZEQC67T7M2LIOPXWWXIQEQWSFAVSSFGFVJFOKVNCMNTWNMDCC",
-    "escrow_BP1": "CDZYQBRDSPY2DVN5JMCABIIKL7UT4D2CYD3ZW2T4TGJGEG6E2OUEESCF"
+    "bond_token_zkUSD_BP1": "CCFHRZAP7GYUBNJ4RN7NBZL5GS7Q32F4CIXDTWTTIGPYEDWRIS2TUPA5",
+    "escrow_BP1": "CAMQKJKAJTOMT66N5N3E3VIRTN5ACDKV6P3Z2HLYVJHLAVRGJKHZFOXC"
   },
   "acceptance_testnet_week8": {
     "composition_positive": "accredited grant (tx 17efe3b7 gate) + revenue proof submit (is_revenue_verified=true) -> can_access(demo)=true + request_investor_access GRANT (InvestorAdmitted, idx 0)",
@@ -456,12 +456,13 @@
   },
   "escrow_BP1": {
     "name": "zkorage Bonded-Proofs escrow (BP1) - Soroban-native time-locked escrow; gate-readable is_locked()/get_lock()",
-    "contract_id": "CDZYQBRDSPY2DVN5JMCABIIKL7UT4D2CYD3ZW2T4TGJGEG6E2OUEESCF",
-    "wasm_hash": "4211c6f232e77533e5e9a11f7f2565562ea0beab47d6fc09412f0d978bb0cac0",
-    "wasm_size_bytes": 8994,
+    "contract_id": "CAMQKJKAJTOMT66N5N3E3VIRTN5ACDKV6P3Z2HLYVJHLAVRGJKHZFOXC",
+    "wasm_hash": "f0a5f20bdf277850820c1a093b303775f9db5f4036ed9043107eb813c3ba025e",
+    "wasm_size_bytes": 10427,
     "soroban_sdk": "26.1.0",
-    "trust_model": "no admin/upgrade; only a lock's depositor may withdraw/unbond, only its claimant may claim; expiry enforced by stored unlock_time, not entry TTL",
-    "bond_token_id": "CC72G5DZEQC67T7M2LIOPXWWXIQEQWSFAVSSFGFVJFOKVNCMNTWNMDCC",
+    "trust_model": "no admin/upgrade; self-bond released by depositor (withdraw after unlock / unbond early if revocable); distinct-claimant lock is a non-revocable one-way send releasable only by claimant via claim; expiry enforced by stored unlock_time, not entry TTL",
+    "review_hardening": "post-review (security-auditor + code-reviewer): H-01 withdraw/unbond self-bond-only + revocable-must-be-self-bond (closes withdraw-vs-claim theft race); M-03 deposit measures actual received balance (fee-on-transfer safe); M-02 TTL bumped on read so a watched lock is not archived; +9 tests incl. 4 negative-auth + H-01 rejections; 22/22 green",
+    "bond_token_id": "CCFHRZAP7GYUBNJ4RN7NBZL5GS7Q32F4CIXDTWTTIGPYEDWRIS2TUPA5",
     "bond_token": "fresh clawback-disabled instance of the demo SEP-41 token, symbol zkUSD, decoupled from the PoR supply token (CC3JKNC4...)",
     "bond_token_wasm_hash": "2b0f619c6bb277c3a4261bb490436ef1a575245e29b9b853ebb009be64ab44a7",
     "exported_functions": [
@@ -473,9 +474,9 @@
       "is_locked",
       "get_lock"
     ],
-    "acceptance": "on-chain smoke test PASSED: deposit 100 zkUSD revocable -> is_locked=true + escrow held funds -> unbond -> is_locked=false + escrow drained + funds returned (lock_id 1)",
-    "acceptance_unbond_tx": "e59bddedbf5385f1b4c103e9696e51b42ce1e7c8ca632fea64f6719a480f4aa7",
-    "self_deposit_auth_note": "deposit succeeded with plain source-account auth (--source covered both the escrow require_auth and the token.transfer sub-invoke); no signAuthEntry needed for self-deposit -> de-risks BP2",
+    "acceptance": "on-chain smoke test PASSED on the hardened build: deposit 100 zkUSD revocable self-bond -> is_locked=true + escrow held funds -> unbond -> is_locked=false + escrow drained + funds returned (lock_id 1)",
+    "self_deposit_auth_note": "deposit succeeds with plain source-account auth (--source covers both the escrow require_auth and the token.transfer sub-invoke); no signAuthEntry needed for self-deposit -> de-risks BP2",
+    "superseded_predeploy": "first BP1 deploy (pre-review) was escrow CDZYQBRD... / token CC72G5DZ...; orphaned after the hardening redeploy",
     "plan": "development/Build-Plan/claimable/PLAN.md (BP1); next BP3/BP5 gates cross-call is_locked/get_lock"
   }
 }
