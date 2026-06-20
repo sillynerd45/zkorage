@@ -49,16 +49,16 @@ LOCK_ID="$(stellar contract invoke --id "$ESCROW_ID" --source "$ALIAS" --network
   --claimant "$ADMIN" --commitment "$ZERO32" --revocable true 2>/dev/null | tr -d '"')"
 echo "[ok] lock_id=$LOCK_ID"
 
-LOCKED="$(stellar contract invoke --send=no --id "$ESCROW_ID" --source "$ALIAS" --network "$NETWORK" -- is_locked --lock_id "$LOCK_ID" 2>/dev/null)"
-ESC_BAL="$(stellar contract invoke --send=no --id "$TOKEN_ID" --source "$ALIAS" --network "$NETWORK" -- balance --id "$ESCROW_ID" 2>/dev/null)"
+LOCKED="$(stellar contract invoke --send=no --id "$ESCROW_ID" --source "$ALIAS" --network "$NETWORK" -- is_locked --lock_id "$LOCK_ID" 2>/dev/null | tr -d '"')"
+ESC_BAL="$(stellar contract invoke --send=no --id "$TOKEN_ID" --source "$ALIAS" --network "$NETWORK" -- balance --id "$ESCROW_ID" 2>/dev/null | tr -d '"')"
 echo "[check] is_locked=$LOCKED (expect true)   escrow_balance=$ESC_BAL (expect 1000000000)"
 [ "$LOCKED" = "true" ] || { echo "[FAIL] expected is_locked=true"; exit 1; }
 [ "$ESC_BAL" = "1000000000" ] || { echo "[FAIL] expected escrow to hold the deposit"; exit 1; }
 
 echo "[*] acceptance: unbond (early revocable exit)..."
 stellar contract invoke --id "$ESCROW_ID" --source "$ALIAS" --network "$NETWORK" -- unbond --lock_id "$LOCK_ID" >/dev/null
-LOCKED2="$(stellar contract invoke --send=no --id "$ESCROW_ID" --source "$ALIAS" --network "$NETWORK" -- is_locked --lock_id "$LOCK_ID" 2>/dev/null)"
-ESC_BAL2="$(stellar contract invoke --send=no --id "$TOKEN_ID" --source "$ALIAS" --network "$NETWORK" -- balance --id "$ESCROW_ID" 2>/dev/null)"
+LOCKED2="$(stellar contract invoke --send=no --id "$ESCROW_ID" --source "$ALIAS" --network "$NETWORK" -- is_locked --lock_id "$LOCK_ID" 2>/dev/null | tr -d '"')"
+ESC_BAL2="$(stellar contract invoke --send=no --id "$TOKEN_ID" --source "$ALIAS" --network "$NETWORK" -- balance --id "$ESCROW_ID" 2>/dev/null | tr -d '"')"
 echo "[check] is_locked=$LOCKED2 (expect false)  escrow_balance=$ESC_BAL2 (expect 0)"
 [ "$LOCKED2" = "false" ] || { echo "[FAIL] expected is_locked=false after unbond"; exit 1; }
 [ "$ESC_BAL2" = "0" ] || { echo "[FAIL] expected escrow drained after unbond"; exit 1; }
