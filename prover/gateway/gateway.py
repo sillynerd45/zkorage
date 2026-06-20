@@ -7,7 +7,8 @@ Public  : POST /prove {kind?, envelope_hex, signature_hex, issuer_pubkey_hex, th
                               auditor_pubkey + threshold) | "accredited" (W8; needs accessor_hex) |
                               "dataroom_seal" (DR1; doc_key + recipient_pubkey + content_hash + room_id + doc_id) |
                               "membership" (DR2; anonymous eligibility: holder sig + Merkle witness + nullifier) |
-                              "docauth" (DR4; doc-authenticity/zkPDF: RSA-2048 signed-statement verify + value>=threshold)
+                              "docauth" (DR4; doc-authenticity/zkPDF: RSA-2048 signed-statement verify + value>=threshold) |
+                              "solvency" (BP3; PoR predicate reserves>=supply BOUND to a bonded escrow lock)
                        -> {job_id}
           GET  /prove/<id> -> {status, by, bundle?, error?}
           GET  /health
@@ -37,6 +38,7 @@ HOST_ACCREDITED_BIN = os.environ.get("HOST_ACCREDITED_BIN", os.path.join(PROVER_
 HOST_DATAROOM_SEAL_BIN = os.environ.get("HOST_DATAROOM_SEAL_BIN", os.path.join(PROVER_DIR, "target/release/host_dataroom_seal"))
 HOST_MEMBERSHIP_BIN = os.environ.get("HOST_MEMBERSHIP_BIN", os.path.join(PROVER_DIR, "target/release/host_membership"))
 HOST_DOCAUTH_BIN = os.environ.get("HOST_DOCAUTH_BIN", os.path.join(PROVER_DIR, "target/release/host_docauth"))
+HOST_SOLVENCY_BIN = os.environ.get("HOST_SOLVENCY_BIN", os.path.join(PROVER_DIR, "target/release/host_solvency"))
 PORT = int(os.environ.get("PORT", "8080"))
 FALLBACK_SECS = int(os.environ.get("FALLBACK_SECS", "30"))
 CLAIM_TIMEOUT = int(os.environ.get("CLAIM_TIMEOUT", "1800"))  # worker claimed but never returned
@@ -68,6 +70,12 @@ REQUIRED = {
     # room. statement_hex is the PRIVATE signed blob — it reaches the self-hosted prover (which already sees
     # plaintext per the project rule); confidentiality is vs the on-chain verifier + public, not the prover.
     "docauth": ["n_hex", "sig_hex", "statement_hex", "threshold", "room_id_hex"],
+    # solvency (BP3): a Proof-of-Reserves predicate (reserves>=supply, reserves PRIVATE) BOUND to a bonded
+    # escrow lock. Same first four fields as reserves (the reserve attestation, signed by the bonded reserve
+    # auditor over DOMAIN ‖ envelope), plus the five public escrow-binding values the solvency gate enforces
+    # on-chain (escrow id, lock_id, min_amount, bond token id, supply token id). threshold = the supply.
+    "solvency": ["envelope_hex", "signature_hex", "issuer_pubkey_hex", "threshold",
+                 "escrow_hex", "lock_id", "min_amount", "bond_token_hex", "supply_token_hex"],
 }
 
 jobs = {}            # id -> dict
@@ -107,6 +115,11 @@ def run_host_local(inputs, kind):
         bin_path = HOST_DOCAUTH_BIN
         lines = [inputs["n_hex"], inputs["sig_hex"], inputs["statement_hex"],
                  str(int(inputs["threshold"])), inputs["room_id_hex"]]
+    elif kind == "solvency":
+        bin_path = HOST_SOLVENCY_BIN
+        lines = [inputs["envelope_hex"], inputs["signature_hex"], inputs["issuer_pubkey_hex"],
+                 str(int(inputs["threshold"])), inputs["escrow_hex"], str(int(inputs["lock_id"])),
+                 str(int(inputs["min_amount"])), inputs["bond_token_hex"], inputs["supply_token_hex"]]
     else:
         bin_path = HOST_BIN
         lines = [inputs["envelope_hex"], inputs["signature_hex"], inputs["issuer_pubkey_hex"],
@@ -257,6 +270,21 @@ class H(BaseHTTPRequestHandler):
                     return self._send(400, {"error": "statement_hex must be 88-byte hex (176 hex chars)", "kind": kind})
                 if not _HEX32.match(str(inputs.get("room_id_hex", ""))):
                     return self._send(400, {"error": "room_id_hex must be 32-byte hex (64 hex chars)", "kind": kind})
+            # solvency (BP3): validate the escrow-binding shapes at the PUBLIC boundary. escrow/bond_token/
+            # supply_token = 32-byte contract ids (64 hex); lock_id/min_amount are u64 (threshold already
+            # validated + normalized by the shared block above). The backend always sends well-formed values.
+            if kind == "solvency":
+                for f in ("escrow_hex", "bond_token_hex", "supply_token_hex"):
+                    if not _HEX32.match(str(inputs.get(f, ""))):
+                        return self._send(400, {"error": f"{f} must be 32-byte hex (64 hex chars)", "kind": kind})
+                for f in ("lock_id", "min_amount"):
+                    try:
+                        v = int(str(inputs[f]).strip())
+                    except (ValueError, TypeError):
+                        return self._send(400, {"error": f"{f} must be an integer", "kind": kind})
+                    if v < 0 or v > 0xFFFFFFFFFFFFFFFF:
+                        return self._send(400, {"error": f"{f} out of u64 range", "kind": kind})
+                    inputs[f] = str(v)
             jid = uuid.uuid4().hex[:12]
             with lock:
                 jobs[jid] = {"id": jid, "kind": kind, "inputs": inputs,

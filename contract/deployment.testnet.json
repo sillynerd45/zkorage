@@ -287,9 +287,42 @@
       "accredited": "26d743739468287991220d6da2cb891616aa7c6b90da2eda9836395f31bcc947",
       "dataroom_seal": "8f24842d0647a0671ed1b898f6a42c2d104ff04b3f152067c93d9449bf65a3ce",
       "membership_dr2": "9550a12e84a9b26bc3926e79e271dc0f1a740f45d86f88c19d3e3e438939011c",
-      "docauth_dr4": "e4f4a356cbacde61ef901500a6d396d2fa83a666b31224be2848fd69bbff8741"
+      "docauth_dr4": "e4f4a356cbacde61ef901500a6d396d2fa83a666b31224be2848fd69bbff8741",
+      "solvency_bp3": "d0a2f137812e05084aa79d0f7353d3fb7785da25facadd140494b94bed10e267"
     },
-    "dataroom_DR1_thru_DR6": "CDUQITRVJOPJNVWBUINLZFI2LHPOLVFW2I7354WEFDG2W3VIG627HLNN"
+    "dataroom_DR1_thru_DR6": "CDUQITRVJOPJNVWBUINLZFI2LHPOLVFW2I7354WEFDG2W3VIG627HLNN",
+    "bond_token_zkUSD_BP1": "CCFHRZAP7GYUBNJ4RN7NBZL5GS7Q32F4CIXDTWTTIGPYEDWRIS2TUPA5",
+    "escrow_BP1": "CAMQKJKAJTOMT66N5N3E3VIRTN5ACDKV6P3Z2HLYVJHLAVRGJKHZFOXC",
+    "solvency_gate_BP3": "CDHUG4NFTDIO4HX2MZH3PR77EKYUAU47HVKH4UO2WG7GSKDEF4ABWMLA"
+  },
+  "solvency_gate_BP3": {
+    "name": "zkorage solvency-gate (BP3 — a solvency proof that dies when you pull your collateral)",
+    "contract_id": "CDHUG4NFTDIO4HX2MZH3PR77EKYUAU47HVKH4UO2WG7GSKDEF4ABWMLA",
+    "claim_type": 12,
+    "image_id_pinned": "d0a2f137812e05084aa79d0f7353d3fb7785da25facadd140494b94bed10e267",
+    "verifier": "CBAPC663PTWIWDLYNCG5WAD5MIZF4SKY43U6L2NM5ZUU5XFOS4JDYAFW",
+    "escrow": "CAMQKJKAJTOMT66N5N3E3VIRTN5ACDKV6P3Z2HLYVJHLAVRGJKHZFOXC",
+    "supply_token": "CC3JKNC4EKALMT7WALUMCTVBSH73ZZSP3AC4B7IQUAZ7UYYZCEIISQLA",
+    "bond_token": "CCFHRZAP7GYUBNJ4RN7NBZL5GS7Q32F4CIXDTWTTIGPYEDWRIS2TUPA5",
+    "issuer_allowlist": [
+      "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633"
+    ],
+    "auditor_note": "mock bonded reserve auditor (ed25519 seed [19;32]); distinct from PoR [7]/KYC [9]/payroll [11]/accredited [13]/revenue [15]/appraiser [17].",
+    "init_tx": "5cb1f64cada113f55b037a146a489ebbd11526beb77958b6da41d330449c9470",
+    "wasm_size_bytes": 23732,
+    "upgrade_tx": "80edb3530d5cabd54df7427984e79a6045cadd5d3e91aca74d8ad09d147109a3",
+    "upgrade_wasm_hash": "e415aa2d119f01fe19593c9718df5940ee4e73ab8925d94668662ffa06aece7b",
+    "upgrade_note": "third-review hardening: reject min_amount==0 on-chain (a zero floor is not a bond claim; closes a direct-submit bypass of the backend guard). Storage preserved (get_config + the demo grant on lock 4 survived). cargo 29/29.",
+    "binds": "submit_solvency_proof(seal,image_id,journal): image pin -> on-chain sha256(173-B journal) -> bare-verifier cross-call -> result==1 & claim_type==12 & auditor allow-listed & expiry>now -> journal.escrow==escrow_id -> journal.supply_token==supply_token_id & supply_token.total_supply()==journal.supply -> journal.bond_token==bond_token_id & escrow.get_lock(lock_id): active(!released & now<unlock_time) & revocable & token==bond_token & amount>=min_amount -> lock.depositor.require_auth() -> record keyed by depositor. is_granted(depositor) recomputes the bond liveness + supply + freshness LIVE (no stored grant expiry) => flips false the instant you unbond.",
+    "acceptance_testnet": "worker-first solvency proof (image d0a2f137, 173-B journal, supply 1e13, lock 2, min 5e8) -> submit_solvency_proof (tx 9df31c2a) -> is_granted(deployer)=true (SOLVENT). unbond lock 2 (tx 9737aa89) -> is_granted(deployer)=false (VOID), lock released. The self-void money-shot, on-chain.",
+    "supersedes": "the literal 'ZK proof tied to a classic Claimable Balance' idea (research-killed: Soroban can't read classic CBs + CBs are public = theater)."
+  },
+  "guest_solvency": {
+    "name": "solvency_predicate (RISC0 zkVM guest, BP3 solvency-bonded) — deterministic Docker build",
+    "canonical_image_id": "d0a2f137812e05084aa79d0f7353d3fb7785da25facadd140494b94bed10e267",
+    "predicate": "verifies the bonded reserve auditor's ed25519 signature over SOLVENCY_DOMAIN | envelope (DOMAIN='zkorage-solvency-v1\\0'); asserts pk==issuer_id, claim_type==12, reserves(value)>=supply(threshold). Commits a 173-byte journal {result, claim_type, issuer_id, supply, nonce, expiry, escrow, lock_id, min_amount, bond_token, supply_token} — the first 61 bytes byte-identical to the PoR journal; reserves ABSENT (private). escrow/lock_id/min_amount/bond_token/supply_token are public binding values the GATE enforces on-chain.",
+    "reproducible": "ed25519 + sha256 only (no x25519) -> canonical image_id reproduces cross-machine; ruint pinned 1.17.2. Built on the WSL2 box (risc0 5.0.0-rc.1).",
+    "prover_kind": "solvency (gateway + worker, 9th canonical bin host_solvency); fields envelope_hex/signature_hex/issuer_pubkey_hex/threshold/escrow_hex/lock_id/min_amount/bond_token_hex/supply_token_hex; worker-first verified on testnet (proved_by=worker emitted the pinned image_id)."
   },
   "acceptance_testnet_week8": {
     "composition_positive": "accredited grant (tx 17efe3b7 gate) + revenue proof submit (is_revenue_verified=true) -> can_access(demo)=true + request_investor_access GRANT (InvestorAdmitted, idx 0)",
@@ -451,5 +484,30 @@
       "recipient_pub": "97a6b925 (demo x25519; secret = sha256('zkorage-demo-dataroom-recipient-key'))"
     },
     "status": "SHIPPED 2026-06-19. Contract DEPLOYED + verified + demo doc-policy live; keyper (is_doc_admitted gate) + backend (doc-policy routes + wallet-owned rooms + /dataroom/rooms) + SDK/MCP v0.15.0 + frontend (Documents submenu, Browse = rooms-your-wallet-owns, dropped contents column, 'Open a shared document' reader flow folding DR6 Policy + DR3 Release) all built + self-tested: cargo 100/100, full Playwright 37/37, MCP selftest GREEN, SDK smoke GREEN. engineering-code-reviewer Ship-it (0 Crit/High; L2 hardening applied, L1/L3 documented). Pushed (branch + main, github.com/sillynerd45/zkorage, main db3e8f8) + FE+BE redeployed to the VM as frontend v0.7.0 (apizk Pattern-2 routes live, frontend fresh, .env/data preserved). NOTE: NO keepers run in production (confirmed via SSH), so the Pattern-2 key-release 'open' step is unavailable in prod (same pre-existing DR3 limitation); the policy/admission display works in prod. If keepers are deployed to the VM later, they must run the new is_doc_admitted gate."
+  },
+  "escrow_BP1": {
+    "name": "zkorage Bonded-Proofs escrow (BP1) - Soroban-native time-locked escrow; gate-readable is_locked()/get_lock()",
+    "contract_id": "CAMQKJKAJTOMT66N5N3E3VIRTN5ACDKV6P3Z2HLYVJHLAVRGJKHZFOXC",
+    "wasm_hash": "f0a5f20bdf277850820c1a093b303775f9db5f4036ed9043107eb813c3ba025e",
+    "wasm_size_bytes": 10427,
+    "soroban_sdk": "26.1.0",
+    "trust_model": "no admin/upgrade; self-bond released by depositor (withdraw after unlock / unbond early if revocable); distinct-claimant lock is a non-revocable one-way send releasable only by claimant via claim; expiry enforced by stored unlock_time, not entry TTL",
+    "review_hardening": "post-review (security-auditor + code-reviewer): H-01 withdraw/unbond self-bond-only + revocable-must-be-self-bond (closes withdraw-vs-claim theft race); M-03 deposit measures actual received balance (fee-on-transfer safe); M-02 TTL bumped on read so a watched lock is not archived; +9 tests incl. 4 negative-auth + H-01 rejections; 22/22 green",
+    "bond_token_id": "CCFHRZAP7GYUBNJ4RN7NBZL5GS7Q32F4CIXDTWTTIGPYEDWRIS2TUPA5",
+    "bond_token": "fresh clawback-disabled instance of the demo SEP-41 token, symbol zkUSD, decoupled from the PoR supply token (CC3JKNC4...)",
+    "bond_token_wasm_hash": "2b0f619c6bb277c3a4261bb490436ef1a575245e29b9b853ebb009be64ab44a7",
+    "exported_functions": [
+      "deposit",
+      "set_timelock",
+      "withdraw",
+      "claim",
+      "unbond",
+      "is_locked",
+      "get_lock"
+    ],
+    "acceptance": "on-chain smoke test PASSED on the hardened build: deposit 100 zkUSD revocable self-bond -> is_locked=true + escrow held funds -> unbond -> is_locked=false + escrow drained + funds returned (lock_id 1)",
+    "self_deposit_auth_note": "deposit succeeds with plain source-account auth (--source covers both the escrow require_auth and the token.transfer sub-invoke); no signAuthEntry needed for self-deposit -> de-risks BP2",
+    "superseded_predeploy": "first BP1 deploy (pre-review) was escrow CDZYQBRD... / token CC72G5DZ...; orphaned after the hardening redeploy",
+    "plan": "development/Build-Plan/claimable/PLAN.md (BP1); next BP3/BP5 gates cross-call is_locked/get_lock"
   }
 }

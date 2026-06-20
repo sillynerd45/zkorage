@@ -10,7 +10,9 @@ import {
   CLAIM_TYPE_ACCREDITED,
   CLAIM_TYPE_REVENUE,
   CLAIM_TYPE_TEASER,
+  CLAIM_TYPE_SOLVENCY,
   ACCREDITED_DOMAIN,
+  SOLVENCY_DOMAIN,
   type ClaimEnvelope,
 } from "./envelope.js";
 
@@ -242,6 +244,46 @@ export function attestTeaser(
     },
     seed,
   );
+}
+
+// ─────────────────────────── BP3 — Bonded Proofs (solvency) ───────────────────────────
+
+// Mock "bonded reserve auditor" seed ([19u8;32]) — DISTINCT from PoR [7] / KYC [9] / payroll [11] /
+// accredited [13] / revenue [15] / appraiser [17]. Matches host_solvency's demo seed. Signs a
+// SolvencyEnvelope (the 60-byte ClaimEnvelope, claim_type = 12, `value` = the PRIVATE reserve figure)
+// over SOLVENCY_DOMAIN ‖ envelope (NEW-2 domain separation).
+export const DEMO_SOLVENCY_AUDITOR_SEED = new Uint8Array(32).fill(19);
+
+export function solvencyAuditorPubkey(seed: Uint8Array = DEMO_SOLVENCY_AUDITOR_SEED): Uint8Array {
+  return ed.getPublicKey(seed);
+}
+
+/**
+ * Mock bonded reserve auditor: sign a `reserves ≥ supply` claim for the solvency gate. `reserves` stays
+ * private (the ZK proof hides it; only "≥ supply" is revealed). Reuses the 60-byte ClaimEnvelope with
+ * claim_type = 12, but the signature is over SOLVENCY_DOMAIN ‖ envelope (so a solvency attestation can
+ * never be replayed as the byte-identical PoR envelope). `issuer_id` is the auditor pubkey (the guest
+ * enforces `issuer_id == signing key`).
+ */
+export function attestSolvency(
+  claim: { reserves: bigint; nonce?: bigint; expiry?: bigint },
+  seed: Uint8Array = DEMO_SOLVENCY_AUDITOR_SEED,
+): Attestation {
+  const pub = ed.getPublicKey(seed);
+  const envelope = buildEnvelope({
+    claimType: CLAIM_TYPE_SOLVENCY,
+    value: claim.reserves,
+    issuerId: pub, // convention: issuer_id == issuer pubkey
+    nonce: claim.nonce ?? 1n,
+    expiry: claim.expiry ?? 9_999_999_999n,
+  });
+  // NEW-2: sign DOMAIN ‖ envelope (must match the guest's verify).
+  const signed = new Uint8Array(SOLVENCY_DOMAIN.length + envelope.length);
+  signed.set(SOLVENCY_DOMAIN, 0);
+  signed.set(envelope, SOLVENCY_DOMAIN.length);
+  const signature = ed.sign(signed, seed);
+  if (!ed.verify(signature, signed, pub)) throw new Error("solvency self-verify failed");
+  return { envelope: toHex(envelope), signature: toHex(signature), issuer_pubkey: toHex(pub) };
 }
 
 // CLI: `npm run sign-demo` — prints the PoR demo attestation + the KYC issuer pubkey.

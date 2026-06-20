@@ -23,6 +23,11 @@ import DataroomPolicy from "./pages/app/dataroom/Policy";
 import DataroomAnchor from "./pages/app/dataroom/Anchor";
 import DataroomAuthenticity from "./pages/app/dataroom/Authenticity";
 import DataroomOpenShared from "./pages/app/dataroom/OpenShared";
+import BondedLayout from "./pages/app/bonded/Layout";
+import BondedOverview from "./pages/app/bonded/Overview";
+import BondedBalances from "./pages/app/bonded/Balances";
+import BondedDeposit from "./pages/app/bonded/Deposit";
+import BondedProve from "./pages/app/bonded/Prove";
 
 // One unified app, two shells:
 //   PUBLIC  marketing top-bar site at "/"      : Landing, Documentation, Verify, Explorer
@@ -62,6 +67,12 @@ export default function App() {
           {/* "documents" = store + open + browse (the page is still implemented in Anchor.tsx) */}
           <Route path="documents" element={<DataroomAnchor />} />
           <Route path="authenticity" element={<DataroomAuthenticity />} />
+        </Route>
+        <Route path="bonded" element={<BondedLayout />}>
+          <Route index element={<BondedOverview />} />
+          <Route path="balances" element={<BondedBalances />} />
+          <Route path="deposit" element={<BondedDeposit />} />
+          <Route path="prove" element={<BondedProve />} />
         </Route>
         <Route path="*" element={<Home />} />
       </Route>

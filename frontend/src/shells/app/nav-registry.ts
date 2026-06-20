@@ -20,7 +20,7 @@ const HOME: NavItem = { to: "/app", label: "Home", icon: Home, end: true };
 
 // The groups the app sidebar exposes (the ZK operations), in DISPLAY ORDER: Data Room first, then the
 // proofs. Verify & developer live on the public side. (Order here drives both the sidebar and the Home.)
-export const APP_GROUP_KEYS = ["dataroom", "prove"] as const;
+export const APP_GROUP_KEYS = ["dataroom", "bonded", "prove"] as const;
 
 export const NAV_SECTIONS: NavSection[] = [
   { key: "home", items: [HOME] },

@@ -5,7 +5,7 @@ export CARGO_HOME=$HOME/.cargo RUSTUP_HOME=$HOME/.rustup
 ROOT=~/zkorage-r5/prover/methods
 SUM=~/zkorage-r5/guest_image_ids.txt
 : > "$SUM"
-for g in guest-identity guest-compliance guest-payroll guest-accredited guest-dataroom-seal guest-membership guest-docauth; do
+for g in guest-identity guest-compliance guest-payroll guest-accredited guest-dataroom-seal guest-membership guest-docauth guest-solvency; do
   echo "===== building $g $(date +%T) ====="
   cd "$ROOT/$g" || { echo "$g: NO DIR" >> "$SUM"; continue; }
   if cargo risczero build > "/tmp/build_$g.log" 2>&1; then

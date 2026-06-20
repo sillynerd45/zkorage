@@ -169,6 +169,17 @@ ok(["can_access_fundraise", "is_accredited", "get_fundraise_info", "get_fundrais
   }
 }
 
+// ── BP3: Bonded Proofs solvency gate (a proof that dies when you pull your collateral) ──
+console.log("\n--- bonded solvency (self-void) ---");
+ok(names.includes("is_solvent"), "solvency tool registered");
+{
+  // Shape check (robust to demo state): the live answer is a boolean; the record is null or carries a lock_id.
+  const DEPOSITOR = "GDLECNXD76OZQROASQGWEP4KAMJWTJXZW2LN7OJGYPXIJDRXACWGXZY6";
+  const { data, isError } = parse(await client.callTool({ name: "is_solvent", arguments: { depositor: DEPOSITOR } }));
+  ok(!isError && typeof data?.answer === "boolean" && (data?.record === null || typeof data?.record?.lock_id === "string"),
+    "is_solvent(deployer)", `answer=${data?.answer} lock=${data?.record?.lock_id ?? "none"}`);
+}
+
 // ── DR1: Confidential Data Room (read-only — no key custody, no document open) ──
 console.log("\n--- dataroom (DR1: read-only data plane; NO key custody) ---");
 ok(["get_dataroom_info", "get_dataroom_room", "get_dataroom_document", "list_dataroom_documents", "verify_dataroom_bundle"].every((n) => names.includes(n)),

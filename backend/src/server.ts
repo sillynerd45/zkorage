@@ -20,9 +20,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { StrKey, xdr } from "@stellar/stellar-sdk";
 import {
-  attest, attestKyc, attestPayroll, attestAccredited, attestRevenue, attestTeaser,
+  attest, attestKyc, attestPayroll, attestAccredited, attestRevenue, attestTeaser, attestSolvency,
   kycIssuerPubkey, payrollAttesterPubkey, accreditedIssuerPubkey, revenueAttesterPubkey, teaserAttesterPubkey,
-  demoSubjectId, demoInvestorId,
+  solvencyAuditorPubkey, demoSubjectId, demoInvestorId,
 } from "./signer.js";
 import {
   redact, publicView, teaserFigure,
@@ -55,8 +55,13 @@ import { buildDocauthJob, bankIssuer } from "./docauth.js";
 import { getEligible, addEligible, indexOfCommitment } from "./eligible-store.js";
 import { demoDenyTree, DENY_DEPTH } from "./denylist.js";
 import { verifyOnChain, type Bundle } from "./verify.js";
-import { readContract, invokeContract, buildUnsignedXdr, submitSignedXdr, scBytes, scAddress, scOptAddress, scI128, scU32, scBool, jsonSafe } from "./chain.js";
+import { readContract, invokeContract, buildUnsignedXdr, submitSignedXdr, scBytes, scAddress, scOptAddress, scI128, scU32, scU64, scBool, jsonSafe } from "./chain.js";
 import { recordRoom, listRoomsByOwner } from "./rooms-store.js";
+import { ESCROW_ID, BOND_TOKEN_ID, listLocks, getLock as escrowGetLock, isLocked as escrowIsLocked, bondBalance as escrowBondBalance } from "./escrow.js";
+import {
+  SOLVENCY_GATE_ID, SOLVENCY_IMAGE_ID, SOLVENCY_SUPPLY_TOKEN_ID,
+  isSolvencyGranted, getSolvencyRecord, getSolvencyConfig, supplyTokenSupply, guardLock, buildSolvencyJob,
+} from "./solvency.js";
 import { verifyBundle, cliRecipe, type AuditContext } from "./audit.js";
 
 const PORT = Number(process.env.PORT || 8787);
@@ -3114,6 +3119,230 @@ app.get("/dataroom/committee/key-epoch/:roomId/:docId", async (req, res) => {
     res.json({ roomId: roomIdHex, docId: docIdHex, keyEpoch: Number(value ?? 0) });
   } catch (e) {
     res.status(400).json({ error: err(e) });
+  }
+});
+
+// ───────────────────────────────────────────────────────────────────────────────────────────────
+// Bonded Proofs (BP1/BP2) — Soroban-native time-locked escrow. Reads + dual-path writes (user-signed
+// XDR when `source` is present, else the server relay). No ZK here; this is the escrow + "my balances".
+// ───────────────────────────────────────────────────────────────────────────────────────────────
+const ESCROW_ZERO32 = "0".repeat(64);
+// Demo faucet: the relay signer is the bond-token admin, so it can mint test zkUSD to any address. Capped
+// + lightly rate-limited so a fresh wallet can try a deposit without an out-of-band mint.
+const FAUCET_AMOUNT = process.env.ESCROW_FAUCET_AMOUNT || "10000000000"; // 1000 zkUSD (7 dp)
+const faucetSeen = new Map<string, number>();
+
+app.get("/escrow/info", (_req, res) => res.json({ escrowId: ESCROW_ID, bondTokenId: BOND_TOKEN_ID }));
+
+app.get("/escrow/balance", async (req, res) => {
+  const owner = String(req.query.owner ?? "");
+  if (!StrKey.isValidEd25519PublicKey(owner)) return res.status(400).json({ error: "owner (G-address) required" });
+  try {
+    const balance = await escrowBondBalance(owner);
+    res.json({ owner, balance, bondTokenId: BOND_TOKEN_ID });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+app.post("/escrow/faucet", async (req, res) => {
+  const to = String((req.body as { to?: string })?.to ?? "");
+  if (!StrKey.isValidEd25519PublicKey(to)) return res.status(400).json({ error: "to (G-address) required" });
+  const now = Date.now();
+  if (now - (faucetSeen.get(to) ?? 0) < 60_000) {
+    return res.status(429).json({ ok: false, error: "faucet rate-limited; try again in a minute" });
+  }
+  faucetSeen.set(to, now);
+  try {
+    const out = await invokeContract(BOND_TOKEN_ID, "mint", [scAddress(to), scI128(FAUCET_AMOUNT)]);
+    res.json({ ok: true, txHash: out.hash, minted: FAUCET_AMOUNT, bondTokenId: BOND_TOKEN_ID });
+  } catch (e) {
+    faucetSeen.delete(to); // a failed mint shouldn't burn the cooldown
+    res.json({ ok: false, error: err(e) });
+  }
+});
+
+app.get("/escrow/lock/:id", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "id must be a positive integer" });
+  try {
+    const [lock, locked] = await Promise.all([escrowGetLock(id), escrowIsLocked(id)]);
+    res.json({ id, lock, is_locked: locked, escrowId: ESCROW_ID });
+  } catch (e) {
+    res.status(404).json({ error: err(e) });
+  }
+});
+
+app.get("/escrow/locks", async (req, res) => {
+  const owner = String(req.query.owner ?? "");
+  if (!StrKey.isValidEd25519PublicKey(owner)) return res.status(400).json({ error: "owner (G-address) required" });
+  try {
+    const locks = await listLocks(owner);
+    res.json({ owner, count: locks.length, locks, escrowId: ESCROW_ID });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+app.post("/escrow/deposit", async (req, res) => {
+  const b = req.body as {
+    source?: string; from?: string; token?: string; amount?: string | number;
+    unlock_time?: number; claimant?: string; commitment?: string; revocable?: boolean;
+  };
+  const from = b.from || b.source || "";
+  const token = b.token || BOND_TOKEN_ID;
+  const claimant = b.claimant || from;
+  const commitment = String(b.commitment || ESCROW_ZERO32).toLowerCase();
+  const amount = String(b.amount ?? "");
+  const unlock = Number(b.unlock_time);
+  if (!StrKey.isValidEd25519PublicKey(from)) return res.status(400).json({ error: "from/source (G-address) required" });
+  if (!StrKey.isValidContract(token)) return res.status(400).json({ error: "token (C-address) invalid" });
+  if (!StrKey.isValidEd25519PublicKey(claimant)) return res.status(400).json({ error: "claimant (G-address) invalid" });
+  if (!/^[1-9]\d*$/.test(amount)) return res.status(400).json({ error: "amount must be a positive integer (base units)" });
+  if (!Number.isInteger(unlock) || unlock <= Math.floor(Date.now() / 1000)) return res.status(400).json({ error: "unlock_time must be a future unix timestamp" });
+  if (!/^[0-9a-f]{64}$/.test(commitment)) return res.status(400).json({ error: "commitment must be 32-byte hex" });
+  // On the user-signed path the wallet only authorises its own address, so `from` must be the signer —
+  // fail fast with a clean 400 rather than a confusing signing error later.
+  const src = userSource(req);
+  if (src && from !== src) return res.status(400).json({ error: "from must equal the signing source" });
+  // A revocable lock must be a self-bond (the contract enforces this too).
+  if (b.revocable && claimant !== from) return res.status(400).json({ error: "a revocable lock must be a self-bond (claimant == from)" });
+  try {
+    const args = [scAddress(from), scAddress(token), scI128(amount), scU64(unlock), scAddress(claimant), scBytes(commitment), scBool(Boolean(b.revocable))];
+    if (await maybeXdr(req, res, ESCROW_ID, "deposit", args, { escrowId: ESCROW_ID })) return;
+    const out = await invokeContract(ESCROW_ID, "deposit", args);
+    // out.returnValue is the new lock_id (u64 -> BigInt); jsonSafe stringifies it so res.json never throws.
+    res.json({ ok: true, txHash: out.hash, lockId: jsonSafe(out.returnValue), cost: out.cost, escrowId: ESCROW_ID });
+  } catch (e) {
+    res.json({ ok: false, error: err(e) });
+  }
+});
+
+// withdraw / claim / unbond: a single u64 lock_id, user-signed by the rightful party.
+for (const method of ["withdraw", "claim", "unbond"] as const) {
+  app.post(`/escrow/${method}`, async (req, res) => {
+    const id = Number((req.body as { lock_id?: number })?.lock_id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "lock_id must be a positive integer" });
+    try {
+      const args = [scU64(id)];
+      if (await maybeXdr(req, res, ESCROW_ID, method, args, { escrowId: ESCROW_ID })) return;
+      const out = await invokeContract(ESCROW_ID, method, args);
+      res.json({ ok: true, txHash: out.hash, cost: out.cost, escrowId: ESCROW_ID });
+    } catch (e) {
+      res.json({ ok: false, error: err(e) });
+    }
+  });
+}
+
+app.post("/escrow/set-timelock", async (req, res) => {
+  const b = req.body as { lock_id?: number; new_unlock_time?: number };
+  const id = Number(b?.lock_id);
+  const newUnlock = Number(b?.new_unlock_time);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "lock_id must be a positive integer" });
+  if (!Number.isInteger(newUnlock) || newUnlock <= 0) return res.status(400).json({ error: "new_unlock_time must be a unix timestamp" });
+  try {
+    const args = [scU64(id), scU64(newUnlock)];
+    if (await maybeXdr(req, res, ESCROW_ID, "set_timelock", args, { escrowId: ESCROW_ID })) return;
+    const out = await invokeContract(ESCROW_ID, "set_timelock", args);
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, escrowId: ESCROW_ID });
+  } catch (e) {
+    res.json({ ok: false, error: err(e) });
+  }
+});
+
+// ───────────────────────────────────────────────────────────────────────────────────────────────
+// Bonded Proofs (BP3) — a solvency proof that dies when you pull your collateral. A `reserves >= supply`
+// Groth16 proof (reserves PRIVATE) is bound to a revocable escrow lock; the gate reads that lock LIVE, so
+// `is_granted` flips false the instant the issuer unbonds. prove (worker-first) → poll /prove-status →
+// submit (dual-path, lock-owner-signed) → status (live).
+// ───────────────────────────────────────────────────────────────────────────────────────────────
+app.get("/bonded/solvency/info", async (_req, res) => {
+  try {
+    res.json({
+      solvencyGateId: SOLVENCY_GATE_ID,
+      solvencyImageId: SOLVENCY_IMAGE_ID,
+      auditorPub: toHex(solvencyAuditorPubkey()),
+      escrowId: ESCROW_ID,
+      bondTokenId: BOND_TOKEN_ID,
+      supplyTokenId: SOLVENCY_SUPPLY_TOKEN_ID,
+      claimType: 12,
+      config: await getSolvencyConfig().catch(() => null),
+    });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// Read the supply token's live supply, bind it as the threshold, attest reserves (>= supply, PRIVATE),
+// and enqueue a worker-first proving job that binds the chosen escrow lock. Poll /prove-status/:id.
+app.post("/bonded/solvency/prove", async (req, res) => {
+  if (!PROVER_URL) return res.status(503).json({ error: "PROVER_URL not configured" });
+  const b = req.body as { lock_id?: number; min_amount?: string | number; reserves?: string | number; expiry?: number; nonce?: number };
+  const lockId = Number(b?.lock_id);
+  if (!Number.isInteger(lockId) || lockId <= 0) return res.status(400).json({ error: "lock_id must be a positive integer" });
+  try {
+    // 1) the lock must be a live, revocable, bond-token lock (else the gate rejects the proof).
+    const guard = await guardLock(lockId);
+    if (!guard.ok) return res.status(400).json({ error: guard.reason });
+    // 2) the proven liability = the supply token's REAL circulating supply.
+    const supply = await supplyTokenSupply();
+    // 3) min_amount the proof asserts the lock meets (default = the lock's full amount).
+    const minAmount = BigInt(String(b.min_amount ?? guard.amount ?? "0"));
+    if (minAmount <= 0n) return res.status(400).json({ error: "min_amount must be positive" });
+    if (BigInt(guard.amount ?? "0") < minAmount) return res.status(400).json({ error: "lock amount is below the requested min_amount" });
+    // 4) reserves (PRIVATE) must clear the supply (default = exactly solvent). reserves < supply => no proof.
+    const reserves = BigInt(String(b.reserves ?? supply));
+    if (reserves < supply) return res.status(400).json({ error: "reserves below supply — an insolvent claim produces no proof" });
+    const a = attestSolvency({ reserves, nonce: BigInt(b.nonce ?? 1), expiry: BigInt(b.expiry ?? 9_999_999_999) });
+    const job = buildSolvencyJob({
+      envelope_hex: a.envelope,
+      signature_hex: a.signature,
+      issuer_pubkey_hex: a.issuer_pubkey,
+      supply,
+      lockId,
+      minAmount,
+    });
+    const r = await fetch(`${PROVER_URL}/prove`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(job),
+    });
+    const j = (await r.json()) as { job_id?: string; error?: string };
+    if (!r.ok || !j.job_id) return res.status(502).json({ error: j.error || "prover submit failed" });
+    res.json({ jobId: j.job_id, supply: supply.toString(), lockId, minAmount: minAmount.toString(), issuerId: a.issuer_pubkey });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// Submit the bonded-solvency proof to the gate (verify + supply binding + live lock read + owner auth).
+// Dual-path: the lock owner's wallet signs (source present) or the server relays (only valid when the
+// lock's depositor == the relay signer). The owner's auth is required by the gate (the ownership binding).
+app.post("/bonded/solvency/submit", async (req, res) => {
+  const b = req.body as Bundle;
+  if (!b?.seal || !b?.image_id || !b?.journal) {
+    return res.status(400).json({ error: "seal, image_id, journal (raw hex) required" });
+  }
+  try {
+    const args = [scBytes(b.seal), scBytes(b.image_id), scBytes(b.journal)];
+    if (await maybeXdr(req, res, SOLVENCY_GATE_ID, "submit_solvency_proof", args, { solvencyGateId: SOLVENCY_GATE_ID })) return;
+    const out = await invokeContract(SOLVENCY_GATE_ID, "submit_solvency_proof", args);
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, result: jsonSafe(out.returnValue), solvencyGateId: SOLVENCY_GATE_ID });
+  } catch (e) {
+    res.json({ ok: false, error: err(e), solvencyGateId: SOLVENCY_GATE_ID });
+  }
+});
+
+// The live self-void read: is the depositor's solvency proof STILL valid (bond still locked)? Re-reads the
+// escrow + supply on every call — this is what the UI polls so the badge flips ACTIVE -> VOID on unbond.
+app.get("/bonded/solvency/status", async (req, res) => {
+  const depositor = String(req.query.depositor ?? "");
+  if (!StrKey.isValidEd25519PublicKey(depositor)) return res.status(400).json({ error: "depositor (G-address) required" });
+  try {
+    const [granted, record] = await Promise.all([isSolvencyGranted(depositor), getSolvencyRecord(depositor)]);
+    res.json({ depositor, is_granted: granted, record, solvencyGateId: SOLVENCY_GATE_ID });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
   }
 });
 

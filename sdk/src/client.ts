@@ -9,6 +9,7 @@ import {
   TransactionBuilder,
   BASE_FEE,
   xdr,
+  Address,
   nativeToScVal,
   scValToNative,
 } from "@stellar/stellar-sdk";
@@ -76,6 +77,9 @@ import type {
   RoomPolicy,
   Admission,
   RoomAccess,
+  SolvencyConfig,
+  SolvencyRecord,
+  SolvencyAnswer,
 } from "./types.js";
 
 /** Constructor options — any field of `ZkorageConfig` may be overridden, including a subset of `contracts`. */
@@ -85,6 +89,7 @@ export type ZkorageOptions = Partial<Omit<ZkorageConfig, "contracts">> & {
 
 const scBytes = (hex: string): xdr.ScVal => xdr.ScVal.scvBytes(Buffer.from(hex, "hex"));
 const scU32 = (n: number): xdr.ScVal => nativeToScVal(n >>> 0, { type: "u32" });
+const scAddress = (g: string): xdr.ScVal => new Address(g).toScVal();
 
 function normalizeResult(raw: unknown): VerifiedResult | null {
   if (!raw || typeof raw !== "object") return null;
@@ -162,6 +167,23 @@ function normalizeRevenue(raw: unknown): RevenueRecord | null {
     claim_type: Number(r.claim_type),
     nonce: String(r.nonce),
     expiry: String(r.expiry),
+    ledger: Number(r.ledger),
+    timestamp: String(r.timestamp),
+  };
+}
+
+function normalizeSolvencyRecord(raw: unknown): SolvencyRecord | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  return {
+    index: r.index !== undefined ? Number(r.index) : undefined,
+    depositor: String(r.depositor),
+    issuer_id: bytesToHex(r.issuer_id),
+    supply: String(r.supply),
+    lock_id: String(r.lock_id),
+    min_amount: String(r.min_amount),
+    expiry: String(r.expiry),
+    nonce: String(r.nonce),
     ledger: Number(r.ledger),
     timestamp: String(r.timestamp),
   };
@@ -921,6 +943,39 @@ export class ZkorageClient {
       this.getFundraiseAccess(accessorHex),
     ]);
     return { answer, accessor: accessorHex, revenueVerified, accredited, record };
+  }
+
+  // ---- BP3: solvency gate (a solvency proof that dies when you pull your collateral) ----
+
+  async getSolvencyConfig(): Promise<SolvencyConfig> {
+    const c = (await this.simRead(this.cfg.contracts.solvencyGate, "get_config")) as Record<string, unknown>;
+    return {
+      admin: String(c.admin), verifier: String(c.verifier),
+      escrow: String(c.escrow), escrow_id: bytesToHex(c.escrow_id),
+      supply_token: String(c.supply_token), supply_token_id: bytesToHex(c.supply_token_id),
+      bond_token: String(c.bond_token), bond_token_id: bytesToHex(c.bond_token_id),
+      image_id: bytesToHex(c.image_id), claim_type: Number(c.claim_type),
+    };
+  }
+
+  /**
+   * Is this depositor's solvency proof CURRENTLY live? `answer` is the AUTHORITATIVE on-chain `is_granted`
+   * decision — the gate re-reads the escrow lock + the supply on every call, so it returns false the
+   * instant the depositor unbonds (or the lock unlocks / the supply changes / the attestation expires).
+   * The reserve figure stays hidden either way. `depositorG` is the bond owner's Stellar address.
+   */
+  async isSolvent(depositorG: string): Promise<SolvencyAnswer> {
+    const [answer, record] = await Promise.all([
+      this.simRead(this.cfg.contracts.solvencyGate, "is_granted", [scAddress(depositorG)]).then((v) => v === true),
+      this.getSolvencyRecord(depositorG),
+    ]);
+    return { answer, depositor: depositorG, record };
+  }
+
+  /** The raw stored solvency record for a depositor (regardless of current validity — use {@link isSolvent}
+   * for the live decision). The real reserve figure is never stored, only the supply it cleared. */
+  async getSolvencyRecord(depositorG: string): Promise<SolvencyRecord | null> {
+    return normalizeSolvencyRecord(await this.simRead(this.cfg.contracts.solvencyGate, "get_record", [scAddress(depositorG)]));
   }
 
   // ---- Week 8: full independent re-verification of the two legs ----

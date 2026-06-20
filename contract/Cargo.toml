@@ -10,6 +10,8 @@ members = [
     "contracts/accredited",
     "contracts/fundraise",
     "contracts/dataroom",
+    "contracts/escrow",
+    "contracts/solvency-gate",
     "tools/build-utils",
 ]
 resolver = "3"

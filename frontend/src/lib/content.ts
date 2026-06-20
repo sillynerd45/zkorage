@@ -12,10 +12,11 @@ import {
   BadgeCheck,
   Compass,
   Terminal,
+  Lock,
   type LucideIcon,
 } from "lucide-react";
 
-export type CapabilityGroup = "prove" | "dataroom" | "verify" | "developer";
+export type CapabilityGroup = "prove" | "dataroom" | "bonded" | "verify" | "developer";
 
 export interface GroupMeta {
   key: CapabilityGroup;
@@ -26,6 +27,7 @@ export interface GroupMeta {
 export const GROUPS: GroupMeta[] = [
   { key: "prove", label: "Prove a fact", blurb: "Prove something true about private data without revealing the data." },
   { key: "dataroom", label: "Data Room", blurb: "Share sealed documents and control who can open them, anonymously." },
+  { key: "bonded", label: "Bonded Proofs", blurb: "Lock tokens until a chosen time. The escrow behind upcoming time-bound proofs." },
   { key: "verify", label: "Verify & explore", blurb: "Re-check any proof yourself, or browse every record on the public ledger." },
   { key: "developer", label: "Developer", blurb: "Use zkorage from your own code. There is an SDK, an MCP server, and a REST API." },
 ];
@@ -48,7 +50,7 @@ export const CAPABILITIES: Capability[] = [
     to: "/app/reserves",
     group: "prove",
     icon: Landmark,
-    blurb: "Prove reserves cover the circulating supply. The reserve figure stays private.",
+    blurb: "Prove reserves are at least the circulating supply. The reserve figure stays private.",
     proves: "reserves ≥ supply",
     cta: "Open Proof-of-Reserves",
   },
@@ -101,6 +103,16 @@ export const CAPABILITIES: Capability[] = [
     blurb: "Upload sealed documents, admit members anonymously, release keys by committee, verify authenticity.",
     proves: "anonymous eligibility + key release",
     cta: "Open the Data Room",
+  },
+  {
+    key: "bonded",
+    title: "Bonded Proofs",
+    to: "/app/bonded",
+    group: "bonded",
+    icon: Lock,
+    blurb: "Lock tokens until a chosen time and manage your locks. The bond behind upcoming time-bound proofs.",
+    proves: "time-locked bond",
+    cta: "Open Bonded Proofs",
   },
   {
     key: "verify",
@@ -177,6 +189,22 @@ export const DATAROOM_TABS: DataroomTab[] = [
 ];
 
 export const dataroomTab = (slug: string) => DATAROOM_TABS.find((t) => t.slug === slug);
+
+// Bonded Proofs sub-routes (the escrow pillar). `slug` is the path under /bonded ("" = index).
+export interface BondedTab {
+  slug: string;
+  label: string;
+  blurb: string;
+}
+
+export const BONDED_TABS: BondedTab[] = [
+  { slug: "", label: "Overview", blurb: "What you can do here, and what comes next." },
+  { slug: "balances", label: "My Balances", blurb: "The locks your connected wallet can act on." },
+  { slug: "deposit", label: "Deposit", blurb: "Lock tokens until a time you choose." },
+  { slug: "prove", label: "Prove Solvency", blurb: "Prove reserves cover supply, bonded to a lock that you can pull at any time." },
+];
+
+export const bondedTab = (slug: string) => BONDED_TABS.find((t) => t.slug === slug);
 
 // ---- Documentation side-rail registry (public /docs) ----
 // `slug` is the path under /docs ("" = the index / Overview). Content nav, distinct from the app sidebar.

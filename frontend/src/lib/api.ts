@@ -389,12 +389,25 @@ async function writeViaWallet(
   return post<WalletWriteResult>("/tx/submit", { signedXdr });
 }
 
-/** Format base units (7 dp) as a human token amount. */
+/** Format base units (7 dp) as a human token amount, keeping any fractional part (trailing zeros trimmed). */
 export function fmtAmount(base: string | bigint, decimals = 7): string {
-  const v = BigInt(base);
+  let v = BigInt(base);
+  const neg = v < 0n;
+  if (neg) v = -v;
   const d = 10n ** BigInt(decimals);
-  const whole = v / d;
-  return whole.toLocaleString("en-US");
+  const whole = (v / d).toLocaleString("en-US");
+  const frac = (v % d).toString().padStart(decimals, "0").replace(/0+$/, "");
+  return (neg ? "-" : "") + whole + (frac ? "." + frac : "");
+}
+
+/** Parse a human token amount (e.g. "100.5") to base units exactly (no float drift). Null if invalid. */
+export function toBaseUnits(input: string, decimals = 7): string | null {
+  const s = input.trim();
+  if (!/^\d*(\.\d*)?$/.test(s) || s === "" || s === ".") return null;
+  const [w, f = ""] = s.split(".");
+  if (f.length > decimals) return null; // more precision than the token supports
+  const v = BigInt((w || "0") + f.padEnd(decimals, "0"));
+  return v > 0n ? v.toString() : null;
 }
 
 // ─────────────────────────── Week 8: Fundraising (composition) ───────────────────────────
@@ -775,3 +788,121 @@ export const getCommitteeDocument = (roomId: string, docId: string) =>
   fetch(`${BASE}/dataroom/committee/document/${roomId}/${docId}`).then(
     j<{ roomId: string; docId: string; document: CommitteeDoc | null; dataroomId: string }>,
   );
+
+// ── Bonded Proofs: the Soroban-native time-locked escrow (BP2) ──
+// Reads are public; writes are always wallet-signed (the depositor/claimant authorises). No ZK yet.
+
+export interface LockView {
+  id: number;
+  depositor: string;
+  claimant: string;
+  token: string;
+  amount: string; // base units, decimal string
+  unlock_time: number; // unix seconds
+  commitment: string; // 32-byte hex
+  revocable: boolean;
+  released: boolean;
+  is_locked: boolean;
+  role: "depositor" | "claimant" | "self";
+}
+
+export interface EscrowInfo {
+  escrowId: string;
+  bondTokenId: string;
+}
+
+export const getEscrowInfo = () => fetch(`${BASE}/escrow/info`).then(j<EscrowInfo>);
+
+export const listEscrowLocks = (owner: string) =>
+  fetch(`${BASE}/escrow/locks?owner=${owner}`).then(
+    j<{ owner: string; count: number; locks: LockView[]; escrowId: string }>,
+  );
+
+export interface DepositReq {
+  amount: string; // base units
+  unlock_time: number; // unix seconds (must be in the future)
+  revocable: boolean;
+  claimant?: string; // defaults to the depositor (a self-bond)
+  token?: string; // defaults to the bond token
+  commitment?: string; // 32-byte hex; defaults to all-zero
+}
+
+export const escrowDeposit = (req: DepositReq, signer: TxSigner): Promise<WalletWriteResult> =>
+  writeViaWallet("/escrow/deposit", { ...req }, signer);
+
+export const escrowWithdraw = (lockId: number, signer: TxSigner): Promise<WalletWriteResult> =>
+  writeViaWallet("/escrow/withdraw", { lock_id: lockId }, signer);
+
+export const escrowClaim = (lockId: number, signer: TxSigner): Promise<WalletWriteResult> =>
+  writeViaWallet("/escrow/claim", { lock_id: lockId }, signer);
+
+export const escrowUnbond = (lockId: number, signer: TxSigner): Promise<WalletWriteResult> =>
+  writeViaWallet("/escrow/unbond", { lock_id: lockId }, signer);
+
+export const escrowSetTimelock = (
+  lockId: number,
+  newUnlock: number,
+  signer: TxSigner,
+): Promise<WalletWriteResult> =>
+  writeViaWallet("/escrow/set-timelock", { lock_id: lockId, new_unlock_time: newUnlock }, signer);
+
+export const getBondBalance = (owner: string) =>
+  fetch(`${BASE}/escrow/balance?owner=${owner}`).then(
+    j<{ owner: string; balance: string; bondTokenId: string }>,
+  );
+
+// Demo faucet: server-relayed mint of test zkUSD (the relay signer is the token admin), so a fresh wallet
+// can try a deposit. Not wallet-signed.
+export const escrowFaucet = (to: string): Promise<WalletWriteResult & { minted?: string }> =>
+  post<WalletWriteResult & { minted?: string }>("/escrow/faucet", { to });
+
+// ── Bonded Proofs: solvency proof that dies when you pull your collateral (BP3/BP4) ──
+// Prove `reserves >= supply` (reserves PRIVATE) bound to a revocable lock; the gate reads that lock LIVE,
+// so the grant flips ACTIVE -> VOID the instant you unbond. prove (worker-first) -> poll getProveStatus ->
+// submitSolvency (the lock owner signs) -> poll getSolvencyStatus for the live badge.
+
+export interface SolvencyInfo {
+  solvencyGateId: string;
+  solvencyImageId: string;
+  auditorPub: string;
+  escrowId: string;
+  bondTokenId: string;
+  supplyTokenId: string;
+  claimType: number;
+}
+
+export interface SolvencyRecord {
+  index: number;
+  depositor: string;
+  issuer_id: string;
+  supply: string;
+  lock_id: string;
+  min_amount: string;
+  expiry: string;
+  nonce: string;
+  ledger: number;
+  timestamp: string;
+}
+
+export interface SolvencyStatus {
+  depositor: string;
+  is_granted: boolean;
+  record: SolvencyRecord | null;
+  solvencyGateId: string;
+}
+
+export const getSolvencyInfo = () => fetch(`${BASE}/bonded/solvency/info`).then(j<SolvencyInfo>);
+
+export const getSolvencyStatus = (depositor: string) =>
+  fetch(`${BASE}/bonded/solvency/status?depositor=${depositor}`).then(j<SolvencyStatus>);
+
+export const proveSolvency = (lockId: number, opts?: { reserves?: string; min_amount?: string }) =>
+  post<{ jobId: string; supply: string; lockId: number; minAmount: string; issuerId: string }>(
+    "/bonded/solvency/prove",
+    { lock_id: lockId, ...(opts ?? {}) },
+  );
+
+// Submit the bonded-solvency proof to the gate. Always wallet-signed: the gate requires the lock owner's
+// auth (the ownership binding), and the connected wallet IS that owner.
+export const submitSolvency = (bundle: Bundle, signer: TxSigner): Promise<WalletWriteResult> =>
+  writeViaWallet("/bonded/solvency/submit", { ...bundle }, signer);
