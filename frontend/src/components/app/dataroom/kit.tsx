@@ -57,9 +57,9 @@ export function GroupLabel({ children, className }: { children: ReactNode; class
 }
 
 // In-card form-section header: a real <h3> that out-ranks the [13px] field labels (semibold, foreground),
-// with an optional trailing hairline rule as the section separator. Used inside the Store/Open cards only;
-// the first section in a card passes no rule (the card title + edge already draw that boundary), later
-// sections pass withRule so the divider reads clearly. The rule is decorative (aria-hidden).
+// with an optional trailing hairline rule as the section separator. Used inside the Store/Open cards only.
+// Pass withRule to draw the divider (the rule is decorative, aria-hidden). Sections sit a generous margin
+// apart so the separator reads as a real break.
 export function SectionLabel({
   children,
   withRule = false,

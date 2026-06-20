@@ -124,8 +124,8 @@ export default function Anchor() {
 
             {/* What you're storing: the room, then ONE of a file or pasted text (a segmented switcher picks
                 the mode, so only the active input shows instead of both at once). */}
-            <div className="mt-5 space-y-3">
-              <SectionLabel>What you're storing</SectionLabel>
+            <div className="mt-7 space-y-3">
+              <SectionLabel withRule>What you're storing</SectionLabel>
               <label className="flex flex-col gap-1.5 text-[13px] text-muted-foreground">
                 Room
                 <div className="flex gap-2">
@@ -240,7 +240,7 @@ export default function Anchor() {
             </div>
 
             {/* Who can open it: the recipient's x25519 public key. */}
-            <div className="mt-6 space-y-3">
+            <div className="mt-7 space-y-3">
               <SectionLabel withRule>Who can open it</SectionLabel>
               <label className="flex flex-col gap-1.5 text-[13px] text-muted-foreground">
                 Recipient's public key (hex)
@@ -413,8 +413,8 @@ export default function Anchor() {
             />
           </div>
 
-          <div className="mt-5 space-y-3">
-            <SectionLabel>What you're opening</SectionLabel>
+          <div className="mt-7 space-y-3">
+            <SectionLabel withRule>What you're opening</SectionLabel>
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="flex flex-col gap-1.5 text-[13px] text-muted-foreground">
                 Room
@@ -445,7 +445,7 @@ export default function Anchor() {
             </div>
           </div>
 
-          <div className="mt-6 space-y-3">
+          <div className="mt-7 space-y-3">
             <SectionLabel withRule>Your key</SectionLabel>
             <label className="flex flex-col gap-1.5 text-[13px] text-muted-foreground">
               Recipient's private key (hex)
