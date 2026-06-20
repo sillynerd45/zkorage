@@ -14,10 +14,12 @@ private witness).
 
 ## Status — the full build is complete (testnet)
 Weeks 1–8 (below) **and** the post-week-8 **Confidential Data Room (DR1–DR6)** are built, deployed, and
-self-tested on Stellar testnet. The whole stack runs on **RISC Zero 5.0.0-rc.1** (GPU proving on a
-self-hosted box, with a CPU fallback). The frontend is a single unified app — a **public marketing site**
-(`/` — landing, documentation, verify, explorer) plus a **sidebar app** (`/app/*` — the five proofs + the
-Data Room) in the "Precision Ink" design system.
+self-tested on Stellar testnet. A new **Bonded Proofs** pillar (a Soroban-native time-locked escrow, the
+foundation for proofs that stay valid only while funds stay locked) is also live; see below. The whole stack
+runs on **RISC Zero 5.0.0-rc.1** (GPU proving on a self-hosted box, with a CPU fallback). The frontend is a
+single unified app — a **public marketing site** (`/` — landing, documentation, verify, explorer) plus a
+**sidebar app** (`/app/*` — the five proofs, the Data Room, and Bonded Proofs) in the "Precision Ink"
+design system.
 
 **Live demo:** the app runs at **https://zkorage.wazowsky.id** (API at `https://apizk.wazowsky.id`), on
 Stellar testnet. Connect **Freighter** (top right) to sign and submit your own proof transactions and pay
@@ -252,6 +254,21 @@ member you are, and only once** (a per-room nullifier). DataRoom contract
 
 The SDK/MCP gained the read-only Data Room surface (no key custody); the frontend `/app/dataroom` (v0.7.0)
 drives all of it. Reviewed clean across the slices (adversarial SOUND + code-review Ship-it).
+
+## Bonded Proofs (escrow) — live on testnet
+A second direction, motivated by Stellar's Claimable Balances. The research (in `development/`, gitignored)
+found that a classic Claimable Balance can't anchor a ZK proof — a Soroban contract can't read one, and a CB
+is fully public — so the load-bearing design is a **zkorage-owned, Soroban-native time-locked escrow**: lock
+any SEP-41/SAC token until a chosen time, with a revocable self-bond or a non-revocable one-way send, and a
+gate-readable `is_locked()` / `get_lock()`. It is the foundation for two upcoming ZK products: a **solvency
+proof that dies when you pull your collateral** (a gate reads `is_locked` live, so the grant evaporates the
+instant you un-bond) and an **anonymous tier that expires at X**.
+
+- **Escrow (testnet):** `CAMQKJKAJTOMT66N5N3E3VIRTN5ACDKV6P3Z2HLYVJHLAVRGJKHZFOXC` (immutable, no admin over
+  funds; only a lock's depositor/claimant can move it). Bond token `CCFHRZAP7GYUBNJ4RN7NBZL5GS7Q32F4CIXDTWTTIGPYEDWRIS2TUPA5`
+  (a demo "zkUSD"). Two adversarial reviews; 22/22 contract tests. Full record: `contract/deployment.testnet.json → escrow_BP1`.
+- **No ZK yet.** Shipped so far: the escrow + the `/app/bonded` pillar (Overview · My Balances · Deposit,
+  frontend **v0.8.0**) + the `backend /escrow/*` REST surface (reads + wallet-signed writes + a demo faucet).
 
 ## Run the Week-2 slice
 ```bash
