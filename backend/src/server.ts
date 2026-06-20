@@ -55,8 +55,9 @@ import { buildDocauthJob, bankIssuer } from "./docauth.js";
 import { getEligible, addEligible, indexOfCommitment } from "./eligible-store.js";
 import { demoDenyTree, DENY_DEPTH } from "./denylist.js";
 import { verifyOnChain, type Bundle } from "./verify.js";
-import { readContract, invokeContract, buildUnsignedXdr, submitSignedXdr, scBytes, scAddress, scOptAddress, scI128, scU32, scBool, jsonSafe } from "./chain.js";
+import { readContract, invokeContract, buildUnsignedXdr, submitSignedXdr, scBytes, scAddress, scOptAddress, scI128, scU32, scU64, scBool, jsonSafe } from "./chain.js";
 import { recordRoom, listRoomsByOwner } from "./rooms-store.js";
+import { ESCROW_ID, BOND_TOKEN_ID, listLocks, getLock as escrowGetLock, isLocked as escrowIsLocked } from "./escrow.js";
 import { verifyBundle, cliRecipe, type AuditContext } from "./audit.js";
 
 const PORT = Number(process.env.PORT || 8787);
@@ -3114,6 +3115,97 @@ app.get("/dataroom/committee/key-epoch/:roomId/:docId", async (req, res) => {
     res.json({ roomId: roomIdHex, docId: docIdHex, keyEpoch: Number(value ?? 0) });
   } catch (e) {
     res.status(400).json({ error: err(e) });
+  }
+});
+
+// ───────────────────────────────────────────────────────────────────────────────────────────────
+// Bonded Proofs (BP1/BP2) — Soroban-native time-locked escrow. Reads + dual-path writes (user-signed
+// XDR when `source` is present, else the server relay). No ZK here; this is the escrow + "my balances".
+// ───────────────────────────────────────────────────────────────────────────────────────────────
+const ESCROW_ZERO32 = "0".repeat(64);
+
+app.get("/escrow/info", (_req, res) => res.json({ escrowId: ESCROW_ID, bondTokenId: BOND_TOKEN_ID }));
+
+app.get("/escrow/lock/:id", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "id must be a positive integer" });
+  try {
+    const [lock, locked] = await Promise.all([escrowGetLock(id), escrowIsLocked(id)]);
+    res.json({ id, lock, is_locked: locked, escrowId: ESCROW_ID });
+  } catch (e) {
+    res.status(404).json({ error: err(e) });
+  }
+});
+
+app.get("/escrow/locks", async (req, res) => {
+  const owner = String(req.query.owner ?? "");
+  if (!StrKey.isValidEd25519PublicKey(owner)) return res.status(400).json({ error: "owner (G-address) required" });
+  try {
+    const locks = await listLocks(owner);
+    res.json({ owner, count: locks.length, locks, escrowId: ESCROW_ID });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+app.post("/escrow/deposit", async (req, res) => {
+  const b = req.body as {
+    source?: string; from?: string; token?: string; amount?: string | number;
+    unlock_time?: number; claimant?: string; commitment?: string; revocable?: boolean;
+  };
+  const from = b.from || b.source || "";
+  const token = b.token || BOND_TOKEN_ID;
+  const claimant = b.claimant || from;
+  const commitment = String(b.commitment || ESCROW_ZERO32).toLowerCase();
+  const amount = String(b.amount ?? "");
+  const unlock = Number(b.unlock_time);
+  if (!StrKey.isValidEd25519PublicKey(from)) return res.status(400).json({ error: "from/source (G-address) required" });
+  if (!StrKey.isValidContract(token)) return res.status(400).json({ error: "token (C-address) invalid" });
+  if (!StrKey.isValidEd25519PublicKey(claimant)) return res.status(400).json({ error: "claimant (G-address) invalid" });
+  if (!/^[1-9]\d*$/.test(amount)) return res.status(400).json({ error: "amount must be a positive integer (base units)" });
+  if (!Number.isInteger(unlock) || unlock <= Math.floor(Date.now() / 1000)) return res.status(400).json({ error: "unlock_time must be a future unix timestamp" });
+  if (!/^[0-9a-f]{64}$/.test(commitment)) return res.status(400).json({ error: "commitment must be 32-byte hex" });
+  // A revocable lock must be a self-bond (the contract enforces this too).
+  if (b.revocable && claimant !== from) return res.status(400).json({ error: "a revocable lock must be a self-bond (claimant == from)" });
+  try {
+    const args = [scAddress(from), scAddress(token), scI128(amount), scU64(unlock), scAddress(claimant), scBytes(commitment), scBool(Boolean(b.revocable))];
+    if (await maybeXdr(req, res, ESCROW_ID, "deposit", args, { escrowId: ESCROW_ID })) return;
+    const out = await invokeContract(ESCROW_ID, "deposit", args);
+    res.json({ ok: true, txHash: out.hash, lockId: out.returnValue, cost: out.cost, escrowId: ESCROW_ID });
+  } catch (e) {
+    res.json({ ok: false, error: err(e) });
+  }
+});
+
+// withdraw / claim / unbond: a single u64 lock_id, user-signed by the rightful party.
+for (const method of ["withdraw", "claim", "unbond"] as const) {
+  app.post(`/escrow/${method}`, async (req, res) => {
+    const id = Number((req.body as { lock_id?: number })?.lock_id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "lock_id must be a positive integer" });
+    try {
+      const args = [scU64(id)];
+      if (await maybeXdr(req, res, ESCROW_ID, method, args, { escrowId: ESCROW_ID })) return;
+      const out = await invokeContract(ESCROW_ID, method, args);
+      res.json({ ok: true, txHash: out.hash, cost: out.cost, escrowId: ESCROW_ID });
+    } catch (e) {
+      res.json({ ok: false, error: err(e) });
+    }
+  });
+}
+
+app.post("/escrow/set-timelock", async (req, res) => {
+  const b = req.body as { lock_id?: number; new_unlock_time?: number };
+  const id = Number(b?.lock_id);
+  const newUnlock = Number(b?.new_unlock_time);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "lock_id must be a positive integer" });
+  if (!Number.isInteger(newUnlock) || newUnlock <= 0) return res.status(400).json({ error: "new_unlock_time must be a unix timestamp" });
+  try {
+    const args = [scU64(id), scU64(newUnlock)];
+    if (await maybeXdr(req, res, ESCROW_ID, "set_timelock", args, { escrowId: ESCROW_ID })) return;
+    const out = await invokeContract(ESCROW_ID, "set_timelock", args);
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, escrowId: ESCROW_ID });
+  } catch (e) {
+    res.json({ ok: false, error: err(e) });
   }
 });
 

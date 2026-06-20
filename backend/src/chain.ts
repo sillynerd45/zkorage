@@ -34,6 +34,8 @@ export const scOptAddress = (g?: string | null): xdr.ScVal =>
 export const scI128 = (v: bigint | string | number): xdr.ScVal =>
   nativeToScVal(BigInt(v), { type: "i128" });
 export const scU32 = (v: number): xdr.ScVal => nativeToScVal(v >>> 0, { type: "u32" });
+export const scU64 = (v: bigint | string | number): xdr.ScVal =>
+  nativeToScVal(BigInt(v), { type: "u64" });
 export const scBool = (b: boolean): xdr.ScVal => xdr.ScVal.scvBool(b);
 
 function server(): rpc.Server {
