@@ -2,7 +2,7 @@
 //   [0] result u8 | [1..5] claim_type u32 | [5..37] issuer_id [u8;32]
 //   [37..45] supply u64 | [45..53] nonce u64 | [53..61] expiry u64
 import { sha256 } from "@noble/hashes/sha256";
-import type { DecodedJournal, DecodedIdentityJournal, DecodedComplianceJournal, DecodedPayrollJournal, DecodedDataroomSealJournal, DecodedMembershipJournal, DecodedDocauthJournal } from "./types.js";
+import type { DecodedJournal, DecodedIdentityJournal, DecodedComplianceJournal, DecodedPayrollJournal, DecodedDataroomSealJournal, DecodedMembershipJournal, DecodedDocauthJournal, DecodedTierJournal } from "./types.js";
 
 export const JOURNAL_LEN = 61;
 export const IDENTITY_JOURNAL_LEN = 85;
@@ -11,6 +11,7 @@ export const PAYROLL_JOURNAL_LEN = 229;
 export const DATAROOM_SEAL_JOURNAL_LEN = 229;
 export const MEMBERSHIP_JOURNAL_LEN = 165;
 export const DOCAUTH_JOURNAL_LEN = 113;
+export const TIER_JOURNAL_LEN = 181;
 
 export function fromHex(h: string): Uint8Array {
   const s = h.startsWith("0x") ? h.slice(2) : h;
@@ -152,6 +153,25 @@ export function decodeMembershipJournal(hex: string): DecodedMembershipJournal |
     nullifier: toHex(b.slice(69, 101)),
     accessor: toHex(b.slice(101, 133)),
     recipientPub: toHex(b.slice(133, 165)),
+  };
+}
+
+/** Decode the 181-byte BP5 tier journal (anonymous bonded tier). MUST match the guest layout:
+ *  result(1) | claim_type(4)=13 | member_root(32) | qual_root(32) | threshold(u64) | unlock_after(u64) |
+ *  context(32) | nullifier(32) | accessor(32). The identity / which lock are absent — that is the anonymity. */
+export function decodeTierJournal(hex: string): DecodedTierJournal | null {
+  const b = fromHex(hex);
+  if (b.length !== TIER_JOURNAL_LEN) return null;
+  return {
+    result: b[0] === 1,
+    claimType: beU32(b, 1),
+    memberRoot: toHex(b.slice(5, 37)),
+    qualRoot: toHex(b.slice(37, 69)),
+    threshold: beU64(b, 69).toString(),
+    unlockAfter: beU64(b, 77).toString(),
+    context: toHex(b.slice(85, 117)),
+    nullifier: toHex(b.slice(117, 149)),
+    accessor: toHex(b.slice(149, 181)),
   };
 }
 

@@ -1,6 +1,6 @@
 {
   "name": "zkorage-mcp",
-  "version": "0.16.0",
+  "version": "0.17.0",
   "description": "Read-only MCP server for the zkorage verifiable-claims engine (Proof-of-Reserves + KYC selective-disclosure gate + KYC∧not-sanctioned compliance gate + confidential payroll proof-of-income + fundraising composition + Confidential Data Room: DR1 data plane, DR2 anonymous eligibility, DR3 threshold committee, DR4 document-authenticity/zkPDF). Lets an AI agent query + re-verify claims on-chain. No key custody.",
   "type": "module",
   "bin": {

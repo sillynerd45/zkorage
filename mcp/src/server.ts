@@ -27,11 +27,14 @@ const client = new ZkorageClient({
     fundraise: process.env.ZKORAGE_FUNDRAISE ?? TESTNET.contracts.fundraise,
     dataroom: process.env.ZKORAGE_DATAROOM ?? TESTNET.contracts.dataroom,
     solvencyGate: process.env.ZKORAGE_SOLVENCY_GATE ?? TESTNET.contracts.solvencyGate,
+    escrow: process.env.ZKORAGE_ESCROW ?? TESTNET.contracts.escrow,
+    bondToken: process.env.ZKORAGE_BOND_TOKEN ?? TESTNET.contracts.bondToken,
+    tierGate: process.env.ZKORAGE_TIER_GATE ?? TESTNET.contracts.tierGate,
   },
   apiBaseUrl: process.env.ZKORAGE_API_BASE, // only needed for audit-bundle / by-issuer re-verify
 });
 
-const server = new McpServer({ name: "zkorage", version: "0.16.0" });
+const server = new McpServer({ name: "zkorage", version: "0.17.0" });
 
 // 32-byte hex issuer_id — validate the format, not just the length (agents may pass arbitrary strings).
 const issuerHex = z.string().regex(/^[0-9a-fA-F]{64}$/, "must be 32-byte hex (64 hex chars)");
@@ -371,6 +374,81 @@ server.registerTool(
     inputSchema: { depositor: stellarAddr.describe("the bond depositor's Stellar account address (G...)") },
   },
   async ({ depositor }) => { try { return ok(await client.isSolvent(depositor)); } catch (e) { return err(e); } },
+);
+
+// ── BP5 — anonymous bonded tier (membership expiring at X) ──
+server.registerTool(
+  "get_tier_config",
+  {
+    title: "Read the BP5 tier gate's configuration",
+    description:
+      "BP5 — an anonymous bonded tier / membership expiring at X. Returns the tier gate's on-chain config " +
+      "(admin, verifier, pinned guest image_id, claim_type=13). No keys.",
+    inputSchema: {},
+  },
+  async () => { try { return ok(await client.getTierConfig()); } catch (e) { return err(e); } },
+);
+
+server.registerTool(
+  "is_tier_granted",
+  {
+    title: "Does this accessor hold a live anonymous tier grant?",
+    description:
+      "BP5 — returns whether a given accessor (a 32-byte ed25519 key the proof committed, a FRESH anonymous key, " +
+      "not a funded wallet) currently holds a LIVE tier grant: a grant exists AND now < X (the bonded deadline). " +
+      "Deadline-encoded and sound because qualifying locks are non-revocable. Also returns the raw grant " +
+      "(threshold, X, context, nullifier, roots) — which reveals neither identity nor which lock. No keys.",
+    inputSchema: { accessor: accessorHex.describe("32-byte hex accessor (the proof's committed grant key)") },
+  },
+  async ({ accessor }) => { try { return ok(await client.tierAnswer(accessor)); } catch (e) { return err(e); } },
+);
+
+server.registerTool(
+  "is_tier_nullifier_used",
+  {
+    title: "Has this tier nullifier been spent?",
+    description:
+      "BP5 — returns whether a tier nullifier has already been used for a grant. One unlinkable grant per " +
+      "identity per context; a repeat from the same identity+context is rejected. No keys.",
+    inputSchema: { nullifier: bytes32Hex.describe("32-byte hex nullifier") },
+  },
+  async ({ nullifier }) => { try { return ok({ nullifier, used: await client.isTierNullifierUsed(nullifier) }); } catch (e) { return err(e); } },
+);
+
+server.registerTool(
+  "recompute_qual_root",
+  {
+    title: "Independently recompute + audit the tier's qualifying-set root",
+    description:
+      "BP5 — the TRUSTLESS audit. Rebuilds the qualifying-set Merkle root for a tier (threshold, X) ENTIRELY from " +
+      "the escrow's PUBLIC lock state (no secrets, no trust in the indexer): keeps non-revocable, still-locked, " +
+      "bond-token locks with amount ≥ threshold and unlock_time ≥ X and a non-zero commitment, then folds the " +
+      "depth-20 root. Returns {root, size (the anonymity-set size), accepted} — `accepted` true means the gate's " +
+      "published root is honest. A size of 1 de-anonymizes; check it before trusting a grant. No keys.",
+    inputSchema: {
+      threshold: z.string().regex(/^\d+$/, "u64 decimal string").describe("the tier's bonded floor (base units)"),
+      unlock_after: z.number().int().positive().describe("X — the unix timestamp the lock must be locked until"),
+    },
+  },
+  async ({ threshold, unlock_after }) => { try { return ok(await client.recomputeQualRoot(threshold, unlock_after)); } catch (e) { return err(e); } },
+);
+
+server.registerTool(
+  "verify_tier_bundle",
+  {
+    title: "Re-verify an anonymous bonded-tier proof bundle (BP5)",
+    description:
+      "Independently re-verify a RISC Zero → Groth16 TIER proof bundle against the PUBLIC chain: decode the " +
+      "181-byte journal, recompute the digest, check the gate's image pin, confirm the Groth16 proof on the " +
+      "verifier, then check policy (result, claim_type=13, member_root pinned, qual_root accepted by the gate, " +
+      "now < X) and whether the nullifier is still fresh. The member's identity / which lock are ABSENT from the " +
+      "journal. Pass {seal,image_id,journal}. Returns a per-check checklist + verdict. No keys.",
+    inputSchema: { seal: z.string(), image_id: z.string(), journal: z.string(), journal_digest: z.string().optional() },
+  },
+  async ({ seal, image_id, journal, journal_digest }) => {
+    try { return ok(await client.verifyTierBundle({ seal, image_id, journal, journal_digest })); }
+    catch (e) { return err(e); }
+  },
 );
 
 server.registerTool(

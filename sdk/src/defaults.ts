@@ -161,6 +161,10 @@ export const TESTNET: ZkorageConfig = {
     fundraise: "CDEV4METH74Z42DFV6HC3VLF3PWACXVIIS7C3PLK6CZT2B6L5I3YBC2L",
     dataroom: "CDUQITRVJOPJNVWBUINLZFI2LHPOLVFW2I7354WEFDG2W3VIG627HLNN",
     solvencyGate: "CDHUG4NFTDIO4HX2MZH3PR77EKYUAU47HVKH4UO2WG7GSKDEF4ABWMLA",
+    escrow: "CAMQKJKAJTOMT66N5N3E3VIRTN5ACDKV6P3Z2HLYVJHLAVRGJKHZFOXC",
+    bondToken: "CCFHRZAP7GYUBNJ4RN7NBZL5GS7Q32F4CIXDTWTTIGPYEDWRIS2TUPA5",
+    // BP5 tier-gate — filled in at deploy (deployment.testnet.json -> tier_gate_BP5). Overridable via config.
+    tierGate: "",
   },
   // Any existing funded testnet account works as the read-only sim source (it never signs).
   readSource: "GDLECNXD76OZQROASQGWEP4KAMJWTJXZW2LN7OJGYPXIJDRXACWGXZY6",
@@ -208,3 +212,10 @@ export const CLAIM_TYPE_SOLVENCY = 12;
 /** The mock bonded reserve auditor (= its ed25519 pubkey), allow-listed in the solvency gate. */
 export const DEMO_SOLVENCY_AUDITOR_ID =
   "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633";
+
+/** BP5 — Bonded Proofs tier gate: the canonical tier guest image_id the gate pins (anonymous bonded tier). */
+export const TIER_IMAGE_ID =
+  "2671938b59598c129913fee8e0ef29159e6475dd61c37c503429bdaf0fba4e69";
+
+/** Anonymous bonded-tier claim_type (enrolled member ∧ qualifying bonded lock, expiring at X). */
+export const CLAIM_TYPE_TIER = 13;

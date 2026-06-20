@@ -94,7 +94,7 @@ export interface AuditBundle {
 export interface ZkorageConfig {
   rpcUrl: string;
   networkPassphrase: string;
-  contracts: { verifier: string; token: string; policy: string; gate: string; compliance: string; payroll: string; accredited: string; fundraise: string; dataroom: string; solvencyGate: string };
+  contracts: { verifier: string; token: string; policy: string; gate: string; compliance: string; payroll: string; accredited: string; fundraise: string; dataroom: string; solvencyGate: string; escrow: string; bondToken: string; tierGate: string };
   /** A funded account used only as the read-only simulation source (never signs). */
   readSource: string;
   /** Optional REST base URL — only needed for `getAuditBundle` (the proof bundle isn't on-chain). */
@@ -392,6 +392,83 @@ export interface SolvencyAnswer {
   answer: boolean;
   depositor: string;
   record: SolvencyRecord | null;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// BP5 — Bonded Proofs tier gate. An anonymous proof of (enrolled member ∧ a qualifying non-revocable
+// bonded lock, amount >= threshold, unlock >= X) with a per-context nullifier; the grant expires at X.
+// ---------------------------------------------------------------------------------------------------
+
+/** The 181-byte tier journal, decoded. The identity (id_secret/id_trapdoor/which lock) is NEVER present. */
+export interface DecodedTierJournal {
+  result: boolean;
+  claimType: number; // 13
+  memberRoot: string; // 32-byte hex (enrolled-member set)
+  qualRoot: string; // 32-byte hex (qualifying-lock set for (threshold, X))
+  threshold: string; // u64
+  unlockAfter: string; // u64 (= X)
+  context: string; // 32-byte hex (the nullifier domain / tier label)
+  nullifier: string; // 32-byte hex
+  accessor: string; // 32-byte hex (the grant target / consenting key)
+}
+
+export interface TierConfig {
+  admin: string;
+  verifier: string;
+  image_id: string; // 32-byte hex (the pinned guest image)
+  claim_type: number; // 13
+}
+
+/** A tier grant persisted on-chain by the gate, keyed by the accessor. Reveals neither identity nor lock. */
+export interface TierGrant {
+  index?: number;
+  accessor: string; // 32-byte hex
+  threshold: string; // u64
+  unlock_after: string; // u64 (= X; the grant's expiry)
+  context: string; // 32-byte hex
+  nullifier: string; // 32-byte hex
+  member_root: string; // 32-byte hex
+  qual_root: string; // 32-byte hex
+  ledger: number;
+  timestamp: string;
+}
+
+/** The live tier answer for an accessor. `answer` is the on-chain `is_granted` decision (now < X). */
+export interface TierAnswer {
+  answer: boolean;
+  accessor: string;
+  grant: TierGrant | null;
+}
+
+/** An independently recomputed qualifying-set root (the trustless audit of the gate's published root). */
+export interface RecomputedQualRoot {
+  root: string; // 32-byte hex
+  size: number; // anonymity-set size (number of unique qualifying commitments)
+  commitments: string[]; // the qualifying-lock commitments, in lock-id order
+  accepted: boolean; // whether this recomputed root is in the gate's accepted ring for (threshold, X)
+}
+
+export interface TierChecklist {
+  journalWellFormed: boolean;
+  digestMatches: boolean;
+  imagePinned: boolean;
+  resultTrue: boolean;
+  claimTypeOk: boolean;
+  memberRootPinned: boolean; // journal.member_root == the gate's enrolled root
+  qualRootAccepted: boolean; // journal.qual_root is in the gate's accepted ring for (threshold, X)
+  deadlineFuture: boolean; // now < X (the grant would still be live)
+  nullifierFresh: boolean; // surfaced separately — a spent nullifier is still a sound proof
+  proofValidOnChain: boolean;
+  verdict: boolean;
+}
+
+/** Result of `verifyTierBundle`. */
+export interface TierVerifyResult {
+  verdict: boolean;
+  checklist: TierChecklist;
+  decodedJournal: DecodedTierJournal;
+  recomputedDigest: string;
+  notes: string[];
 }
 
 /** An investor admission persisted on-chain by the fundraise contract. */

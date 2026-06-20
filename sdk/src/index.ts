@@ -40,6 +40,8 @@ export {
   SOLVENCY_IMAGE_ID,
   CLAIM_TYPE_SOLVENCY,
   DEMO_SOLVENCY_AUDITOR_ID,
+  TIER_IMAGE_ID,
+  CLAIM_TYPE_TIER,
 } from "./defaults.js";
 export {
   decodeJournal,
@@ -49,6 +51,7 @@ export {
   decodeDataroomSealJournal,
   decodeMembershipJournal,
   decodeDocauthJournal,
+  decodeTierJournal,
   sha256Hex,
   fromHex,
   toHex,
@@ -128,4 +131,11 @@ export type {
   SolvencyConfig,
   SolvencyRecord,
   SolvencyAnswer,
+  DecodedTierJournal,
+  TierConfig,
+  TierGrant,
+  TierAnswer,
+  RecomputedQualRoot,
+  TierChecklist,
+  TierVerifyResult,
 } from "./types.js";

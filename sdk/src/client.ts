@@ -14,7 +14,8 @@ import {
   scValToNative,
 } from "@stellar/stellar-sdk";
 import { TESTNET } from "./defaults.js";
-import { decodeJournal, decodeIdentityJournal, decodeComplianceJournal, decodePayrollJournal, decodeDataroomSealJournal, decodeMembershipJournal, decodeDocauthJournal, fromHex, bytesToHex, sha256Hex } from "./journal.js";
+import { decodeJournal, decodeIdentityJournal, decodeComplianceJournal, decodePayrollJournal, decodeDataroomSealJournal, decodeMembershipJournal, decodeDocauthJournal, decodeTierJournal, fromHex, toHex, bytesToHex, sha256Hex } from "./journal.js";
+import { sha256 } from "@noble/hashes/sha256";
 import { openDisclosure, type OpenedDisclosure } from "./disclosure.js";
 import { recoverDocumentKey, aeadDecrypt } from "./dataroom.js";
 import { openShare, reconstructWithCommitment, type SealedShareHex, type OpenedShare } from "./committee.js";
@@ -80,6 +81,13 @@ import type {
   SolvencyConfig,
   SolvencyRecord,
   SolvencyAnswer,
+  TierConfig,
+  TierGrant,
+  TierAnswer,
+  DecodedTierJournal,
+  RecomputedQualRoot,
+  TierChecklist,
+  TierVerifyResult,
 } from "./types.js";
 
 /** Constructor options — any field of `ZkorageConfig` may be overridden, including a subset of `contracts`. */
@@ -89,6 +97,7 @@ export type ZkorageOptions = Partial<Omit<ZkorageConfig, "contracts">> & {
 
 const scBytes = (hex: string): xdr.ScVal => xdr.ScVal.scvBytes(Buffer.from(hex, "hex"));
 const scU32 = (n: number): xdr.ScVal => nativeToScVal(n >>> 0, { type: "u32" });
+const scU64 = (v: bigint | string | number): xdr.ScVal => nativeToScVal(BigInt(v), { type: "u64" });
 const scAddress = (g: string): xdr.ScVal => new Address(g).toScVal();
 
 function normalizeResult(raw: unknown): VerifiedResult | null {
@@ -187,6 +196,52 @@ function normalizeSolvencyRecord(raw: unknown): SolvencyRecord | null {
     ledger: Number(r.ledger),
     timestamp: String(r.timestamp),
   };
+}
+
+function normalizeTierGrant(raw: unknown): TierGrant | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  return {
+    index: r.index !== undefined ? Number(r.index) : undefined,
+    accessor: bytesToHex(r.accessor),
+    threshold: String(r.threshold),
+    unlock_after: String(r.unlock_after),
+    context: bytesToHex(r.context),
+    nullifier: bytesToHex(r.nullifier),
+    member_root: bytesToHex(r.member_root),
+    qual_root: bytesToHex(r.qual_root),
+    ledger: Number(r.ledger),
+    timestamp: String(r.timestamp),
+  };
+}
+
+/** Fold a depth-20 sparse Merkle root over ordered leaves: node = sha256(0x01‖L‖R), empty leaf = 0^32.
+ *  Matches the tier guest + the backend qual-tree builder (a root-only recompute for the trustless audit). */
+function merkleRootDepth20(leaves: Uint8Array[]): Uint8Array {
+  const DEPTH = 20;
+  const node = (a: Uint8Array, b: Uint8Array): Uint8Array => {
+    const buf = new Uint8Array(1 + a.length + b.length);
+    buf[0] = 0x01;
+    buf.set(a, 1);
+    buf.set(b, 1 + a.length);
+    return sha256(buf);
+  };
+  const zero: Uint8Array[] = [new Uint8Array(32)];
+  for (let k = 1; k <= DEPTH; k++) zero[k] = node(zero[k - 1], zero[k - 1]);
+  let level = new Map<number, Uint8Array>();
+  leaves.forEach((c, i) => level.set(i, c));
+  for (let d = 0; d < DEPTH; d++) {
+    const next = new Map<number, Uint8Array>();
+    const parents = new Set<number>();
+    for (const idx of level.keys()) parents.add(idx >> 1);
+    for (const p of parents) {
+      const l = level.get(p * 2) ?? zero[d];
+      const rr = level.get(p * 2 + 1) ?? zero[d];
+      next.set(p, node(l, rr));
+    }
+    level = next;
+  }
+  return level.get(0) ?? zero[DEPTH];
 }
 
 function normalizeInvestorAccess(raw: unknown): InvestorAccess | null {
@@ -976,6 +1031,149 @@ export class ZkorageClient {
    * for the live decision). The real reserve figure is never stored, only the supply it cleared. */
   async getSolvencyRecord(depositorG: string): Promise<SolvencyRecord | null> {
     return normalizeSolvencyRecord(await this.simRead(this.cfg.contracts.solvencyGate, "get_record", [scAddress(depositorG)]));
+  }
+
+  // ---- BP5: tier gate (an anonymous bonded tier / membership expiring at X) ----
+
+  async getTierConfig(): Promise<TierConfig> {
+    const c = (await this.simRead(this.cfg.contracts.tierGate, "get_config")) as Record<string, unknown>;
+    return { admin: String(c.admin), verifier: String(c.verifier), image_id: bytesToHex(c.image_id), claim_type: Number(c.claim_type) };
+  }
+
+  /** True iff this accessor holds a CURRENTLY-valid tier grant (grant exists AND now < X). The on-chain
+   *  decision; deadline-encoded (sound because qualifying locks are non-revocable). `accessorHex` is the
+   *  32-byte accessor key the proof committed (a fresh anonymous key, not a funded wallet). */
+  async isTierGranted(accessorHex: string): Promise<boolean> {
+    return Boolean(await this.simRead(this.cfg.contracts.tierGate, "is_granted", [scBytes(accessorHex)]));
+  }
+
+  /** The live tier answer for an accessor: the on-chain is_granted decision + the raw grant. */
+  async tierAnswer(accessorHex: string): Promise<TierAnswer> {
+    const [answer, grant] = await Promise.all([this.isTierGranted(accessorHex), this.getTierGrant(accessorHex)]);
+    return { answer, accessor: accessorHex, grant };
+  }
+
+  /** The raw stored tier grant for an accessor, or null. Reveals neither identity nor which lock. */
+  async getTierGrant(accessorHex: string): Promise<TierGrant | null> {
+    return normalizeTierGrant(await this.simRead(this.cfg.contracts.tierGate, "get_grant", [scBytes(accessorHex)]));
+  }
+
+  /** True iff `nullifier` has already been spent (a repeat from the same identity + context is rejected). */
+  async isTierNullifierUsed(nullifierHex: string): Promise<boolean> {
+    return Boolean(await this.simRead(this.cfg.contracts.tierGate, "is_nullifier_used", [scBytes(nullifierHex)]));
+  }
+
+  /** The gate's pinned enrolled-member root (hex), or null if none pinned. */
+  async getTierMemberRoot(): Promise<string | null> {
+    const v = await this.simRead(this.cfg.contracts.tierGate, "get_member_root");
+    return v ? bytesToHex(v) : null;
+  }
+
+  /** The gate's accepted `qual_root` ring (oldest first) for a tier (threshold, X). */
+  async getTierQualRing(threshold: bigint | string | number, unlockAfter: number): Promise<string[]> {
+    const v = await this.simRead(this.cfg.contracts.tierGate, "get_qual_ring", [scU64(threshold), scU64(unlockAfter)]);
+    return Array.isArray(v) ? (v as unknown[]).map((x) => bytesToHex(x)) : [];
+  }
+
+  async isTierQualRootAccepted(threshold: bigint | string | number, unlockAfter: number, qualRootHex: string): Promise<boolean> {
+    return Boolean(await this.simRead(this.cfg.contracts.tierGate, "is_qual_root_accepted", [scU64(threshold), scU64(unlockAfter), scBytes(qualRootHex)]));
+  }
+
+  /**
+   * The TRUSTLESS audit of the gate's qualifying-set root. Independently rebuilds `qual_root` from the
+   * escrow's PUBLIC `get_lock` state — no secrets, no trust in the indexer. Scans locks, keeps the
+   * non-revocable, still-locked, bond-token locks with amount >= threshold ∧ unlock_time >= X ∧ a non-zero
+   * commitment, dedupes by commitment, and folds the depth-20 Merkle root. `accepted` says whether this
+   * recomputed root is in the gate's accepted ring — if true, the gate's published anonymity set is honest.
+   */
+  async recomputeQualRoot(threshold: bigint | string | number, unlockAfter: number, opts: { maxScan?: number } = {}): Promise<RecomputedQualRoot> {
+    const thr = BigInt(threshold);
+    const maxScan = opts.maxScan ?? 200;
+    const now = Math.floor(Date.now() / 1000);
+    const bond = this.cfg.contracts.bondToken;
+    const found: { id: number; commitment: string }[] = [];
+    const seen = new Set<string>();
+    const batchSize = 8;
+    for (let start = 1; start <= maxScan; start += batchSize) {
+      const ids: number[] = [];
+      for (let i = 0; i < batchSize && start + i <= maxScan; i++) ids.push(start + i);
+      const settled = await Promise.allSettled(ids.map((id) => this.simRead(this.cfg.contracts.escrow, "get_lock", [scU64(id)])));
+      let anyFound = false;
+      settled.forEach((r, i) => {
+        if (r.status !== "fulfilled" || !r.value) return;
+        anyFound = true;
+        const l = r.value as Record<string, unknown>;
+        const commitment = bytesToHex(l.commitment).toLowerCase();
+        const isLocked = !Boolean(l.released) && now < Number(l.unlock_time);
+        if (
+          isLocked &&
+          !Boolean(l.revocable) &&
+          String(l.token) === bond &&
+          BigInt(String(l.amount)) >= thr &&
+          Number(l.unlock_time) >= unlockAfter &&
+          !/^0*$/.test(commitment) &&
+          !seen.has(commitment)
+        ) {
+          seen.add(commitment);
+          found.push({ id: ids[i], commitment });
+        }
+      });
+      if (!anyFound) break;
+    }
+    found.sort((a, b) => a.id - b.id);
+    const commitments = found.map((f) => f.commitment);
+    const root = toHex(merkleRootDepth20(commitments.map((h) => fromHex(h))));
+    let accepted = false;
+    try { accepted = await this.isTierQualRootAccepted(thr, unlockAfter, root); } catch { /* gate not configured */ }
+    return { root, size: commitments.length, commitments, accepted };
+  }
+
+  /** Re-verify a TIER proof bundle against the public chain: recompute sha256(journal), check the gate's
+   *  image-id pin + journal policy (result, claim_type 13, member root pinned, qual root accepted, deadline
+   *  future), and ask the bare verifier to confirm the Groth16 proof. The identity / which lock stay hidden.
+   *  `nullifierFresh` is surfaced separately (a spent nullifier is still a sound proof). */
+  async verifyTierBundle(bundle: Bundle): Promise<TierVerifyResult> {
+    const notes: string[] = [];
+    const cl: TierChecklist = {
+      journalWellFormed: false, digestMatches: false, imagePinned: false, resultTrue: false,
+      claimTypeOk: false, memberRootPinned: false, qualRootAccepted: false, deadlineFuture: false,
+      nullifierFresh: false, proofValidOnChain: false, verdict: false,
+    };
+    const empty: DecodedTierJournal = {
+      result: false, claimType: 0, memberRoot: "", qualRoot: "", threshold: "0", unlockAfter: "0", context: "", nullifier: "", accessor: "",
+    };
+    const dj = decodeTierJournal(bundle.journal);
+    if (!dj) {
+      notes.push("tier journal malformed");
+      return { verdict: false, checklist: cl, decodedJournal: empty, recomputedDigest: "", notes };
+    }
+    cl.journalWellFormed = true;
+    cl.resultTrue = dj.result === true;
+    cl.claimTypeOk = dj.claimType === 13;
+    const recomputed = sha256Hex(fromHex(bundle.journal));
+    cl.digestMatches = !bundle.journal_digest || bundle.journal_digest.toLowerCase() === recomputed;
+    try {
+      const cfg = await this.getTierConfig();
+      cl.imagePinned = cfg.image_id.toLowerCase() === bundle.image_id.toLowerCase();
+    } catch (e) { notes.push("get_config: " + msg(e)); }
+    try {
+      const mr = await this.getTierMemberRoot();
+      cl.memberRootPinned = !!mr && mr.toLowerCase() === dj.memberRoot.toLowerCase();
+      if (!mr) notes.push("gate has no pinned member root");
+    } catch (e) { notes.push("get_member_root: " + msg(e)); }
+    try {
+      cl.qualRootAccepted = await this.isTierQualRootAccepted(dj.threshold, Number(dj.unlockAfter), dj.qualRoot);
+    } catch (e) { notes.push("is_qual_root_accepted: " + msg(e)); }
+    cl.deadlineFuture = BigInt(dj.unlockAfter) > BigInt(Math.floor(Date.now() / 1000));
+    try {
+      cl.nullifierFresh = !(await this.isTierNullifierUsed(dj.nullifier));
+    } catch (e) { notes.push("is_nullifier_used: " + msg(e)); }
+    try {
+      await this.simRead(this.cfg.contracts.verifier, "verify", [scBytes(bundle.seal), scBytes(bundle.image_id), scBytes(recomputed)]);
+      cl.proofValidOnChain = true;
+    } catch (e) { notes.push("verify: " + msg(e)); }
+    cl.verdict = cl.journalWellFormed && cl.digestMatches && cl.imagePinned && cl.resultTrue && cl.claimTypeOk && cl.memberRootPinned && cl.qualRootAccepted && cl.deadlineFuture && cl.proofValidOnChain;
+    return { verdict: cl.verdict, checklist: cl, decodedJournal: dj, recomputedDigest: recomputed, notes };
   }
 
   // ---- Week 8: full independent re-verification of the two legs ----
