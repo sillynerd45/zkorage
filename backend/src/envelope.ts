@@ -91,6 +91,50 @@ export const ACCREDITED_DOMAIN = new TextEncoder().encode("zkorage-accredited-v1
 //   (figure ≥ threshold) to a sealed document. claim_type 11 is distinct from the fundraise revenue (6).
 export const CLAIM_TYPE_TEASER = 11;
 
+//   BP3 — Bonded Proofs solvency gate:
+//   A SolvencyEnvelope reuses the 60-byte ClaimEnvelope (claim_type = 12, `value` = the PRIVATE reserve
+//   figure). The bonded reserve auditor signs `SOLVENCY_DOMAIN ‖ envelope` (NEW-2 domain separation, like
+//   accredited), so a solvency attestation can never be reinterpreted as the byte-identical PoR envelope.
+//   The solvency guest commits a 173-byte journal (the first 61 bytes are the PoR journal; the rest bind
+//   the escrow lock + the two token roles). Must match prover/methods/guest-solvency/src/main.rs.
+export const CLAIM_TYPE_SOLVENCY = 12;
+export const SOLVENCY_DOMAIN = new TextEncoder().encode("zkorage-solvency-v1\0"); // 20 bytes
+export const SOLVENCY_JOURNAL_LEN = 173;
+
+export interface PublicSolvencyClaim {
+  result: boolean;
+  claimType: number;
+  issuerId: string; // hex (the bonded reserve auditor)
+  supply: bigint; // the proven liability (== supply_token.total_supply())
+  nonce: bigint;
+  expiry: bigint;
+  escrow: string; // hex (32-byte escrow contract id)
+  lockId: bigint; // u64
+  minAmount: bigint; // u64
+  bondToken: string; // hex (32-byte bond/collateral token id)
+  supplyToken: string; // hex (32-byte supply/liability token id)
+}
+
+export function decodeSolvencyJournal(bytes: Uint8Array): PublicSolvencyClaim {
+  if (bytes.length !== SOLVENCY_JOURNAL_LEN) {
+    throw new Error(`solvency journal must be ${SOLVENCY_JOURNAL_LEN} bytes, got ${bytes.length}`);
+  }
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return {
+    result: bytes[0] === 1,
+    claimType: dv.getUint32(1, false),
+    issuerId: toHex(bytes.slice(5, 37)),
+    supply: dv.getBigUint64(37, false),
+    nonce: dv.getBigUint64(45, false),
+    expiry: dv.getBigUint64(53, false),
+    escrow: toHex(bytes.slice(61, 93)),
+    lockId: dv.getBigUint64(93, false),
+    minAmount: dv.getBigUint64(101, false),
+    bondToken: toHex(bytes.slice(109, 141)),
+    supplyToken: toHex(bytes.slice(141, 173)),
+  };
+}
+
 export interface PublicPayrollClaim {
   result: boolean;
   claimType: number;
