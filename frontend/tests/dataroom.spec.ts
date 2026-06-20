@@ -41,10 +41,10 @@ test("dataroom: recipient opens the sealed doc in-browser (faithful); wrong key 
 
   // BROWSE sub-tab: with no wallet, it asks you to connect — Browse shows the rooms YOU own, so a fresh
   // visitor sees nothing they didn't store (no auto-loaded seeded room). There is no "contents" column
-  // either: every document is encrypted by default (the caption says so).
+  // either: every document is encrypted by default (the subtitle says so).
   await page.getByTestId("doc-subtab-browse").click();
   await expect(page.getByTestId("browse-connect-prompt")).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByText("everything here is encrypted")).toBeVisible();
+  await expect(page.getByText("Contents stay encrypted")).toBeVisible();
 
   // OPEN sub-tab — RECIPIENT OPEN (prefilled demo doc + demo recipient secret) → faithful + decrypted plaintext
   await page.getByTestId("doc-subtab-open").click();
@@ -102,7 +102,11 @@ test("dataroom Browse: a fresh connected wallet sees only its own rooms (empty),
 
 test("dataroom overview: task-oriented cards route to the right place; guided-demo tab removed", async ({ page }) => {
   await page.goto("/app/dataroom");
-  await expect(page.getByRole("heading", { name: "What do you want to do?" })).toBeVisible();
+  // the landing is a featured "Store a document" hero card + an "All tasks" grid (no duplicate "what do you
+  // want to do?" description; the one-line lead lives in the header)
+  await expect(page.getByTestId("dataroom-overview")).toBeVisible();
+  await expect(page.getByText("Start here")).toBeVisible();
+  await expect(page.getByText("All tasks")).toBeVisible();
 
   // the document tasks that used to be buried under "Store a document" are now first-class + discoverable
   await expect(page.getByTestId("task-store")).toBeVisible();
