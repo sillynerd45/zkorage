@@ -21,7 +21,7 @@ export default function Eligibility() {
           </h2>
           <span className="text-[11px] uppercase tracking-wide text-brand">the core idea</span>
         </div>
-        <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
+        <p className="text-sm leading-relaxed text-muted-foreground">
           You get into a room <b className="text-foreground">only by proving you're on its approved list</b>,{" "}
           <b className="text-foreground">without showing which member you are</b>, and{" "}
           <b className="text-foreground">only once per room</b> (a{" "}

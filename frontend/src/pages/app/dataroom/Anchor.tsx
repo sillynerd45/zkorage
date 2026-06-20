@@ -81,7 +81,7 @@ export default function Anchor() {
               <h2 className="text-base font-semibold tracking-tight">Store a document</h2>
               <ProofStatusBadge state={a.state} />
             </div>
-            <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
+            <p className="text-sm leading-relaxed text-muted-foreground">
               Encrypt a document, keep the file private, and post only a tamper-evident{" "}
               <b className="text-foreground">fingerprint</b>
               <GlossaryTip term="fingerprint" /> to the public record. The file never leaves the prover in the
@@ -298,7 +298,7 @@ export default function Anchor() {
               the recipient opens it with their key, in your browser
             </span>
           </div>
-          <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
+          <p className="text-sm leading-relaxed text-muted-foreground">
             The recipient opens the document <b className="text-foreground">with their private key</b>. The
             proof guarantees the key really is for <i>this</i> document, the encrypted file is fetched and
             re-checked against its fingerprint, and then it's decrypted{" "}
@@ -398,14 +398,14 @@ export default function Anchor() {
             </span>
           </div>
           {!a.connected ? (
-            <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground" data-testid="browse-connect-prompt">
+            <p className="text-sm leading-relaxed text-muted-foreground" data-testid="browse-connect-prompt">
               Connect your wallet to see the rooms you own and the documents you stored. This only reads the
               on-chain owner of each room. Your address is a public key, not your name.
             </p>
           ) : a.roomsLoading ? (
             <p className="text-sm text-muted-foreground">Reading the public record…</p>
           ) : a.myRooms.length === 0 ? (
-            <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground" data-testid="browse-empty">
+            <p className="text-sm leading-relaxed text-muted-foreground" data-testid="browse-empty">
               You haven't stored anything yet. Store a document and the room you own shows up here.
             </p>
           ) : (

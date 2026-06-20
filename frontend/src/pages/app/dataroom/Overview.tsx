@@ -135,7 +135,7 @@ export default function DataRoomOverview() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold tracking-tight">What do you want to do?</h2>
-          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+          <p className="mt-1 text-sm text-muted-foreground">
             A private place to keep sensitive files and decide who can open them. Pick a task. Each one is its
             own page.
           </p>
@@ -183,13 +183,13 @@ export default function DataRoomOverview() {
           </>
         }
       >
-        <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
+        <p className="text-sm leading-relaxed text-muted-foreground">
           It's a shared room of <b className="text-foreground">encrypted</b> documents. The files themselves
           never go on the public record. Only a tamper-evident <b className="text-foreground">fingerprint</b>
           <GlossaryTip term="fingerprint" /> of each does, so anyone can confirm a document wasn't swapped
           out while the contents stay private.
         </p>
-        <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+        <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
           The hard part is <b className="text-foreground">who gets in</b>. Here you prove you're allowed to
           enter <b className="text-foreground">without revealing who you are</b>, and each pass works once.
           That is the one thing a normal login can't give you, and it's what this room is built around.
@@ -205,7 +205,7 @@ export default function DataRoomOverview() {
           </>
         }
       >
-        <p className="mb-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+        <p className="mb-2 text-sm leading-relaxed text-muted-foreground">
           These are the live contracts this room runs on. Look them up on the public ledger to re-check any
           result here yourself.
         </p>

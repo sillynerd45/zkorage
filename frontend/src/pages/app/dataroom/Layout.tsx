@@ -19,7 +19,7 @@ export default function DataRoomLayout() {
 
       {/* B segmented tab bar (filled active, matches sidebar active style). w-fit so the pill hugs the tabs
           instead of stretching the full width; max-w-full + overflow-x-auto keep it scrollable when narrow. */}
-      <div className="mb-5 flex w-fit max-w-full gap-1 overflow-x-auto rounded-2xl border bg-card p-1.5">
+      <div className="mb-3 flex w-fit max-w-full gap-1 overflow-x-auto rounded-2xl border bg-card p-1.5">
         {DATAROOM_TABS.map((t) => (
           <NavLink
             key={t.slug}

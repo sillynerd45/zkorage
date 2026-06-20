@@ -69,6 +69,13 @@
   }
   html {
     scroll-behavior: smooth;
+    /* Always reserve the scrollbar gutter so the centered (mx-auto) content does not shift left/right when
+       navigating between a tall page (scrollbar shown) and a short one (no scrollbar). Document-level scroll,
+       so this goes on the root scroller (html). Plain `stable` (not both-edges) keeps the reserve on the
+       scrollbar side only. Modern Chrome/Edge/Firefox + Safari 18.2+; older Safari simply keeps the prior
+       behavior. No `overflow-y: scroll` fallback on purpose: it would draw an always-visible empty track on
+       classic (Windows) scrollbars even on short pages. */
+    scrollbar-gutter: stable;
   }
   body {
     @apply bg-background text-foreground font-sans antialiased;

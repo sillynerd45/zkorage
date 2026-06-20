@@ -24,7 +24,7 @@ export default function OpenShared() {
             prove you qualify, then the key is released to you
           </span>
         </div>
-        <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
+        <p className="text-sm leading-relaxed text-muted-foreground">
           A room owner can protect a document so only people who <b className="text-foreground">prove they
           qualify</b> can open it. You prove the document's conditions (for example: a{" "}
           <b className="text-foreground">member</b>, <b className="text-foreground">ID-checked</b>, and{" "}
@@ -76,7 +76,7 @@ export default function OpenShared() {
             read-only · runs in your browser
           </span>
         </div>
-        <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
+        <p className="text-sm leading-relaxed text-muted-foreground">
           The document's policy is public, so you can see exactly what to prove before you try. Proving it
           reveals only pass or fail per condition, never your identity or your underlying data.
         </p>
@@ -144,7 +144,7 @@ export default function OpenShared() {
             any 2 of 3 keepers · in your browser
           </span>
         </div>
-        <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
+        <p className="text-sm leading-relaxed text-muted-foreground">
           If you qualify, each keeper releases its part of the key <b className="text-foreground">to you</b>,
           locked to your key. You collect 2 parts, rebuild the key, and decrypt, all in your browser. No single
           keeper can open the file; a non-qualifying reader gets no parts.
