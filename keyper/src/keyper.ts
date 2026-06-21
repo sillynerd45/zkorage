@@ -18,8 +18,10 @@ import "dotenv/config";
 import express, { type Request, type Response } from "express";
 import cors from "cors";
 import { randomBytes } from "node:crypto";
+import { x25519 } from "@noble/curves/ed25519";
+import { sha256 } from "@noble/hashes/sha256";
 import { ShareStore } from "./store.js";
-import { shareEciesSeal } from "./share-ecies.js";
+import { shareEciesSeal, shareEciesOpen } from "./share-ecies.js";
 import { isDocAdmitted, getGrantRecipientPub, rpcUrl } from "./chain.js";
 
 const HEX32 = /^[0-9a-f]{64}$/;
@@ -45,6 +47,22 @@ if (KEYPER_INDEX < 1 || KEYPER_INDEX > 255) {
 }
 if (!CONTRACT_ID) throw new Error("DATAROOM_CONTRACT_ID must be set");
 if (!DEAL_TOKEN) console.warn("[keyper] WARNING: DEAL_TOKEN is empty → /deal is fail-CLOSED (every deal 503s until a token is set)");
+
+// Static x25519 SEAL key (Model B browser dealer): the dealer ECIES-seals this keyper's share to SEAL_PUB,
+// so the upload service only ever relays SEALED shares and never sees K. The keyper opens with SEAL_SECRET at
+// /deal and stores the raw share. Derived deterministically from KEYPER_SEAL_SECRET so it survives restarts
+// (the key is only needed AT deal-time; a rotation breaks only in-flight deals, not stored shares).
+const SEAL_SECRET = sha256(
+  new TextEncoder().encode(
+    process.env.KEYPER_SEAL_SECRET
+      ? `zkorage-keyper-seal-v1:${process.env.KEYPER_SEAL_SECRET}`
+      : `zkorage-keyper-seal-dev-v1:${KEYPER_INDEX}`,
+  ),
+);
+const SEAL_PUB = x25519.getPublicKey(SEAL_SECRET);
+if (!process.env.KEYPER_SEAL_SECRET) {
+  console.warn("[keyper] WARNING: KEYPER_SEAL_SECRET unset → using a DEV-default seal key from KEYPER_INDEX (set it per keyper in prod)");
+}
 
 // Per-IP fixed-window limiter for /share (no new dependency). The server never BLOCKS on the limiter being
 // off; with SHARE_RATE_PER_MIN <= 0 it is a no-op. A released share is only ever useful to the proof-bound
@@ -78,6 +96,8 @@ app.get("/health", (_req: Request, res: Response) => {
     rpc: rpcUrl(),
     contract: CONTRACT_ID,
     shares: store.count(),
+    // The static x25519 key the browser dealer seals this keyper's share to (Model B). Public by design.
+    seal_pub: Buffer.from(SEAL_PUB).toString("hex"),
     share_rate_per_min: SHARE_RATE_PER_MIN || null,
     cors: ALLOWED_ORIGINS.length ? ALLOWED_ORIGINS : "open",
   });
@@ -91,16 +111,38 @@ app.post("/deal", (req: Request, res: Response) => {
   if (!DEAL_TOKEN) return res.status(503).json({ error: "keyper not accepting deals: DEAL_TOKEN unset (fail-closed)" });
   const auth = req.header("authorization") || "";
   if (auth !== `Bearer ${DEAL_TOKEN}`) return res.status(401).json({ error: "unauthorized" });
-  const { room_id, doc_id, keyper_index, share_y } = (req.body ?? {}) as Record<string, unknown>;
+  const { room_id, doc_id, keyper_index, share_y, sealed } = (req.body ?? {}) as Record<string, unknown>;
   if (typeof room_id !== "string" || !HEX32.test(room_id)) return res.status(400).json({ error: "room_id must be 32-byte hex" });
   if (typeof doc_id !== "string" || !HEX32.test(doc_id)) return res.status(400).json({ error: "doc_id must be 32-byte hex" });
-  if (typeof share_y !== "string" || !HEX32.test(share_y)) return res.status(400).json({ error: "share_y must be 32-byte hex" });
   if (keyper_index !== KEYPER_INDEX) {
     return res.status(400).json({ error: `share is for keyper ${keyper_index}, this is keyper ${KEYPER_INDEX}` });
   }
+  // Two deal formats: (a) Model B SEALED deal — the browser dealer ECIES-sealed the share to our SEAL_PUB, so
+  // the relay never saw it; we open it with SEAL_SECRET and verify the tag binds (keyper,room,doc,SEAL_PUB).
+  // (b) raw share_y — the legacy server-dealer path (kept for back-compat). Both still require the bearer.
+  let shareYHex: string;
+  if (sealed && typeof sealed === "object") {
+    const s = sealed as Record<string, unknown>;
+    if (!["eph_pub", "ct", "tag"].every((k) => typeof s[k] === "string" && HEX32.test(s[k] as string))) {
+      return res.status(400).json({ error: "sealed deal needs eph_pub, ct, tag (32-byte hex each)" });
+    }
+    const opened = shareEciesOpen(
+      { keyperIndex: KEYPER_INDEX, ephPub: hexBytes(s.eph_pub as string), ct: hexBytes(s.ct as string), tag: hexBytes(s.tag as string) },
+      SEAL_SECRET,
+      hexBytes(room_id),
+      hexBytes(doc_id),
+      SEAL_PUB,
+    );
+    if (!opened.faithful) return res.status(400).json({ error: "sealed deal failed to open (wrong seal key or tampered)" });
+    shareYHex = Buffer.from(opened.shareY).toString("hex");
+  } else if (typeof share_y === "string" && HEX32.test(share_y)) {
+    shareYHex = share_y;
+  } else {
+    return res.status(400).json({ error: "deal needs sealed {eph_pub,ct,tag} (Model B) or share_y (32-byte hex)" });
+  }
   try {
-    store.put(room_id, doc_id, share_y);
-    return res.json({ ok: true, keyper_index: KEYPER_INDEX, stored: `${room_id}:${doc_id}` });
+    store.put(room_id, doc_id, shareYHex);
+    return res.json({ ok: true, keyper_index: KEYPER_INDEX, stored: `${room_id}:${doc_id}`, sealed: !!sealed });
   } catch (e) {
     return res.status(500).json({ error: (e as Error).message });
   }
