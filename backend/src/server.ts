@@ -2168,10 +2168,18 @@ app.post("/dataroom/membership/prove-access", async (req, res) => {
     const commitments = getEligible(roomIdHex).map((h) => fromHex(h));
     // Model B anonymity floor (k): a caller (the Model B reader) may require a minimum eligible-set size, so a
     // member cannot record an on-chain access (request_access) in a room too small to be anonymous. Legacy
-    // callers (e.g. the DR2 set-of-2 teaching demo) omit minAnonSet and are unaffected.
-    const minAnonSet = Number(req.body?.minAnonSet);
-    if (Number.isFinite(minAnonSet) && minAnonSet > 0 && commitments.length < minAnonSet) {
-      return res.status(400).json({ error: `anonymity set too small: ${commitments.length} of ${minAnonSet} members`, anonSetSize: commitments.length, minAnonSet });
+    // callers (e.g. the DR2 set-of-2 teaching demo) OMIT minAnonSet and are unaffected. A present-but-malformed
+    // value is an error (fail closed), never a silently skipped floor. NOTE: the count is the off-chain
+    // eligible-set size (kept in sync with the pinned root by the enroll/approve flow), so the floor is a
+    // service-level guardrail, not an on-chain invariant (the member count is not stored on-chain).
+    if (req.body?.minAnonSet !== undefined) {
+      const minAnonSet = Number(req.body.minAnonSet);
+      if (!Number.isInteger(minAnonSet) || minAnonSet <= 0) {
+        return res.status(400).json({ error: "minAnonSet must be a positive integer" });
+      }
+      if (commitments.length < minAnonSet) {
+        return res.status(400).json({ error: `anonymity set too small: ${commitments.length} of ${minAnonSet} members`, anonSetSize: commitments.length, minAnonSet });
+      }
     }
     const built = buildMembershipJob({
       idSecret, idTrapdoor, roomId: fromHex(roomIdHex), holderSeed,
@@ -2559,11 +2567,18 @@ app.post("/dataroom/committee/collect/:roomId/:docId", async (req, res) => {
   } catch (e) {
     return res.status(400).json({ error: err(e) });
   }
-  // Model B anonymity floor (k): the Model B reader passes minAnonSet so the key is NOT released in a room
-  // too small to be anonymous, even if the accessor was granted earlier (a room can shrink after a grant).
-  // Legacy callers omit minAnonSet and are unaffected.
-  const minAnonSet = Number(req.body?.minAnonSet);
-  if (Number.isFinite(minAnonSet) && minAnonSet > 0) {
+  // Model B anonymity floor (k): the Model B reader passes minAnonSet so this aggregator does NOT release the
+  // key in a room too small to be anonymous, even if the accessor was granted earlier (a room can shrink after
+  // a grant). Legacy callers OMIT minAnonSet and are unaffected; a present-but-malformed value is an error
+  // (fail closed). SCOPE: this is enforced here (the relay aggregator the app uses) and on prove-access, NOT at
+  // the keypers themselves (they gate only on is_doc_admitted and are size-unaware, since the member count is
+  // off-chain). So the floor protects the accessing member's own anonymity on the sanctioned path; it is a
+  // service-level guardrail, not a non-bypassable on-chain invariant.
+  if (req.body?.minAnonSet !== undefined) {
+    const minAnonSet = Number(req.body.minAnonSet);
+    if (!Number.isInteger(minAnonSet) || minAnonSet <= 0) {
+      return res.status(400).json({ error: "minAnonSet must be a positive integer" });
+    }
     const n = getEligible(roomIdHex).length;
     if (n < minAnonSet) {
       return res.status(403).json({ error: `anonymity set too small: ${n} of ${minAnonSet} members`, anonSetSize: n, minAnonSet });

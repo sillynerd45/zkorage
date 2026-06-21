@@ -37,6 +37,10 @@ import { isHex32 } from "@/lib/format";
 // is the only step where the witness leaves it, and it goes to the self-hosted prover alone.
 export type ProveStage = "idle" | "proving" | "requesting";
 
+// One source of truth for the below-floor block message (shown when the reader tries to prove/open a room
+// with fewer than ANON_FLOOR members). The backend enforces the same floor independently.
+const FLOOR_BLOCK_MSG = `Access needs at least ${ANON_FLOOR} members in this room. Anonymity needs a crowd to hide in.`;
+
 export function useSharedOpen() {
   const { connected, connect, status: walletStatus } = useWallet();
   const ident = useDataRoomIdentity();
@@ -153,7 +157,7 @@ export function useSharedOpen() {
   async function onProve() {
     if (!identity) return;
     if (belowFloor) {
-      setProveErr(`Access needs at least ${ANON_FLOOR} members in this room. Anonymity needs a crowd to hide in.`);
+      setProveErr(FLOOR_BLOCK_MSG);
       return;
     }
     setProveErr(null);
@@ -189,10 +193,10 @@ export function useSharedOpen() {
       setProveStep("Recording your anonymous access on-chain (request_access).");
       const ra = await requestAccess(bundle);
       if (!ra.ok) throw new Error(ra.error || "request_access was rejected");
-      // Re-read the live admission now that the grant exists; the reader can open below.
+      // Re-read the live admission now that the grant exists; the reader can open below. (enrollState is
+      // already "eligible" here, since that is the only branch that offers the prove step.)
       const acc = await sdk.canOpenDocument(room.trim(), doc.trim(), identity.accessor);
       setAccess(acc);
-      setEnrollState("eligible");
     } catch (e) {
       setProveErr(String((e as Error).message ?? e));
     } finally {
@@ -209,7 +213,7 @@ export function useSharedOpen() {
       return;
     }
     if (belowFloor) {
-      setOpenErr(`Access needs at least ${ANON_FLOOR} members in this room. Anonymity needs a crowd to hide in.`);
+      setOpenErr(FLOOR_BLOCK_MSG);
       return;
     }
     setOpenErr(null);
