@@ -600,6 +600,10 @@ export interface MyRoom {
   owner: string;
   docCount: number;
   ledger: number | null;
+  // M5: the owner's own discovery settings (surfaced only on the owner's own rooms; not a public leak).
+  visibility?: RoomVisibility | null;
+  name?: string | null;
+  description?: string | null;
 }
 /** The rooms a given owner (Stellar G-address) owns on-chain — the owner's "my documents" view. */
 export const getMyRooms = (owner: string) =>
@@ -655,6 +659,59 @@ export const enrollApprove = (
   signer
     ? writeViaWallet("/dataroom/enroll/approve", { roomId, commitment }, signer)
     : post<WalletWriteResult>("/dataroom/enroll/approve", { roomId, commitment });
+
+// ── M5: discovery tiers + public directory ───────────────────────────────────────────────────────
+// Visibility is an off-chain, NON-security discovery flag. The directory shows only rooms the owner opted
+// into ("listed"), with COARSE member buckets (never exact counts) and no access feed.
+export type RoomVisibility = "private" | "unlisted" | "listed";
+export type AnonTier = "forming" | "ok" | "strong";
+
+export interface DirectoryRoom {
+  roomId: string;
+  name: string | null;
+  description: string | null;
+  memberBucket: string; // coarse range, e.g. "5-19" — never an exact count
+  anonTier: AnonTier;
+  listedAt: number | null;
+}
+export interface RoomMeta {
+  roomId: string;
+  visibility: RoomVisibility;
+  discoverable: boolean;
+  listed?: boolean;
+  exists?: boolean;
+  name?: string | null;
+  description?: string | null;
+  memberBucket?: string;
+  anonTier?: AnonTier;
+}
+
+/** PUBLIC directory: only "listed" rooms, with coarse member buckets (never exact). Wallet not required. */
+export const getDirectory = () =>
+  fetch(`${BASE}/dataroom/directory`).then(
+    j<{ count: number; rooms: DirectoryRoom[]; dataroomId: string }>,
+  );
+
+/** Resolve one room by EXACT id. A private room reveals nothing (discoverable=false); unlisted/listed
+ *  return the opt-in name/description + a coarse count. */
+export const getRoomMeta = (roomId: string) =>
+  fetch(`${BASE}/dataroom/room-meta/${roomId}`).then(j<RoomMeta>);
+
+/** Owner: set a room's discovery tier + opt-in public name/description (off-chain, no tx). The connected
+ *  wallet address is sent as `source` so the backend's on-chain owner-gate passes for a wallet-owned room
+ *  (no source => the demo relay/ADMIN owner). Throws on a 4xx (e.g. not the owner). */
+export const setRoomVisibility = (
+  roomId: string,
+  patch: { visibility: RoomVisibility; name?: string; description?: string; source?: string },
+) =>
+  post<{
+    ok: boolean;
+    roomId: string;
+    visibility: RoomVisibility;
+    name: string | null;
+    description: string | null;
+    error?: string;
+  }>("/dataroom/room/visibility", { roomId, ...patch });
 
 // Accepts either UTF-8 `content` or base64 `contentB64` (binary: PDF, image, any file). The backend
 // encrypts whichever is supplied; only one is sent so an empty text box never overrides a chosen file.

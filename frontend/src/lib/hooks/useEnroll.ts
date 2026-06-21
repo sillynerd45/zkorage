@@ -8,9 +8,11 @@ import {
   enrollApprove,
   enrollReject,
   getMyRooms,
+  setRoomVisibility,
   type EnrollState,
   type EnrollRequestItem,
   type MyRoom,
+  type RoomVisibility,
 } from "@/lib/api";
 import { isHex32 } from "@/lib/format";
 
@@ -111,13 +113,56 @@ export function useEnroll() {
     }
   }, []);
 
+  // --- owner: room visibility (discovery tier) ---
+  const [vis, setVis] = useState<RoomVisibility>("private");
+  const [visName, setVisName] = useState("");
+  const [visDescription, setVisDescription] = useState("");
+  const [visBusy, setVisBusy] = useState(false);
+  const [visErr, setVisErr] = useState<string | null>(null);
+  const [visSaved, setVisSaved] = useState(false);
+
   const selectOwnerRoom = useCallback(
     (room: string) => {
       setOwnerRoom(room);
+      // Prefill the visibility control from the owner's own room record (the /dataroom/rooms read).
+      const rec = myRooms.find((r) => r.roomId === room);
+      setVis((rec?.visibility as RoomVisibility) ?? "private");
+      setVisName(rec?.name ?? "");
+      setVisDescription(rec?.description ?? "");
+      setVisErr(null);
+      setVisSaved(false);
       loadPending(room);
     },
-    [loadPending],
+    [loadPending, myRooms],
   );
+
+  const saveVisibility = useCallback(async () => {
+    if (!ownerRoom) return;
+    setVisBusy(true);
+    setVisErr(null);
+    setVisSaved(false);
+    try {
+      const r = await setRoomVisibility(ownerRoom.trim(), {
+        visibility: vis,
+        name: visName.trim() || undefined,
+        description: visDescription.trim() || undefined,
+        source: address ?? undefined,
+      });
+      if (!r.ok) {
+        setVisErr(r.error ?? "Could not save visibility.");
+        return;
+      }
+      setVisSaved(true);
+      // Reflect the sanitized stored values + refresh the owner room list for the next select.
+      setVisName(r.name ?? "");
+      setVisDescription(r.description ?? "");
+      if (address) getMyRooms(address).then((x) => setMyRooms(x.rooms)).catch(() => {});
+    } catch (e) {
+      setVisErr(String((e as Error).message ?? e));
+    } finally {
+      setVisBusy(false);
+    }
+  }, [ownerRoom, vis, visName, visDescription, address]);
 
   const approve = useCallback(
     async (c: string) => {
@@ -180,5 +225,16 @@ export function useEnroll() {
     acting,
     approve,
     reject,
+    // owner: visibility
+    vis,
+    setVis,
+    visName,
+    setVisName,
+    visDescription,
+    setVisDescription,
+    visBusy,
+    visErr,
+    visSaved,
+    saveVisibility,
   };
 }

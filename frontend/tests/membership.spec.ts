@@ -26,7 +26,9 @@ async function stubs(page: import("@playwright/test").Page) {
   const json = (body: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
   await page.route("**/dataroom/committee/info", (r) => r.fulfill(json({ online: 3, n: 3, threshold: 2 })));
   await page.route("**/dataroom/rooms?owner=**", (r) =>
-    r.fulfill(json({ owner: ADDR, count: 1, rooms: [{ roomId: OWNER_ROOM, label: "Acme board", owner: ADDR, docCount: 0, ledger: 1 }], dataroomId: "" })));
+    r.fulfill(json({ owner: ADDR, count: 1, rooms: [{ roomId: OWNER_ROOM, label: "Acme board", owner: ADDR, docCount: 0, ledger: 1, visibility: "private", name: null, description: null }], dataroomId: "" })));
+  await page.route("**/dataroom/room/visibility", (r) =>
+    r.fulfill(json({ ok: true, roomId: OWNER_ROOM, visibility: "listed", name: "Acme board", description: null })));
   await page.route("**/dataroom/enroll/status/**", (r) => r.fulfill(json({ state: "none" })));
   await page.route("**/dataroom/enroll/request", (r) => r.fulfill(json({ ok: true, state: "pending", added: true })));
   await page.route("**/dataroom/enroll/requests/**", (r) =>
@@ -57,8 +59,24 @@ test("membership: member derives + requests; owner approves (light)", async ({ p
   await page.getByTestId("enroll-approve").click();
   await expect(page.getByTestId("enroll-no-pending")).toBeVisible({ timeout: 15_000 });
 
+  // M5: set the room's discovery tier to listed + a public name, then save.
+  await expect(page.getByTestId("enroll-visibility")).toBeVisible();
+  await page.getByTestId("vis-listed").click();
+  await expect(page.getByTestId("vis-name")).toBeVisible(); // name input appears once not private
+  await page.getByTestId("vis-name").fill("Acme board");
+  await page.getByTestId("vis-save").click();
+  await expect(page.getByTestId("vis-saved")).toBeVisible({ timeout: 15_000 });
+
   await page.screenshot({ path: "tests/membership.png", fullPage: true });
   expect(errs, errs.join("\n")).toHaveLength(0);
+});
+
+test("membership: prefills the join room from a directory ?room= link", async ({ page }) => {
+  await page.addInitScript(mock(ADDR));
+  await stubs(page);
+  await page.goto(`/app/dataroom/membership?room=${JOIN_ROOM}`);
+  await expect(page.getByTestId("enroll-card")).toBeVisible();
+  await expect(page.getByTestId("enroll-join-room")).toHaveValue(JOIN_ROOM);
 });
 
 test("membership: renders dark + requires a wallet", async ({ page }) => {

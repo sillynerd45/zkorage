@@ -1671,7 +1671,18 @@ app.get("/dataroom/rooms", async (req, res) => {
           const r = room ? (jsonSafe(room) as { owner?: string }) : null;
           if (!r || r.owner !== owner) return null; // chain is authoritative; drop stale/unsubmitted entries
           const { value: cnt } = await readContract(DATAROOM_ID, "get_doc_count", [scBytes(c.roomId)]);
-          return { roomId: c.roomId, label: c.label ?? null, owner, docCount: Number(cnt ?? 0), ledger: (r as { ledger?: number }).ledger ?? null };
+          // M5: include the owner's OWN discovery settings (their own rooms — not a public leak) so the
+          // visibility control can show + prefill the current state. Absent visibility reads as "private".
+          return {
+            roomId: c.roomId,
+            label: c.label ?? null,
+            owner,
+            docCount: Number(cnt ?? 0),
+            ledger: (r as { ledger?: number }).ledger ?? null,
+            visibility: c.visibility ?? "private",
+            name: c.name ?? null,
+            description: c.description ?? null,
+          };
         }),
       )
     ).filter(Boolean);

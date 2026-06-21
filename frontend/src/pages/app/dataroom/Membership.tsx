@@ -1,12 +1,23 @@
-import { KeyRound, ShieldCheck, UserPlus, Users } from "lucide-react";
+import { useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
+import { Compass, Globe, KeyRound, Lock, ShieldCheck, UserPlus, Users } from "lucide-react";
 import { useEnroll } from "@/lib/hooks/useEnroll";
 import { short } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import type { RoomVisibility } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { DataRow, Verdict } from "@/components/app/blocks";
 import { Callout, CopyIconButton, SectionLabel } from "@/components/app/dataroom/kit";
+
+// M5 — the discovery tiers an owner can set per room. Visibility is a discovery convenience, not the privacy
+// mechanism (that stays the membership proof + the k=5 floor + the keepers).
+const VIS_TIERS: { key: RoomVisibility; label: string; desc: string; icon: typeof Lock }[] = [
+  { key: "private", label: "Private", desc: "Reachable only by a link or id you share.", icon: Lock },
+  { key: "unlisted", label: "Unlisted", desc: "Resolvable by exact id, not in the directory.", icon: KeyRound },
+  { key: "listed", label: "Listed", desc: "Shown in the public directory.", icon: Globe },
+];
 
 // M1 — request-then-approve enrollment (Model B). Members request to join a room with a commitment derived
 // from their wallet (sign-to-derive); the room owner approves, which pins the eligible-set root on-chain.
@@ -14,6 +25,13 @@ import { Callout, CopyIconButton, SectionLabel } from "@/components/app/dataroom
 // proof hides which member acts).
 export default function Membership() {
   const e = useEnroll();
+  // Prefill the join field when arriving from a directory "Request to join" link (?room=<id>).
+  const [params] = useSearchParams();
+  const paramRoom = params.get("room");
+  useEffect(() => {
+    if (paramRoom) e.setJoinRoom(paramRoom);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paramRoom]);
 
   if (!e.connected) {
     return (
@@ -207,6 +225,92 @@ export default function Membership() {
                     ))}
                   </div>
                 )}
+
+                {/* ── Discovery: who can find this room ── */}
+                <div className="space-y-3 pt-1" data-testid="enroll-visibility">
+                  <SectionLabel withRule>
+                    <span className="inline-flex items-center gap-1.5">
+                      <Compass className="size-4" aria-hidden="true" />
+                      Who can find this room
+                    </span>
+                  </SectionLabel>
+                  <div className="grid gap-2 sm:grid-cols-3" role="radiogroup" aria-label="room visibility">
+                    {VIS_TIERS.map((t) => {
+                      const active = e.vis === t.key;
+                      return (
+                        <button
+                          key={t.key}
+                          type="button"
+                          role="radio"
+                          aria-checked={active}
+                          onClick={() => e.setVis(t.key)}
+                          data-testid={`vis-${t.key}`}
+                          className={cn(
+                            "rounded-xl border p-3 text-left transition-colors hover:border-brand/30 hover:bg-accent/40",
+                            active && "border-brand/50 bg-accent/50",
+                          )}
+                        >
+                          <div className="flex items-center gap-1.5 text-[13px] font-medium">
+                            <t.icon className="size-4" aria-hidden="true" />
+                            {t.label}
+                          </div>
+                          <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{t.desc}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {e.vis !== "private" && (
+                    <div className="space-y-3">
+                      <label className="flex flex-col gap-1.5 text-[13px] text-muted-foreground">
+                        Public name (optional)
+                        <Input
+                          value={e.visName}
+                          onChange={(ev) => e.setVisName(ev.target.value)}
+                          placeholder="e.g. Series A data room"
+                          aria-label="room public name"
+                          data-testid="vis-name"
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1.5 text-[13px] text-muted-foreground">
+                        Public description (optional)
+                        <Input
+                          value={e.visDescription}
+                          onChange={(ev) => e.setVisDescription(ev.target.value)}
+                          placeholder="One line about the room"
+                          aria-label="room public description"
+                          data-testid="vis-description"
+                        />
+                      </label>
+                      <p className="text-xs leading-relaxed text-muted-foreground">
+                        A name alone can hint that a deal exists, so this is off by default. Leave it blank to
+                        stay anonymous in the directory.
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Button onClick={e.saveVisibility} disabled={e.visBusy} data-testid="vis-save">
+                      {e.visBusy ? "Saving…" : "Save visibility"}
+                    </Button>
+                    {e.visSaved && (
+                      <span className="text-sm text-emerald-600 dark:text-emerald-500" data-testid="vis-saved">
+                        Saved.
+                      </span>
+                    )}
+                  </div>
+
+                  <Callout icon={ShieldCheck}>
+                    Visibility only changes who can find the room. It does not change who can get in. The
+                    directory shows a rounded member range, never the exact count, and never who accessed.
+                  </Callout>
+
+                  {e.visErr && (
+                    <p className="text-sm text-destructive" data-testid="vis-error">
+                      {e.visErr}
+                    </p>
+                  )}
+                </div>
               </div>
             )}
           </div>
