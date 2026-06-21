@@ -285,9 +285,11 @@ that dies when you pull your collateral**, and an **anonymous tier that expires 
   from the escrow's public locks to catch a dishonest set (the SDK ships `recomputeQualRoot`). New guest
   `tier_predicate` (image `2671938b…`, a 181-byte journal that extends the membership guest with a second
   Merkle path over the bonded commitment). Security auditor SOUND for a testnet demo + code reviewer pass +
-  **Codex CLEAN**. On-chain e2e: three members, three unlinkable grants, a reused nullifier rejected.
+  **Codex CLEAN**. On-chain e2e: three members, three unlinkable grants, a reused nullifier rejected. A stable
+  demo accessor (`ed4928c6`) holds a live tier grant you can read without a wallet, next to a live numbers
+  panel (qualifying bonds, anonymous grants, the minimum anonymity set).
 - **Shipped:** the `/app/bonded` pillar (Overview · My Balances · Deposit · **Prove Solvency** · **Anonymous
-  Tier**, frontend **v0.10.0**) with a live ACTIVE→VOID solvency badge; the `backend /escrow/*` +
+  Tier**, frontend **v0.11.0**) with a live ACTIVE→VOID solvency badge; the `backend /escrow/*` +
   `/bonded/solvency/*` + `/bonded/tier/*` REST surface; a 9th `solvency` and 10th `tier` prover kind (gateway +
   GPU worker); SDK/MCP **v0.17.0** (`isSolvent`, `recomputeQualRoot`, key-free). Full record:
   `contract/deployment.testnet.json → solvency_gate_BP3 / guest_solvency / tier_gate_BP5 / guest_tier`.
