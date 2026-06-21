@@ -10,7 +10,9 @@ const sigCache = new Map<string, Uint8Array>();
 /**
  * React access to the sign-to-derive Data Room identity. `derive(roomId)` prompts the wallet once per
  * session, derives the per-room identity in the browser, and flags drift if the wallet's signing format
- * changed since last time. The private secrets stay in the returned object and in this browser only.
+ * changed since last time. The private secrets stay in this browser; the only time any leave is the one-time
+ * membership proof, when the witness goes to the self-hosted prover (which must see it to build the proof),
+ * never to a third party.
  */
 export function useDataRoomIdentity() {
   const { address, signMessage } = useWallet();
