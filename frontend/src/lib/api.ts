@@ -856,6 +856,49 @@ export const proveAccess = (a: ProveAccessArgs) =>
 export const requestAccess = (bundle: Bundle) =>
   post<RequestAccessResp>("/dataroom/membership/request-access", bundle);
 
+// M7 — anonymous-access batching. Instead of submitting request_access immediately (which would let the room
+// owner read the on-chain grant's timestamp + order and re-link the member by timing), the member hands the
+// proven bundle to the relay, which flushes it SHUFFLED at the next fixed window boundary. Poll the ticket
+// until it is submitted, then open. Latency is the price of breaking the timing link.
+export type BatchStatus = "queued" | "submitted" | "error";
+
+export interface QueueAccessResp {
+  ok: boolean;
+  ticket?: string;
+  status?: BatchStatus;
+  /** The window boundary (unix ms) this access lands at. */
+  flushAt?: number;
+  nextFlushAt?: number;
+  windowMs?: number;
+  queued?: number;
+  error?: string;
+}
+
+export const queueAccess = (args: { bundle: Bundle; roomId: string; accessor: string; nullifier: string }) =>
+  post<QueueAccessResp>("/dataroom/membership/queue-access", {
+    seal: args.bundle.seal,
+    image_id: args.bundle.image_id,
+    journal: args.bundle.journal,
+    roomId: args.roomId,
+    accessor: args.accessor,
+    nullifier: args.nullifier,
+  });
+
+export interface QueueStatusResp {
+  ticket: string;
+  status: BatchStatus;
+  roomId: string;
+  accessor: string;
+  flushAt: number;
+  nextFlushAt: number;
+  windowMs: number;
+  txHash: string | null;
+  error: string | null;
+}
+
+export const getQueueStatus = (ticket: string) =>
+  fetch(`${BASE}/dataroom/membership/queue-status/${ticket}`).then(j<QueueStatusResp>);
+
 // ── DR3: threshold-ECIES committee (key release) ──
 
 export interface CommitteeKeyper {

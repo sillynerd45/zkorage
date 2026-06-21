@@ -119,10 +119,11 @@ export default function OpenShared() {
         <div className="mt-4 space-y-3">
           <AnonymityMeter count={s.anonCount} />
           <Callout icon={ShieldQuestion}>
-            What the room can see: that an approved member opened a document, and when. Not which member. Because
-            joining is by name, an owner who watches the timing of accesses could try to guess, so a bigger group
-            makes that harder. That is why access needs at least {ANON_FLOOR} members. Stronger timing protection
-            is planned, not in place yet.
+            What the room can see: that an approved member opened a document in a time window, never which member,
+            never exactly when. Accesses in a window are recorded on-chain together, in shuffled order, at fixed
+            boundaries, so the on-chain time and order do not track your action. How well you blend in depends on
+            how many others access in the same window, which is why access needs at least {ANON_FLOOR} members.
+            Over many windows the pattern can still narrow, and this hides you from the room owner, not from us.
           </Callout>
         </div>
 
@@ -186,16 +187,20 @@ export default function OpenShared() {
                       You are on this room's list. Prove your membership once to unlock it. The proof runs on our
                       <b className="text-foreground"> self-hosted prover</b>, which must see your secret keys to
                       build it. That is why we run the prover ourselves and never send your data to a third
-                      party. Your keys are not stored and go to no one else. After this, opening any document in
+                      party. Your keys are not stored and go to no one else. Your access is then recorded on-chain
+                      in a <b className="text-foreground">batch</b>, shuffled with the other accesses in a short
+                      time window, so the room cannot tell when you acted. After it lands, opening any document in
                       the room is instant.
                     </p>
                     <div className="mt-3">
                       <Button onClick={s.onProve} disabled={proving || s.belowFloor} data-testid="access-prove-btn">
                         {s.proveStage === "proving"
                           ? "Proving…"
-                          : s.proveStage === "requesting"
-                            ? "Recording…"
-                            : "Prove membership and unlock"}
+                          : s.proveStage === "queuing"
+                            ? "Queuing…"
+                            : s.proveStage === "queued"
+                              ? "Waiting for the window…"
+                              : "Prove membership and unlock"}
                       </Button>
                     </div>
                     {s.belowFloor && (
@@ -207,6 +212,12 @@ export default function OpenShared() {
                       <p className="mt-3 text-sm text-muted-foreground" data-testid="access-prove-step">
                         {s.proveStep}
                         {s.proveBy ? ` (proving on: ${s.proveBy})` : ""}
+                      </p>
+                    )}
+                    {s.proveStage === "queued" && s.flushAt && (
+                      <p className="mt-1 text-sm text-muted-foreground" data-testid="access-queued-eta">
+                        Next batch window around {new Date(s.flushAt).toLocaleTimeString()}. You can leave this
+                        open; it unlocks once your access lands.
                       </p>
                     )}
                     {s.proveErr && (

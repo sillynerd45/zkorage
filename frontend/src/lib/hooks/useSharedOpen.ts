@@ -5,7 +5,8 @@ import {
   getEnrollStatus,
   getEligible,
   proveAccess,
-  requestAccess,
+  queueAccess,
+  getQueueStatus,
   getProveStatus,
   type CommitteeInfoResp,
   type CommitteeDoc,
@@ -36,7 +37,12 @@ import { isHex32 } from "@/lib/format";
 // ZK is load-bearing: the keepers release the key to someone they cannot identify, because a proof, not a
 // login, decides who qualifies. The recipient secret never leaves the browser; the one-time membership proof
 // is the only step where the witness leaves it, and it goes to the self-hosted prover alone.
-export type ProveStage = "idle" | "proving" | "requesting";
+//
+// M7 (timing defense): the proof bundle is NOT submitted on-chain immediately. It is handed to the batching
+// relay, which records the access on-chain SHUFFLED at the next fixed window boundary, together with the other
+// accesses in that window. So the room owner reads only "an approved member accessed in this window", not when
+// (or whether) THIS member acted. Latency until the access lands is the price of breaking that timing link.
+export type ProveStage = "idle" | "proving" | "queuing" | "queued";
 
 // One source of truth for the below-floor block message (shown when the reader tries to prove/open a room
 // with fewer than ANON_FLOOR members). The backend enforces the same floor independently.
@@ -68,6 +74,8 @@ export function useSharedOpen() {
   const [proveStep, setProveStep] = useState("");
   const [proveBy, setProveBy] = useState<string | null>(null);
   const [proveErr, setProveErr] = useState<string | null>(null);
+  // M7: the window boundary (unix ms) the queued access lands at, surfaced so the reader sees roughly when.
+  const [flushAt, setFlushAt] = useState<number | null>(null);
 
   const [opened, setOpened] = useState<OpenedCommitteeDocument | null>(null);
   const [openErr, setOpenErr] = useState<string | null>(null);
@@ -152,9 +160,11 @@ export function useSharedOpen() {
     }
   }
 
-  // Prove membership ONCE: the witness (the reader's wallet-derived secrets) goes to the self-hosted prover,
-  // which returns a Groth16 bundle; request_access then binds the reader's accessor + recipient key on-chain.
-  // After this, opening any document in the room is instant (no re-proof).
+  // Prove membership ONCE, then hand the proof to the batching relay instead of submitting it directly. The
+  // witness (the reader's wallet-derived secrets) goes to the self-hosted prover, which returns a Groth16
+  // bundle; the relay records the access on-chain (request_access) SHUFFLED at the next fixed window boundary,
+  // so the on-chain timestamp + order reveal the window, not this member's action. The reader waits for the
+  // window to flush, then can open. After it lands, opening any document in the room is instant.
   async function onProve() {
     if (!identity) return;
     if (belowFloor) {
@@ -163,6 +173,7 @@ export function useSharedOpen() {
     }
     setProveErr(null);
     setProveBy(null);
+    setFlushAt(null);
     setProveStep("Proving your membership (sha256-Merkle, nullifier, holder signature) on the self-hosted prover. This runs once for the room and can take a few minutes.");
     setProveStage("proving");
     try {
@@ -194,10 +205,39 @@ export function useSharedOpen() {
         await new Promise((r) => setTimeout(r, 4000));
       }
       if (!bundle) throw new Error("the proof timed out");
-      setProveStage("requesting");
-      setProveStep("Recording your anonymous access on-chain (request_access).");
-      const ra = await requestAccess(bundle);
-      if (!ra.ok) throw new Error(ra.error || "request_access was rejected");
+
+      // Hand the proven bundle to the batching relay (the timing defense). It will be submitted on-chain,
+      // shuffled with the window's other accesses, at the next boundary — not the instant you proved.
+      setProveStage("queuing");
+      setProveStep("Handing your access to the batching relay.");
+      const q = await queueAccess({
+        bundle,
+        roomId: room.trim(),
+        accessor: identity.accessor,
+        nullifier: pa.nullifier,
+      });
+      if (!q.ok || !q.ticket) throw new Error(q.error || "could not queue your access for batched submission");
+      setFlushAt(q.flushAt ?? null);
+      setProveStage("queued");
+      setProveStep("Your access is queued. It lands on-chain at the next batch window, shuffled with the others in that window, so the room cannot tell when you acted.");
+
+      // Poll the ticket until the window flushes and the access lands (or fails). Allow up to two windows
+      // (the relay may have just missed a boundary) plus a margin.
+      const windowMs = q.windowMs ?? 10 * 60 * 1000;
+      const deadline = Date.now() + windowMs * 2 + 60 * 1000;
+      let landed = false;
+      while (Date.now() < deadline) {
+        if (cancelled.current) return;
+        await new Promise((r) => setTimeout(r, 4000));
+        const st = await getQueueStatus(q.ticket);
+        if (st.status === "submitted") {
+          landed = true;
+          break;
+        }
+        if (st.status === "error") throw new Error(st.error || "the batched submission was rejected");
+      }
+      if (!landed) throw new Error("your batched access has not landed yet; try Check access again shortly");
+
       // Re-read the live admission now that the grant exists; the reader can open below. (enrollState is
       // already "eligible" here, since that is the only branch that offers the prove step.)
       const acc = await sdk.canOpenDocument(room.trim(), doc.trim(), identity.accessor);
@@ -267,6 +307,7 @@ export function useSharedOpen() {
     proveStep,
     proveBy,
     proveErr,
+    flushAt,
     onProve,
     // open
     opened,

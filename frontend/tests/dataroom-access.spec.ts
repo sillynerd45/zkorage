@@ -93,6 +93,46 @@ test("M3 reader: on the list but not granted -> the one-time membership proof is
   await page.screenshot({ path: "tests/dataroom-access-prove-dark.png", fullPage: true });
 });
 
+test("M7 reader: an eligible member's access is BATCHED (queued for the window, not submitted instantly)", async ({ page }) => {
+  await page.addInitScript(mock);
+  await stubReads(page, "eligible", 8); // above the floor (amber)
+
+  // prove once -> hand the bundle to the batching relay -> queued for the next window (NOT request_access now).
+  await page.route("**/dataroom/membership/prove-access", (r) => r.fulfill(json({
+    jobId: "job-1", roomId: "modelb", eligibleRoot: "00".repeat(32),
+    nullifier: "ab".repeat(32), accessor: "cd".repeat(32), recipientPub: "ef".repeat(32),
+  })));
+  await page.route("**/prove-status/**", (r) => r.fulfill(json({
+    status: "done", bundle: { seal: "00".repeat(8), image_id: "11".repeat(32), journal: "22".repeat(32) },
+  })));
+  let queued = 0;
+  let requested = 0;
+  await page.route("**/dataroom/membership/request-access", (r) => { requested++; return r.fulfill(json({ ok: true })); });
+  await page.route("**/dataroom/membership/queue-access", (r) => {
+    queued++;
+    return r.fulfill(json({ ok: true, ticket: "aa".repeat(16), status: "queued", flushAt: Date.now() + 60_000, nextFlushAt: Date.now() + 60_000, windowMs: 60_000 }));
+  });
+  await page.route("**/dataroom/membership/queue-status/**", (r) => r.fulfill(json({
+    ticket: "aa".repeat(16), status: "queued", roomId: "modelb", accessor: "cd".repeat(32),
+    flushAt: Date.now() + 60_000, nextFlushAt: Date.now() + 60_000, windowMs: 60_000, txHash: null, error: null,
+  })));
+
+  await page.goto("/app/dataroom/access");
+  await expect(page.getByTestId("anon-meter")).toHaveAttribute("data-tier", "amber", { timeout: 30_000 });
+  await page.getByTestId("access-check-btn").click();
+  await expect(page.getByTestId("access-result")).toHaveAttribute("data-admitted", "false", { timeout: 30_000 });
+
+  // the prove copy now explains the access is recorded in a shuffled batch, not instantly
+  await expect(page.getByTestId("access-prove")).toContainText(/batch/i);
+  await page.getByTestId("access-prove-btn").click();
+
+  // it is queued for the window (the batching relay), not submitted immediately: the button + an ETA say so
+  await expect(page.getByTestId("access-prove-btn")).toHaveText(/Waiting for the window/i, { timeout: 30_000 });
+  await expect(page.getByTestId("access-queued-eta")).toBeVisible();
+  expect(queued).toBe(1);
+  expect(requested).toBe(0); // the immediate request-access route is NOT used by the Model B reader
+});
+
 test("M4 floor: below 5 members the meter is red and access is disabled", async ({ page }) => {
   await page.addInitScript(mock);
   await stubReads(page, "eligible", 2); // below the floor -> red, disabled
