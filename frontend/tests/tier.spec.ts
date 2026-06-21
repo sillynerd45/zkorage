@@ -29,7 +29,13 @@ test("tier: page renders, identity mints, anonymity-set size + state (light + da
   await expect(page.getByTestId("tier-anonset")).toBeVisible({ timeout: 30_000 });
   const size = (await (await qualResp).json()).anonSetSize ?? 0;
 
-  // Mint an anonymous identity (idempotent — if one is already stored, the panel is already showing it).
+  // BP6: the "Live on testnet" numbers panel renders, and the stable demo grant (a fixed accessor that
+  // already holds a live tier grant on-chain) is surfaced.
+  await expect(page.getByTestId("tier-numbers")).toBeVisible();
+  await expect(page.getByTestId("tier-stat-grants")).toBeVisible();
+  await expect(page.getByTestId("tier-demo-grant")).toBeVisible({ timeout: 30_000 });
+
+  // Mint an anonymous identity (idempotent: if one is already stored, the panel is already showing it).
   const create = page.getByTestId("tier-create-identity");
   if (await create.isVisible().catch(() => false)) {
     await create.click();

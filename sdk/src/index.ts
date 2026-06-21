@@ -42,6 +42,7 @@ export {
   DEMO_SOLVENCY_AUDITOR_ID,
   TIER_IMAGE_ID,
   CLAIM_TYPE_TIER,
+  DEMO_TIER,
 } from "./defaults.js";
 export {
   decodeJournal,

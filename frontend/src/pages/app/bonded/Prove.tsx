@@ -40,7 +40,7 @@ export default function BondedProve() {
     addrRef.current = b.address;
   }, [b.address]);
 
-  // Live status polling — re-reads the gate's is_granted (which itself re-reads the escrow lock), so the
+  // Live status polling: re-reads the gate's is_granted (which itself re-reads the escrow lock), so the
   // badge flips ACTIVE -> VOID on its own the moment the bond is released. This is the self-void.
   const refreshStatus = useCallback(async () => {
     if (!b.address) {
@@ -51,7 +51,7 @@ export default function BondedProve() {
       const s = await getSolvencyStatus(b.address);
       if (alive.current) setStatus(s);
     } catch {
-      /* transient read error — keep the last known status */
+      /* transient read error; keep the last known status */
     }
   }, [b.address]);
 
@@ -106,10 +106,10 @@ export default function BondedProve() {
         if (st.status === "error") throw new Error(st.error || "proving failed");
       }
       if (!alive.current || addrRef.current !== startedFor) {
-        setPhase("idle"); // unmounted or wallet switched mid-prove — drop quietly
+        setPhase("idle"); // unmounted or wallet switched mid-prove; drop quietly
         return;
       }
-      if (!bundle) throw new Error("still proving on the fallback prover — leave this tab open and re-check in a minute");
+      if (!bundle) throw new Error("still proving on the fallback prover. Leave this tab open and re-check in a minute");
       setPhase("submitting");
       setMsg("Proof ready. Submitting it to the gate. Approve the signature in your wallet.");
       const r = await submitSolvency(bundle, b.signer);
@@ -153,7 +153,7 @@ export default function BondedProve() {
 
   return (
     <div className="grid gap-4" data-testid="bonded-prove">
-      {/* What this is — the inverted model, stated plainly. */}
+      {/* What this is: the inverted model, stated plainly. */}
       <Panel title="A proof that dies when you pull your collateral">
         <p className="text-[13px] leading-relaxed text-muted-foreground">
           You prove that your reserves are at least the circulating supply, without revealing the reserve figure.
@@ -164,7 +164,7 @@ export default function BondedProve() {
         </p>
       </Panel>
 
-      {/* The live badge — ACTIVE while bonded, VOID once released. */}
+      {/* The live badge: ACTIVE while bonded, VOID once released. */}
       <Panel
         title="Live status"
         aside={
@@ -176,11 +176,11 @@ export default function BondedProve() {
         <div className="flex flex-wrap items-center gap-3" data-testid="solvency-badge" data-state={granted ? "active" : hadProof ? "void" : "none"}>
           {granted ? (
             <span className="inline-flex items-center gap-2 rounded-full bg-success/10 px-3 py-1.5 text-[13px] font-semibold text-success">
-              <ShieldCheck className="size-4" /> Solvent — bonded
+              <ShieldCheck className="size-4" /> Solvent, bonded
             </span>
           ) : hadProof ? (
             <span className="inline-flex items-center gap-2 rounded-full bg-destructive/10 px-3 py-1.5 text-[13px] font-semibold text-destructive">
-              <ShieldX className="size-4" /> Void — proof no longer live
+              <ShieldX className="size-4" /> Void, proof no longer live
             </span>
           ) : (
             <span className="inline-flex items-center gap-2 rounded-full bg-muted px-3 py-1.5 text-[13px] font-medium text-muted-foreground">

@@ -920,6 +920,7 @@ export interface TierInfo {
   claimType: number;
   minAnonSet: number;
   enrolledCount: number;
+  grantCount: number;
   escrowId: string;
   bondTokenId: string;
 }

@@ -20,9 +20,10 @@ import {
 } from "@/lib/api";
 import { short } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { DEMO_TIER } from "zkorage-sdk";
 
 // The demo tier: a fixed (threshold, X) so every member shares ONE anonymity set. Bond at least this much,
-// locked until this date, and you qualify. X is absolute (not per-deposit) on purpose — a shared deadline is
+// locked until this date, and you qualify. X is absolute (not per-deposit) on purpose; a shared deadline is
 // what lets the proof hide WHICH member you are.
 const TIER_THRESHOLD = "1000000000"; // 100 zkUSD (7 decimals)
 const TIER_X = 1_800_000_000; // ~2027-01-15
@@ -40,6 +41,15 @@ const safeBig = (s: string): bigint => {
   }
 };
 
+function Stat({ label, value, testid }: { label: string; value: number | string; testid?: string }) {
+  return (
+    <div className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2" data-testid={testid}>
+      <div className="text-[18px] font-semibold tabular-nums">{value}</div>
+      <div className="text-[11px] text-muted-foreground">{label}</div>
+    </div>
+  );
+}
+
 function loadIdentity(): TierIdentity | null {
   try {
     const raw = localStorage.getItem(IDENTITY_KEY);
@@ -55,6 +65,7 @@ export default function BondedTier() {
   const [identity, setIdentity] = useState<TierIdentity | null>(loadIdentity());
   const [qual, setQual] = useState<TierQualSet | null>(null);
   const [status, setStatus] = useState<TierStatus | null>(null);
+  const [demoStatus, setDemoStatus] = useState<TierStatus | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
   const [msg, setMsg] = useState("");
   const alive = useRef(true);
@@ -70,7 +81,7 @@ export default function BondedTier() {
       const q = await getTierQualSet(TIER_THRESHOLD, TIER_X);
       if (alive.current) setQual(q);
     } catch {
-      /* transient read error — keep the last known set */
+      /* transient read error; keep the last known set */
     }
   }, []);
 
@@ -89,6 +100,12 @@ export default function BondedTier() {
 
   useEffect(() => {
     getTierInfo().then(setInfo).catch(() => {});
+  }, []);
+
+  // The stable demo grant (read-only): a fixed accessor that already holds a live tier grant on testnet, so a
+  // visitor can see the working end state without connecting a wallet or proving anything themselves.
+  useEffect(() => {
+    getTierStatus(DEMO_TIER.accessor).then(setDemoStatus).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -135,7 +152,7 @@ export default function BondedTier() {
     const r = await b.deposit({
       amount: TIER_THRESHOLD,
       unlock_time: TIER_X,
-      revocable: false, // anonymous-tier locks are non-revocable — that is what makes now < X mean "still funded"
+      revocable: false, // anonymous-tier locks are non-revocable, which is what makes now < X mean "still funded"
       commitment: identity.qualCommitment,
     });
     if (!r.ok) {
@@ -175,7 +192,7 @@ export default function BondedTier() {
         if (st.status === "error") throw new Error(st.error || "proving failed");
       }
       if (!alive.current) return;
-      if (!bundle) throw new Error("still proving on the fallback prover — leave this tab open and re-check in a minute");
+      if (!bundle) throw new Error("still proving on the fallback prover. Leave this tab open and re-check in a minute");
       setPhase("submitting");
       setMsg("Proof ready. Recording the anonymous grant.");
       const r = await submitTier(bundle);
@@ -205,7 +222,26 @@ export default function BondedTier() {
         </div>
       </Panel>
 
-      {/* Step 1 — an anonymous handle, generated and held in this browser. */}
+      {/* Live, on testnet: the running counts + a stable demo grant a visitor can read without a wallet. */}
+      <Panel title="Live on testnet">
+        <div className="grid grid-cols-3 gap-3" data-testid="tier-numbers">
+          <Stat label="Qualifying bonds" value={anonSize} testid="tier-stat-bonds" />
+          <Stat label="Anonymous grants" value={info?.grantCount ?? 0} testid="tier-stat-grants" />
+          <Stat label="Min. anon set" value={minSet} testid="tier-stat-min" />
+        </div>
+        {demoStatus?.is_granted && (
+          <p className="mt-3 inline-flex items-start gap-1.5 text-[12px] text-muted-foreground" data-testid="tier-demo-grant">
+            <ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-success" />
+            <span>
+              A demo member ({short(DEMO_TIER.accessor, 6)}) already holds a live tier grant, valid until{" "}
+              {fmtDate(DEMO_TIER.unlockAfter)}. The on-chain record names no wallet, no lock, and no amount. That
+              is the anonymity.
+            </span>
+          </p>
+        )}
+      </Panel>
+
+      {/* Step 1: an anonymous handle, generated and held in this browser. */}
       <Panel title="1. Your tier identity">
         {hasIdentity ? (
           <div className="grid gap-0.5" data-testid="tier-identity">
@@ -233,7 +269,7 @@ export default function BondedTier() {
         )}
       </Panel>
 
-      {/* Step 2 — bond a qualifying lock (wallet-signed, public on purpose; the proof hides which one is yours). */}
+      {/* Step 2: bond a qualifying lock (wallet-signed, public on purpose; the proof hides which one is yours). */}
       <Panel title="2. Bond a qualifying lock">
         {!b.connected ? (
           <div className="flex flex-col items-start gap-3 py-1">
@@ -273,7 +309,7 @@ export default function BondedTier() {
         )}
       </Panel>
 
-      {/* The anonymity set — the count, and the honest warning. */}
+      {/* The anonymity set: the count, and the honest warning. */}
       <Panel
         title="Anonymity set"
         aside={
@@ -296,12 +332,12 @@ export default function BondedTier() {
         )}
       </Panel>
 
-      {/* Step 3 — prove anonymously. */}
+      {/* Step 3: prove anonymously. */}
       <Panel title="3. Prove the tier, anonymously">
         <div className="flex flex-wrap items-center gap-3" data-testid="tier-badge" data-state={granted ? "active" : status?.grant ? "expired" : "none"}>
           {granted ? (
             <span className="inline-flex items-center gap-2 rounded-full bg-success/10 px-3 py-1.5 text-[13px] font-semibold text-success">
-              <ShieldCheck className="size-4" /> Tier granted — valid until {fmtDate(TIER_X)}
+              <ShieldCheck className="size-4" /> Tier granted, valid until {fmtDate(TIER_X)}
             </span>
           ) : status?.grant ? (
             <span className="inline-flex items-center gap-2 rounded-full bg-muted px-3 py-1.5 text-[13px] font-medium text-muted-foreground">

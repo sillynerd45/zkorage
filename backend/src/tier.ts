@@ -364,4 +364,10 @@ export async function getTierQualRing(threshold: bigint, unlockAfter: number): P
   return (value as unknown[]).map((v) => toHex(new Uint8Array(v as Uint8Array)));
 }
 
+/** The total number of anonymous tier grants the gate has issued (on-chain append-only count). */
+export async function getTierGrantCount(): Promise<number> {
+  const { value } = await readContract(requireGate(), "get_count");
+  return Number(value ?? 0);
+}
+
 export { toHex, fromHex };

@@ -108,7 +108,7 @@ export default function BondedBalances() {
                 {l.role === "self" ? "depositor (self-bond)" : l.role}
               </DataRow>
               <DataRow k="Revocable" mono={false}>
-                {l.revocable ? "yes — can pull early" : "no — one-way until unlock"}
+                {l.revocable ? "yes, can pull early" : "no, one-way until unlock"}
               </DataRow>
             </div>
 

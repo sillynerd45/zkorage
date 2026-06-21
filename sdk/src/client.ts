@@ -1086,6 +1086,11 @@ export class ZkorageClient {
     return Boolean(await this.simRead(this.cfg.contracts.tierGate, "is_qual_root_accepted", [scU64(threshold), scU64(unlockAfter), scBytes(qualRootHex)]));
   }
 
+  /** The total number of anonymous tier grants the gate has issued (on-chain append-only count). */
+  async getTierGrantCount(): Promise<number> {
+    return Number((await this.simRead(this.cfg.contracts.tierGate, "get_count")) ?? 0);
+  }
+
   /**
    * The TRUSTLESS audit of the gate's qualifying-set root. Independently rebuilds `qual_root` from the
    * escrow's PUBLIC `get_lock` state — no secrets, no trust in the indexer. Scans locks, keeps the

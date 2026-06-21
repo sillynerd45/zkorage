@@ -65,7 +65,7 @@ import {
 import {
   TIER_GATE_ID, TIER_IMAGE_ID, TIER_MIN_ANON_SET, TIER_MEMBER_SET_ID,
   buildTierJob, buildQualSet, freshTierIdentity,
-  isTierGranted, getTierGrant, isTierNullifierUsed, getTierConfig, getTierMemberRoot, getTierQualRing,
+  isTierGranted, getTierGrant, isTierNullifierUsed, getTierConfig, getTierMemberRoot, getTierQualRing, getTierGrantCount,
 } from "./tier.js";
 import { verifyBundle, cliRecipe, type AuditContext } from "./audit.js";
 
@@ -3388,6 +3388,7 @@ app.get("/bonded/tier/info", async (_req, res) => {
       enrolledCount: memberCommitments.length,
       computedMemberRoot: memberRoot,
       pinnedMemberRoot: TIER_GATE_ID ? await getTierMemberRoot().catch(() => null) : null,
+      grantCount: TIER_GATE_ID ? await getTierGrantCount().catch(() => 0) : 0,
       escrowId: ESCROW_ID,
       bondTokenId: BOND_TOKEN_ID,
       qualCommitmentScheme: "sha256(0x03 ‖ id_secret ‖ 'escrow') — store this in the escrow lock's commitment",

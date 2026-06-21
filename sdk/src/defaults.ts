@@ -219,3 +219,14 @@ export const TIER_IMAGE_ID =
 
 /** Anonymous bonded-tier claim_type (enrolled member ∧ qualifying bonded lock, expiring at X). */
 export const CLAIM_TYPE_TIER = 13;
+
+/** A stable demo anonymous-tier GRANT anchored on testnet (gate `tier_gate_BP5`). The fixed demo member
+ * (id 0x11/0x22, holder 0x03 -> accessor `ed4928c6`, the same demo member as DR2/DR3/DR6) proved the demo
+ * tier ANONYMOUSLY: an enrolled member AND a non-revocable qualifying bond (floor 100 zkUSD, locked until X).
+ * Read the live decision with `isTierGranted(DEMO_TIER.accessor)`; the grant reveals neither which member nor
+ * which lock. Seed / re-seed with `backend/scripts/bp5-tier-anchor-demo.mjs` (idempotent). */
+export const DEMO_TIER = {
+  accessor: "ed4928c628d1c2c6eae90338905995612959273a5c63f93636c14614ac8737d1",
+  threshold: "1000000000", // 100 zkUSD (1e9 base units)
+  unlockAfter: 1800000000, // ~2027-01-15 (the shared demo deadline X)
+};
