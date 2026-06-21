@@ -55,6 +55,10 @@ import { buildDocauthJob, bankIssuer } from "./docauth.js";
 import { getEligible, addEligible, indexOfCommitment } from "./eligible-store.js";
 import { addRequest, listRequests, removeRequest, hasRequest } from "./enroll-store.js";
 import { putEscrow, getEscrow } from "./escrow-store.js";
+import {
+  enqueue as enqueueBatch, getByTicket as getBatchTicket, listQueued as listBatchQueued,
+  flush as flushBatch, nextFlushAt, type QueuedBundle,
+} from "./batch-queue-store.js";
 import { demoDenyTree, DENY_DEPTH } from "./denylist.js";
 import { verifyOnChain, type Bundle } from "./verify.js";
 import { readContract, invokeContract, buildUnsignedXdr, submitSignedXdr, scBytes, scAddress, scOptAddress, scI128, scU32, scU64, scBool, jsonSafe } from "./chain.js";
@@ -142,6 +146,12 @@ const KEYPER_DEAL_TOKEN = process.env.KEYPER_DEAL_TOKEN || "dr3-demo-deal-token"
 const COMMITTEE_THRESHOLD = Number(process.env.COMMITTEE_THRESHOLD || "2");
 const NETWORK = process.env.STELLAR_NETWORK || "testnet";
 const PROVER_URL = process.env.PROVER_URL || "";
+// M7 — anonymous-access batching window (the timing defense). The relay holds proven request_access bundles
+// and flushes them, SHUFFLED, at fixed epoch-aligned boundaries every DR_BATCH_WINDOW_MS, so the on-chain
+// grant timestamp+order bins to the window instead of tracking the member's action. Longer = more cover but
+// more latency; shorter = snappier but thinner cover (the demo/e2e set it low to show the mechanism quickly,
+// production runs it ~10 min). The on-chain decorrelation story is identical at any window length.
+const DR_BATCH_WINDOW_MS = Math.max(1000, Number(process.env.DR_BATCH_WINDOW_MS || 10 * 60_000));
 const BUNDLE_PATH = process.env.BUNDLE_PATH || path.join("data", "bundle.json");
 // Public RPC the trust-minimized "verify it yourself" channels point at (page + CLI). Not our server.
 const PUBLIC_RPC_URL = process.env.PUBLIC_RPC_URL || "https://soroban-testnet.stellar.org";
@@ -2451,6 +2461,112 @@ app.post("/dataroom/membership/request-access", async (req, res) => {
   }
 });
 
+// M7 — submit ONE proven request_access bundle (used by both the immediate route above and the batch flusher).
+// request_access is permissionless (the in-guest NEW-5 holder sig is the authorization), so the relay just
+// pays fees. Returns the tx hash or throws.
+async function submitOneAccess(bundle: QueuedBundle): Promise<{ txHash: string }> {
+  const out = await invokeContract(
+    DATAROOM_ID,
+    "request_access",
+    [scBytes(bundle.seal), scBytes(bundle.image_id), scBytes(bundle.journal)],
+  );
+  return { txHash: out.hash };
+}
+
+// M7 — flush the batch queue NOW: shuffle every queued bundle and submit each request_access in shuffled order
+// through the single relay account (serial seq numbers => the on-chain grant index order is the shuffled
+// order). Guarded so two flushes never overlap. Wired to a fixed epoch-aligned timer in startBatchFlusher().
+let batchFlushing = false;
+async function runBatchFlush(reason: string): Promise<{ flushed: number; submitted: number; failed: number; order: string[] } | null> {
+  if (batchFlushing) return null;
+  if (!DATAROOM_ID) return null;
+  if (listBatchQueued().length === 0) return { flushed: 0, submitted: 0, failed: 0, order: [] };
+  batchFlushing = true;
+  try {
+    const summary = await flushBatch({ submit: (b) => submitOneAccess(b), now: Date.now() });
+    if (summary.flushed > 0) {
+      console.log(`[dr-batch] flush (${reason}): ${summary.submitted} submitted, ${summary.failed} failed of ${summary.flushed} shuffled`);
+    }
+    return summary;
+  } finally {
+    batchFlushing = false;
+  }
+}
+
+// M7 — queue an anonymous access for batched, shuffled on-chain submission (the timing defense). The member
+// has already proven membership (the self-authenticating bundle) and hands it here instead of submitting it
+// themselves; the relay flushes it at the next fixed window boundary. The relay learns nothing it could
+// deanonymize with: the journal carries only per-room pseudonyms (accessor/nullifier), never the wallet.
+// Idempotent on (room, nullifier) while queued. Body: { seal, image_id, journal, roomId, accessor, nullifier }.
+app.post("/dataroom/membership/queue-access", (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  let roomIdHex: string, accessorHex: string, nullifierHex: string;
+  let bundle: QueuedBundle;
+  try {
+    const b = req.body as Partial<Bundle> & { roomId?: string; accessor?: string; nullifier?: string };
+    if (!b?.seal || !b?.image_id || !b?.journal) throw new Error("seal, image_id, journal (raw hex) required");
+    if (!/^[0-9a-fA-F]+$/.test(b.seal) || !/^[0-9a-fA-F]+$/.test(b.image_id) || !/^[0-9a-fA-F]+$/.test(b.journal)) {
+      throw new Error("seal, image_id, journal must be hex");
+    }
+    bundle = { seal: b.seal, image_id: b.image_id, journal: b.journal };
+    roomIdHex = toBytes32(b.roomId);
+    accessorHex = toHex(hex32(b.accessor, "accessor"));
+    nullifierHex = toHex(hex32(b.nullifier, "nullifier"));
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const now = Date.now();
+    const entry = enqueueBatch({ roomId: roomIdHex, accessor: accessorHex, nullifier: nullifierHex, bundle, now, windowMs: DR_BATCH_WINDOW_MS });
+    res.json({
+      ok: true,
+      ticket: entry.ticket,
+      status: entry.status,
+      flushAt: entry.flushAt,
+      nextFlushAt: nextFlushAt(now, DR_BATCH_WINDOW_MS),
+      windowMs: DR_BATCH_WINDOW_MS,
+      queued: listBatchQueued().length,
+      note: "your access is batched: it lands on-chain at the next window boundary, shuffled with the others in that window. Poll /dataroom/membership/queue-status/<ticket>, then open once it is submitted.",
+    });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+// M7 — poll a queued access by its (unlinkable) ticket. Reports queued | submitted (txHash) | error.
+app.get("/dataroom/membership/queue-status/:ticket", (req, res) => {
+  const ticket = String(req.params.ticket || "");
+  if (!/^[0-9a-f]{32}$/.test(ticket)) return res.status(400).json({ error: "ticket must be 32 hex chars" });
+  const entry = getBatchTicket(ticket);
+  if (!entry) return res.status(404).json({ error: "no such ticket" });
+  res.json({
+    ticket: entry.ticket,
+    status: entry.status,
+    roomId: entry.roomId,
+    accessor: entry.accessor,
+    flushAt: entry.flushAt,
+    nextFlushAt: nextFlushAt(Date.now(), DR_BATCH_WINDOW_MS),
+    windowMs: DR_BATCH_WINDOW_MS,
+    txHash: entry.txHash ?? null,
+    error: entry.error ?? null,
+  });
+});
+
+// M7 — force a flush NOW (test/e2e only; OFF unless DR_BATCH_ALLOW_MANUAL_FLUSH=1). The production path is the
+// fixed-interval timer; this exists so the e2e can demonstrate the shuffled batch landing without waiting a
+// full window. Never enabled in production (a forced flush only submits already-proven, already-queued
+// bundles, so the worst a caller could do is collapse the window early, but we gate it anyway).
+app.post("/dataroom/membership/flush-now", async (_req, res) => {
+  if (process.env.DR_BATCH_ALLOW_MANUAL_FLUSH !== "1") return res.status(403).json({ error: "manual flush disabled" });
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  try {
+    const summary = await runBatchFlush("manual");
+    res.json({ ok: true, summary });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
 app.get("/dataroom/membership/is-granted/:roomId/:accessor", async (req, res) => {
   if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
   try {
@@ -4145,4 +4261,26 @@ app.get("/bonded/tier/nullifier/:nullifier", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => console.log(`zkorage backend :${PORT} | token=${TOKEN_ID || "-"} policy=${POLICY_ID || "-"}`));
+// M7 — the fixed-interval batch flusher. Flushes the access queue at epoch-aligned boundaries every
+// DR_BATCH_WINDOW_MS, regardless of when bundles arrived (arrival-independent = the on-chain time reveals the
+// window, not the action). Self-rescheduling to the next exact boundary so it does not drift. A flush with an
+// empty queue is a cheap no-op. Only armed when the DataRoom contract is configured.
+function startBatchFlusher(): void {
+  if (!DATAROOM_ID) return;
+  const tick = () => {
+    void runBatchFlush("window").catch((e) => console.error(`[dr-batch] flush error: ${err(e)}`));
+    scheduleNext();
+  };
+  const scheduleNext = () => {
+    const now = Date.now();
+    const delay = Math.max(250, nextFlushAt(now, DR_BATCH_WINDOW_MS) - now);
+    setTimeout(tick, delay).unref?.();
+  };
+  scheduleNext();
+  console.log(`[dr-batch] access-batching flusher armed | window ${DR_BATCH_WINDOW_MS} ms${process.env.DR_BATCH_ALLOW_MANUAL_FLUSH === "1" ? " | manual-flush ENABLED" : ""}`);
+}
+
+app.listen(PORT, () => {
+  console.log(`zkorage backend :${PORT} | token=${TOKEN_ID || "-"} policy=${POLICY_ID || "-"}`);
+  startBatchFlusher();
+});
