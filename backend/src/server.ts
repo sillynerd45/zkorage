@@ -2192,11 +2192,19 @@ app.post("/dataroom/membership/prove-access", async (req, res) => {
         return res.status(400).json({ error: `anonymity set too small: ${commitments.length} of ${minAnonSet} members`, anonSetSize: commitments.length, minAnonSet });
       }
     }
-    const built = buildMembershipJob({
-      idSecret, idTrapdoor, roomId: fromHex(roomIdHex),
-      recipientPub: fromHex(recipientPubHex), commitments, memberIndex,
-      ...(signature ? { signature } : { holderSeed }),
-    });
+    // Build the witness (client-input errors here -> 400, NOT 5xx: a bad signature / mismatched witness is the
+    // caller's fault, and Cloudflare masks 5xx origin responses with its own HTML error page, so the client
+    // would never see the real reason). Genuine upstream/prover failures below stay 502.
+    let built: ReturnType<typeof buildMembershipJob>;
+    try {
+      built = buildMembershipJob({
+        idSecret, idTrapdoor, roomId: fromHex(roomIdHex),
+        recipientPub: fromHex(recipientPubHex), commitments, memberIndex,
+        ...(signature ? { signature } : { holderSeed }),
+      });
+    } catch (e) {
+      return res.status(400).json({ error: err(e) });
+    }
     const r = await fetch(`${PROVER_URL}/prove`, {
       method: "POST",
       headers: { "content-type": "application/json" },
