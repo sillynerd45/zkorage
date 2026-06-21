@@ -43,6 +43,10 @@ services:
       # 8080 (ufw: `allow from 172.16.0.0/12 to any port 8080 proto tcp`). <vm-host> is stable across
       # docker network recreates (unlike the bridge gateway 172.20.0.1). Overrides backend/.env's PROVER_URL.
       PROVER_URL: "http://<vm-host>:8080"
+      # New join requests per IP per 10 min. Raised from the code default (10) so a showcase/demo room can be
+      # provisioned in one pass; still a bounded griefing speed-bump (the per-room pending cap 200 is the real
+      # per-room backstop).
+      DR_ENROLL_RL_MAX: "50"
     ports:
       - "8787:8787"
     volumes:

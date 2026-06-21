@@ -2075,7 +2075,7 @@ app.post("/dataroom/membership/set-root", async (req, res) => {
 // client IP plus a per-room pending-queue cap. Idempotent repeats (same commitment) are already deduped by
 // enroll-store, so this only bounds genuinely-FRESH requests. In-memory (demo); a shared store in production.
 const ENROLL_RL_WINDOW_MS = 10 * 60_000; // 10 minutes
-const ENROLL_RL_MAX = 10; // new requests per IP per window
+const ENROLL_RL_MAX = Math.max(1, Number(process.env.DR_ENROLL_RL_MAX || 10)); // new requests per IP per window (env-tunable for bulk provisioning; prod default 10)
 const ENROLL_RL_MAX_IPS = 10_000; // hard cap on tracked IPs (backstop vs header-spoofed key churn)
 const ENROLL_PENDING_CAP = 200; // max pending requests held per room
 const enrollHits = new Map<string, number[]>();
@@ -2710,6 +2710,48 @@ app.get("/dataroom/membership/grant/:roomId/:accessor", async (req, res) => {
     res.json({ roomId: roomIdHex, accessor: accessorHex, grant: value ? jsonSafe(value) : null });
   } catch (e) {
     res.status(400).json({ error: err(e) });
+  }
+});
+
+// M7 — the room's append-only grant log (PUBLIC on-chain data: every grant's index, accessor pseudonym, and
+// ledger timestamp). This is what shows the timing defense working: accesses recorded in one flush window land
+// clustered in time and shuffled in order, so the grant log reveals the window, not who acted when. Read-only,
+// no wallet. Optional `limit` (default 24, max 100) returns the most RECENT grants (highest indices). Nothing
+// here deanonymizes anyone: the accessor + nullifier + timestamp are already on-chain by design.
+app.get("/dataroom/membership/grants/:roomId", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  let roomIdHex: string;
+  try {
+    roomIdHex = toBytes32(req.params.roomId);
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit ?? 24) || 24));
+  try {
+    const { value: countVal } = await readContract(DATAROOM_ID, "get_grant_count", [scBytes(roomIdHex)]);
+    const count = Number(countVal ?? 0);
+    const start = Math.max(0, count - limit);
+    const idxs = Array.from({ length: count - start }, (_, k) => start + k);
+    const grants = (
+      await Promise.all(
+        idxs.map(async (index) => {
+          const { value } = await readContract(DATAROOM_ID, "get_grant_by_index", [scBytes(roomIdHex), scU32(index)]);
+          if (!value) return null;
+          const g = jsonSafe(value) as Record<string, unknown>;
+          return {
+            index: Number(g.index ?? index),
+            accessor: String(g.accessor ?? ""),
+            nullifier: String(g.nullifier ?? ""),
+            eligibleRoot: String(g.eligible_root ?? ""),
+            ledger: Number(g.ledger ?? 0),
+            timestamp: Number(g.timestamp ?? 0),
+          };
+        }),
+      )
+    ).filter((x): x is NonNullable<typeof x> => x !== null);
+    res.json({ roomId: roomIdHex, count, grants, dataroomId: DATAROOM_ID });
+  } catch (e) {
+    res.status(502).json({ error: err(e) });
   }
 });
 

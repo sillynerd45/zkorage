@@ -897,6 +897,27 @@ export interface QueueStatusResp {
 export const getQueueStatus = (ticket: string) =>
   fetch(`${BASE}/dataroom/membership/queue-status/${ticket}`).then(j<QueueStatusResp>);
 
+// M7 — a room's append-only grant log (public on-chain data). This is what shows the timing defense working:
+// accesses recorded in one flush window land clustered in time + shuffled in order. Read-only, no wallet.
+export interface GrantLogEntry {
+  index: number;
+  accessor: string;
+  nullifier: string;
+  eligibleRoot: string;
+  ledger: number;
+  timestamp: number;
+}
+
+export interface GrantsResp {
+  roomId: string;
+  count: number;
+  grants: GrantLogEntry[];
+  dataroomId: string;
+}
+
+export const getGrants = (roomId: string, limit = 24) =>
+  fetch(`${BASE}/dataroom/membership/grants/${roomId}?limit=${limit}`).then(j<GrantsResp>);
+
 // ── DR3: threshold-ECIES committee (key release) ──
 
 export interface CommitteeKeyper {

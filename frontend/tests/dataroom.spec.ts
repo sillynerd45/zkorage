@@ -158,3 +158,29 @@ test("dataroom overview: task-oriented cards route to the right place; guided-de
   await expect(page.getByTestId("doc-subtab-open")).toBeVisible();
   await expect(page.getByTestId("doc-subtab-browse")).toBeVisible();
 });
+
+// M7 — the read-only showcase panel on the Overview: a wallet-free demonstration of the timing defense (a
+// green anonymity meter for a real testnet room + its on-chain grant log showing a clustered, shuffled batch
+// of accesses). Mocks the two chain-reads the panel makes; no wallet, so it proves the panel is public.
+test("M7 showcase: the Overview shows a green meter + a batched on-chain access record (no wallet)", async ({ page }) => {
+  const now = Math.floor(Date.now() / 1000);
+  const grant = (index: number, acc: string, dt: number) => ({
+    index, accessor: acc.repeat(32), nullifier: "00".repeat(32), eligibleRoot: "00".repeat(32), ledger: 1, timestamp: now + dt,
+  });
+  await page.route("**/dataroom/membership/eligible/**", (r) => r.fulfill({
+    status: 200, contentType: "application/json",
+    body: JSON.stringify({ roomId: "cba6", memberCount: 24, commitments: [], computedRoot: "00".repeat(32), pinnedRoot: "00".repeat(32), inSync: true }),
+  }));
+  await page.route("**/dataroom/membership/grants/**", (r) => r.fulfill({
+    status: 200, contentType: "application/json",
+    body: JSON.stringify({ roomId: "cba6", count: 4, dataroomId: "CID", grants: [grant(0, "ab", 0), grant(1, "cd", 5), grant(2, "ef", 10), grant(3, "12", 15)] }),
+  }));
+
+  await page.goto("/app/dataroom");
+  const panel = page.getByTestId("m7-showcase");
+  await expect(panel).toBeVisible({ timeout: 30_000 });
+  await expect(panel.getByTestId("anon-meter")).toHaveAttribute("data-tier", "green");
+  await expect(panel.getByTestId("anon-meter-count")).toHaveText("24");
+  await expect(panel.getByTestId("m7-showcase-grants").locator("> div")).toHaveCount(4);
+  await expect(panel.getByTestId("m7-showcase-spread")).toContainText("within 15 seconds");
+});

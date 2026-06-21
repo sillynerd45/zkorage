@@ -4,6 +4,7 @@ import { GlossaryTip } from "@/components/GlossaryTip";
 import { Disclosure } from "@/components/Disclosure";
 import { DataRow } from "@/components/app/blocks";
 import { TaskCard, GroupLabel, type DRCategory } from "@/components/app/dataroom/kit";
+import { M7ShowcasePanel } from "@/components/app/dataroom/M7ShowcasePanel";
 import { useDataroomInfo } from "@/lib/hooks/useDataroomInfo";
 import { short, explorer } from "@/lib/format";
 
@@ -125,6 +126,10 @@ export default function DataRoomOverview() {
           ))}
         </div>
       </div>
+
+      {/* M7 — a wallet-free, read-only demonstration of the timing defense on a live showcase room (green meter
+          + the on-chain grant log showing batched, shuffled accesses). Hides itself if the room is unreachable. */}
+      <M7ShowcasePanel />
 
       {/* The concept + the on-chain trust anchor, demoted: there when you want them, not blocking the tasks.
           Wrapped in one calm card so they read as a "learn more" footer, matching the task cards above. */}

@@ -155,6 +155,15 @@ export const DEMO_DATAROOM_POLICY = {
 export const DEMO_MODELB_ROOM = "9cec7bcada8b0666c59f0b0e435b3a2359960e647204c6dba95f8037631e8fd0";
 export const DEMO_MODELB_DOC = "dc4a61c504f4f528a1bb7fed7f0bfb613e1b85f1053afc32d308f20903e4ac0d";
 
+/** A stable Model B **showcase** room (`zkorage-m7-showcase-v2`) that demonstrates the M7 timing defense LIVE,
+ * with no wallet needed to view it. It has 24 enrolled identities (a GREEN anonymity meter) and a batch of real
+ * on-chain accesses recorded SHUFFLED in one flush window (so the grant log reads "an approved member accessed
+ * in this window", clustered in time and shuffled in order, not who acted when). Honest: the 24 identities are
+ * distinct cryptographic identities provisioned for the demo, not 24 independent people; the meter reports the
+ * eligible-set size (genuinely 24) and the ZK unlinkability holds regardless. Provisioned by
+ * backend/scripts/m7-showcase-provision.mjs. */
+export const DEMO_MODELB_SHOWCASE_ROOM = "cba6e1693b19892f55fd5f4915b9eceae3acbfa1ca2cf77d027a77053544b939";
+
 /** Live Stellar testnet deployment. Verifier + token W1/W2; policy W3; gate W5; compliance W6;
  * payroll W7; accredited + fundraise W8; dataroom DR1–DR6. */
 export const TESTNET: ZkorageConfig = {
