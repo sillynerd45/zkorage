@@ -45,10 +45,67 @@ function ginv(a: number): number {
   return result;
 }
 
+/** GF(2^8) exponentiation by a small non-negative integer (evaluate x^d for share points; dealer side). */
+function gpow(a: number, e: number): number {
+  let result = 1;
+  let base = a & 0xff;
+  let ee = e;
+  while (ee > 0) {
+    if (ee & 1) result = gmul(result, base);
+    base = gmul(base, base);
+    ee >>= 1;
+  }
+  return result;
+}
+
 /** A Shamir share: its evaluation point `x` (keyper index 1..n) and the 32 share bytes `y`. */
 export interface ReconShare {
   x: number;
   y: Uint8Array;
+}
+
+/**
+ * DEALER side: split `secret` into `n` shares with threshold `t` over GF(2^8), byte-wise (evaluation points
+ * 1..n). Any `t` reconstruct it; any `t-1` reveal nothing. Mirrors backend/src/shamir.ts byte-for-byte
+ * ({@link shamirReconstruct} inverts it). `coeffs` injects the random degree-1..(t-1) coefficient vectors for
+ * deterministic test vectors; production passes none -> WebCrypto CSPRNG.
+ */
+export function shamirSplit(
+  secret: Uint8Array,
+  t: number,
+  n: number,
+  opts: { xs?: number[]; coeffs?: Uint8Array[] } = {},
+): ReconShare[] {
+  if (t < 1 || t > n) throw new Error("require 1 <= t <= n");
+  if (n < 1 || n > 255) throw new Error("require 1 <= n <= 255");
+  const len = secret.length;
+  const xs = opts.xs ?? Array.from({ length: n }, (_, i) => i + 1);
+  if (xs.length !== n) throw new Error("xs must have n entries");
+  if (new Set(xs).size !== n) throw new Error("evaluation points must be distinct");
+  for (const x of xs) if (x < 1 || x > 255) throw new Error("evaluation points must be in 1..255");
+  const coeffs: Uint8Array[] = [];
+  for (let d = 1; d < t; d++) {
+    const c = opts.coeffs?.[d - 1] ?? randomBytes(len);
+    if (c.length !== len) throw new Error("each coefficient vector must match the secret length");
+    coeffs.push(c);
+  }
+  return xs.map((x) => {
+    const y = new Uint8Array(len);
+    for (let j = 0; j < len; j++) {
+      let acc = secret[j];
+      for (let d = 1; d < t; d++) acc ^= gmul(coeffs[d - 1][j], gpow(x, d));
+      y[j] = acc;
+    }
+    return { x, y };
+  });
+}
+
+function randomBytes(n: number): Uint8Array {
+  const b = new Uint8Array(n);
+  const c = globalThis.crypto;
+  if (!c?.getRandomValues) throw new Error("WebCrypto getRandomValues unavailable (need a modern browser or Node >= 18)");
+  c.getRandomValues(b);
+  return b;
 }
 
 /** Reconstruct the 32-byte secret from >= t shares via Lagrange interpolation at x=0 (GF(256)). */
@@ -141,6 +198,41 @@ export function openShare(
   let faithful = recomputed.length === tag.length;
   for (let i = 0; i < tag.length && faithful; i++) if (recomputed[i] !== tag[i]) faithful = false;
   return { keyperIndex: sealed.keyperIndex, shareY, faithful };
+}
+
+/**
+ * DEALER side: ECIES-seal a 32-byte Shamir share to `recipientPub` (here a keeper's static x25519 key when
+ * dealing, or the reader's recipient key), binding it to `(keyper_index, room, doc, recipientPub)` so it is
+ * non-portable. Inverse of {@link openShare}; mirrors backend/src/committee.ts shareEciesSeal byte-for-byte.
+ * `ephSecret` is injectable for deterministic test vectors.
+ */
+export function sealShare(
+  shareY: Uint8Array,
+  keyperIndex: number,
+  recipientPubHex: string,
+  roomIdHex: string,
+  docIdHex: string,
+  ephSecret?: Uint8Array,
+): SealedShareHex {
+  if (keyperIndex < 1 || keyperIndex > 255) throw new Error("keyper_index must be 1..255");
+  const recipientPub = fromHex(recipientPubHex);
+  const roomId = fromHex(roomIdHex);
+  const docId = fromHex(docIdHex);
+  const eph = ephSecret ?? randomBytes(SHARE_LEN);
+  for (const [name, v] of [["shareY", shareY], ["recipientPub", recipientPub], ["ephSecret", eph], ["roomId", roomId], ["docId", docId]] as const) {
+    if (v.length !== SHARE_LEN) throw new Error(`${name} must be ${SHARE_LEN} bytes`);
+  }
+  const ephPub = x25519.getPublicKey(eph);
+  const shared = x25519.getSharedSecret(eph, recipientPub);
+  const ks = keystream(shared, ephPub);
+  const ct = new Uint8Array(SHARE_LEN);
+  for (let i = 0; i < SHARE_LEN; i++) ct[i] = shareY[i] ^ ks[i];
+  return {
+    keyperIndex,
+    ephPub: toHex(ephPub),
+    ct: toHex(ct),
+    tag: toHex(shareTag(keyperIndex, shareY, roomId, docId, recipientPub)),
+  };
 }
 
 export interface ReconstructResult {

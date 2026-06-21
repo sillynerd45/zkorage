@@ -60,7 +60,7 @@ export {
 } from "./journal.js";
 export { openDisclosure, auditorPublicKeyFromSecret } from "./disclosure.js";
 export type { OpenedDisclosure } from "./disclosure.js";
-export { recoverDocumentKey, recipientPublicKeyFromSecret, aeadDecrypt } from "./dataroom.js";
+export { recoverDocumentKey, recipientPublicKeyFromSecret, aeadDecrypt, aeadSeal, sealDocumentKey, randomBytes, randomKey } from "./dataroom.js";
 export type { DataroomDisclosure, RecoveredKey } from "./dataroom.js";
 export {
   deriveDataRoomIdentity,
@@ -74,7 +74,9 @@ export {
 export type { DataRoomIdentity } from "./identity.js";
 export {
   shamirReconstruct,
+  shamirSplit,
   openShare,
+  sealShare,
   reconstructWithCommitment,
   assertFrozenVectors as assertCommitteeFrozenVectors,
 } from "./committee.js";
