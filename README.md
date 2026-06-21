@@ -14,7 +14,12 @@ private witness).
 
 ## Status — the full build is complete (testnet)
 Weeks 1–8 (below) **and** the post-week-8 **Confidential Data Room (DR1–DR6)** are built, deployed, and
-self-tested on Stellar testnet. A new **Bonded Proofs** pillar (a Soroban-native time-locked escrow plus two
+self-tested on Stellar testnet. The Data Room has since been redesigned into one anonymous model (internally
+**Model B**): a policy-gated committee document you open by proving anonymous membership, with keys derived
+from your wallet so you open on any device. It adds a public discovery directory and, in its load-bearing
+slice, a timing defense that batches and shuffles the on-chain access records, so the room sees that an
+approved member accessed in a window, not which member or exactly when. Frontend is **v0.12.0**. A new
+**Bonded Proofs** pillar (a Soroban-native time-locked escrow plus two
 live ZK products: a **solvency proof that dies when you pull your collateral** and an **anonymous bonded
 tier**) is also live; see below. The whole stack
 runs on **RISC Zero 5.0.0-rc.1** (GPU proving on a self-hosted box, with a CPU fallback). The frontend is a
@@ -253,8 +258,26 @@ member you are, and only once** (a per-room nullifier). DataRoom contract
   `is_doc_admitted`. The owner side also gained a Documents submenu, a "Browse = rooms your wallet owns"
   view (on-chain ownership), and dropped the redundant contents column.
 
-The SDK/MCP gained the read-only Data Room surface (no key custody); the frontend `/app/dataroom` (v0.7.0)
+The SDK/MCP gained the read-only Data Room surface (no key custody); the frontend `/app/dataroom`
 drives all of it. Reviewed clean across the slices (adversarial SOUND + code-review Ship-it).
+
+### Model B — the current shape (anonymous-only, sign-to-derive, timing-defended)
+The slices above are the engine. The Data Room is now presented as ONE model so the anonymity claim is
+unambiguous. A room owner curates members by request-then-approve: joining is by name, accessing is anonymous.
+Any approved member opens a document by proving anonymous membership, and the 2-of-3 keepers release the key
+to that member's wallet-derived key. Keys are sign-to-derive (a Freighter SEP-53 signature run through HKDF,
+per room and per capability), so nothing is stored and a member opens on any device. Highlights:
+- **k=5 anonymity floor + live meter:** access is blocked in a set too small to hide in.
+- **Discover directory:** a wallet-optional public listing of opt-in rooms by coarse buckets, never an exact
+  count and never an access feed.
+- **Timing defense (the load-bearing slice):** a member hands the proven access to a relay that records it
+  on-chain shuffled with the others in a fixed window, so the on-chain timestamp and order bin to the window,
+  not the member's action; approvals are also appended in randomized batches. This is contract-free (the
+  access call is permissionless) and was verified on the real prover (members who acted seconds apart land
+  within one batch, in shuffled order).
+- **Honest residuals (stated in the app, not hidden):** cover scales with concurrent traffic, the on-chain
+  record still notes which membership snapshot you proved against (null for a stable member list), and this
+  hides you from the room owner, not from the self-hosted operator.
 
 ## Bonded Proofs (escrow) — live on testnet
 A second direction, motivated by Stellar's Claimable Balances. The research (in `development/`, gitignored)
