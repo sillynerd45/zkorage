@@ -52,7 +52,7 @@ import { shamirSplit } from "./shamir.js";
 import { shareEciesOpen, reconstructWithCommitment, type SealedShare } from "./committee.js";
 import { buildMembershipJob, buildEligibleTree, idCommitment, freshIdentity } from "./membership.js";
 import { buildDocauthJob, bankIssuer } from "./docauth.js";
-import { getEligible, addEligible, indexOfCommitment } from "./eligible-store.js";
+import { getEligible, addEligible, addEligibleBatch, indexOfCommitment } from "./eligible-store.js";
 import { addRequest, listRequests, removeRequest, hasRequest } from "./enroll-store.js";
 import { putEscrow, getEscrow } from "./escrow-store.js";
 import {
@@ -2226,6 +2226,56 @@ app.post("/dataroom/enroll/approve", async (req, res) => {
     }
     const out = await invokeContract(DATAROOM_ID, "set_eligible_root", [scBytes(roomIdHex), scBytes(rootHex)]);
     res.json({ ok: true, txHash: out.hash, cost: out.cost, ...idField });
+  } catch (e) {
+    res.json({ ok: false, error: err(e), roomId: roomIdHex });
+  }
+});
+
+// Owner: approve MANY pending requests in ONE root re-pin (M7 timing defense #2). Appends the new commitments
+// in RANDOMIZED order (existing leaves keep their index) and re-pins the root once, so the eligible_root jumps
+// by a batch instead of by a member — it stops acting as a per-member "enrolled-by" marker the owner could
+// correlate with the exact wallet they just approved (see addEligibleBatch). Body: { roomId, commitments? };
+// commitments omitted => approve ALL currently-pending. Only commitments that are actually pending are admitted.
+app.post("/dataroom/enroll/approve-batch", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  let roomIdHex: string;
+  let requested: string[] | null;
+  try {
+    roomIdHex = toBytes32(req.body?.roomId);
+    if (req.body?.commitments === undefined) {
+      requested = null; // approve all pending
+    } else {
+      if (!Array.isArray(req.body.commitments)) throw new Error("commitments must be an array of hex commitments");
+      requested = req.body.commitments.map((c: unknown) => toHex(hex32(c, "commitment")));
+    }
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const source = userSource(req);
+    const owner = source ?? ADMIN_ADDRESS;
+    const { value: roomVal } = await readContract(DATAROOM_ID, "get_room", [scBytes(roomIdHex)]);
+    const room = roomVal ? (jsonSafe(roomVal) as { owner?: string }) : null;
+    if (!room) return res.status(404).json({ error: "room not found" });
+    if (room.owner !== owner) return res.status(403).json({ error: "only the room owner may approve members" });
+
+    // Only admit commitments that are actually pending for this room (an owner cannot append arbitrary
+    // commitments). Default (no list) = every pending request.
+    const pending = new Set(listRequests(roomIdHex).map((r) => r.commitment.toLowerCase()));
+    const toAdmit = (requested ?? [...pending]).map((c) => c.toLowerCase()).filter((c) => pending.has(c));
+    if (toAdmit.length === 0) return res.status(400).json({ error: "no matching pending requests to approve" });
+
+    const { added } = addEligibleBatch(roomIdHex, toAdmit); // randomized order, single set-root
+    for (const a of added) removeRequest(roomIdHex, a.commitment);
+    const commitments = getEligible(roomIdHex).map((h) => fromHex(h));
+    const { root } = buildEligibleTree(commitments);
+    const rootHex = toHex(root);
+    const idField = { roomId: roomIdHex, approved: String(added.length), eligibleRoot: rootHex, memberCount: String(commitments.length) };
+    if (source) {
+      if (await maybeXdr(req, res, DATAROOM_ID, "set_eligible_root", [scBytes(roomIdHex), scBytes(rootHex)], idField)) return;
+    }
+    const out = await invokeContract(DATAROOM_ID, "set_eligible_root", [scBytes(roomIdHex), scBytes(rootHex)]);
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, ...idField, approvedCommitments: added.map((a) => a.commitment) });
   } catch (e) {
     res.json({ ok: false, error: err(e), roomId: roomIdHex });
   }
