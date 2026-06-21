@@ -195,30 +195,36 @@ export function useAnchor() {
     }
     setBusy(true); setResp(null); setBundle(null); setSharedResult(null); setState("verifying");
     try {
-      // 1) ensure the room exists + resolve its 32-byte id (it binds the share/escrow tags + your identity).
-      setStep("Making sure the room exists…");
-      let room = await getDataroomRoom(roomLabel).catch(() => null);
-      if (!room?.room) {
-        const cr = await createRoom(roomLabel, signer).catch((e) => ({ ok: false, error: String((e as Error)?.message ?? e) }));
-        if (!cr.ok) throw new Error((cr as { error?: string }).error || "could not create the room (the wallet signature is needed to own it)");
-        room = await getDataroomRoom(roomLabel).catch(() => null);
-      }
-      const roomIdHex = room?.room?.room_id;
+      // 1) resolve the room's 32-byte id. The backend hashes a label deterministically, so `roomId` is present
+      //    even before the room is on-chain (avoids a create→read propagation race). It binds the share +
+      //    escrow tags and your room identity.
+      setStep("Resolving the room…");
+      const roomResp = await getDataroomRoom(roomLabel).catch(() => null);
+      const roomIdHex = roomResp?.roomId;
       if (!roomIdHex || !isHex32(roomIdHex)) throw new Error("could not resolve the room id");
 
-      // 2) derive YOUR room identity — the owner-escrow copy is sealed to it so you can reopen on any device.
-      setStep("Deriving your room key…");
-      const ident = await identity.derive(roomIdHex);
-      if (!ident) throw new Error(identity.error || "could not derive your room identity");
-
-      // 3) the keeper committee + their static seal keys (the dealer seals each share to its keeper).
+      // 2) the keeper committee + their static seal keys — checked BEFORE any wallet popup so a committee that
+      //    is offline fails fast (no wasted signatures).
+      setStep("Checking the keeper committee…");
       const info = await getCommitteeInfo();
       const sealedKeepers = info.keypers.filter((k) => k.ok && k.sealPub && k.keyperIndex);
       if (sealedKeepers.length < info.n) {
         throw new Error(`all ${info.n} keepers must be online with a seal key (got ${sealedKeepers.length})`);
       }
 
-      // 4) THE DEALER, in your browser: generate K, encrypt the file, split + seal — none of it leaves as plaintext.
+      // 3) create the room on-chain if it doesn't exist yet (your wallet signs + owns it).
+      if (!roomResp?.room) {
+        setStep("Creating the room (your wallet signs)…");
+        const cr = await createRoom(roomLabel, signer).catch((e) => ({ ok: false, error: String((e as Error)?.message ?? e) }));
+        if (!cr.ok) throw new Error((cr as { error?: string }).error || "could not create the room (the wallet signature is needed to own it)");
+      }
+
+      // 4) derive YOUR room identity — the owner-escrow copy is sealed to it so you can reopen on any device.
+      setStep("Deriving your room key…");
+      const ident = await identity.derive(roomIdHex);
+      if (!ident) throw new Error(identity.error || "could not derive your room identity");
+
+      // 5) THE DEALER, in your browser: generate K, encrypt the file, split + seal — none of it leaves as plaintext.
       setStep("Encrypting and splitting the key in your browser…");
       const k = randomKey();
       const plaintext = storeMode === "file" && file ? b64ToBytes(file.b64) : new TextEncoder().encode(content);
@@ -235,7 +241,7 @@ export function useAnchor() {
       });
       const escrow = sealDocumentKey(k, ident.recipientPub, contentHash, roomIdHex, docIdHex);
 
-      // 5) relay: ciphertext + sealed shares + the owner-escrow copy (the server never sees K).
+      // 6) relay: ciphertext + sealed shares + the owner-escrow copy (the server never sees K).
       setStep("Uploading the encrypted file and sealed shares…");
       const dealt = await dealSealed({
         roomId: roomIdHex,
@@ -247,7 +253,7 @@ export function useAnchor() {
       });
       if (!dealt.ok || !dealt.blobPointer || !dealt.contentHash) throw new Error(dealt.error || "share distribution failed");
 
-      // 6) anchor on-chain — your wallet signs put_committee_document.
+      // 7) anchor on-chain — your wallet signs put_committee_document.
       setStep("Anchoring on Soroban (your wallet signs)…");
       const anchored = await committeeAnchor(
         { roomId: roomIdHex, docId: docIdHex, contentHash: dealt.contentHash, kCommitment, blobPointer: dealt.blobPointer },

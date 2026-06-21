@@ -2409,6 +2409,12 @@ app.post("/dataroom/committee/deal-sealed", async (req, res) => {
     const ss = req.body?.sealedShares;
     if (!Array.isArray(ss) || ss.length !== n) throw new Error(`sealedShares must have ${n} entries`);
     sealedShares = ss as Array<Record<string, unknown>>;
+    // Each keeper index 1..n must appear exactly once; otherwise a malformed client could deal two shares to
+    // one keeper (overwriting) and leave the document unreadable (< t keepers hold a share).
+    const idxs = sealedShares.map((s) => Number(s.keyperIndex));
+    if (new Set(idxs).size !== n || idxs.some((i) => !Number.isInteger(i) || i < 1 || i > n)) {
+      throw new Error(`sealedShares must cover keeper indices 1..${n} exactly once`);
+    }
     escrow = req.body?.escrow && typeof req.body.escrow === "object" ? (req.body.escrow as Record<string, unknown>) : undefined;
   } catch (e) {
     return res.status(400).json({ error: err(e) });
@@ -2416,6 +2422,11 @@ app.post("/dataroom/committee/deal-sealed", async (req, res) => {
   try {
     const { value: roomRaw } = await readContract(DATAROOM_ID, "get_room", [scBytes(roomIdHex)]);
     if (!roomRaw) return res.status(404).json({ error: "room not found — create it first", roomId: roomIdHex });
+    // Refuse dealing to an already-anchored (room, doc): the doc_id is public on-chain once anchored, so a
+    // re-deal of garbage shares would overwrite the keepers' shares and make the real document unreadable
+    // (a targeted DoS). Shares are immutable once anchored; pre-anchor retries (doc_id still secret) are fine.
+    const { value: existingDoc } = await readContract(DATAROOM_ID, "get_committee_document", [scBytes(roomIdHex), scBytes(docIdHex)]);
+    if (existingDoc) return res.status(409).json({ error: "a committee document already exists for this (room, doc); re-dealing would overwrite its shares", roomId: roomIdHex, docId: docIdHex });
 
     // Persist the (already-encrypted) blob; content-addressed → contentHash + pointer.
     const { contentHash, blobPointer } = await getBlobStore().put(blob);
