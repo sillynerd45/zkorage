@@ -2,7 +2,7 @@
 
 What happens to the data you put into zkorage: where it goes, what is stored, and what is not. Written for
 the question "does the prover save my uploaded document, or only hold it in memory?". Every claim points at
-the code so you can check it yourself. Accurate as of 2026-06-20.
+the code so you can check it yourself. Accurate as of 2026-06-21.
 
 This is a demo on testnet with a mocked attester, so read the residual risks at the end as honest limits,
 not as a finished security posture. For why we prove with RISC Zero and how it compares to Noir and Circom,
@@ -106,7 +106,39 @@ sends the prover a key and a hash rather than the file, so you can read the flow
 this promise at all. The proof is verified **on-chain** against a pinned program hash, so a verifier never
 has to believe anything about how our server handled the data.
 
-### Q10. What would harden this further (future work)?
+### Q10. What is the keeper committee, and who can actually decrypt a Data Room document?
+A document is encrypted under one key `K`, and after `K` is created it is never held whole by any single party.
+It is split with **Shamir secret sharing** into 3 shares (2-of-3 threshold, `backend/src/shamir.ts`), one share
+dealt to each of three independent **keepers** (the `keyper/` package, run as the VM-internal services
+`keyper1/keyper2/keyper3`). One share reveals nothing about `K`; any two rebuild it.
+
+To open a document, the requester first proves eligibility on-chain (the anonymous membership proof, recorded
+as a grant bound to their public key). Then, on a share request, each keeper does two things **independently**
+(`keyper/src/keyper.ts`):
+- **Re-checks the access decision on its own Soroban RPC**: `is_doc_admitted` for a per-document policy,
+  falling back to `is_granted` (`keyper/src/chain.ts:46-55`). A non-admitted requester is refused. Because each
+  keeper reads its own RPC, no single RPC provider can push the threshold of keepers into releasing, which is
+  why the committee runs over three distinct RPC providers.
+- **Seals its share to the requester, not to the server**: it ECIES-encrypts its share to the `recipient_pub`
+  committed inside the requester's proof (`keyper/src/share-ecies.ts`, byte-exact with
+  `backend/src/committee.ts`). So even though shares pass back through the backend aggregator
+  (`/dataroom/committee/collect`, `backend/src/server.ts:2284`), only the proof-bound recipient can open them.
+
+The recipient then collects 2 of the 3 sealed shares, opens them with their own secret, reconstructs `K`, and
+AES-256-GCM-decrypts the document. This runs **client-side in the browser** through the zkorage SDK
+(`openCommitteeDocument` in `sdk/src/client.ts`, built on `sdk/src/committee.ts`); the recipient secret and the
+reconstructed `K` never leave the browser, and the SDK custodies no keys.
+
+So "who can decrypt" is not "trust one server". It is: be admitted on-chain, and get any two of three
+independent keepers to release. No single keeper can release `K`, the aggregator never sees a share in the
+clear, and the access decision lives on-chain.
+
+Two honest caveats: the demo uses a **trusted dealer** at split time (whoever splits `K` sees it once, before
+dealing the shares; distributed key generation would remove this), and opening needs **2 of 3 keepers live**
+(if two are down, documents are temporarily unopenable, but never leaked).
+
+### Q11. What would harden this further (future work)?
+- Replace the trusted dealer at `K`-split with distributed key generation, so no party ever holds `K` whole.
 - Delete or shred `/tmp/zk.job` and `/tmp/zk.out.json` after each worker job (a `trap` on exit), matching the
   fallback path's `finally`.
 - Run the prover in a memory-locked process or a confidential-computing enclave to limit RAM exposure.
