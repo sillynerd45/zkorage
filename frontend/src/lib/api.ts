@@ -607,6 +607,55 @@ export const getMyRooms = (owner: string) =>
     j<{ owner: string; count: number; rooms: MyRoom[]; dataroomId: string }>,
   );
 
+// ── M1: request-then-approve enrollment ──────────────────────────────────────────────────────────
+// A member files a public id_commitment (request); the room owner approves, which pins set_eligible_root.
+// Joining is identified; accessing stays anonymous (the membership proof hides which member).
+export type EnrollState = "eligible" | "pending" | "none";
+export interface EnrollRequestItem {
+  commitment: string;
+  label?: string;
+  requester?: string;
+  ts: number;
+}
+export interface EnrollRequestsResp {
+  roomId: string;
+  pending: EnrollRequestItem[];
+  memberCount: number;
+}
+
+export const enrollRequest = (
+  roomId: string,
+  commitment: string,
+  opts?: { label?: string; source?: string },
+) =>
+  post<{ ok: boolean; state: EnrollState; added?: boolean; error?: string }>("/dataroom/enroll/request", {
+    roomId,
+    commitment,
+    ...opts,
+  });
+
+export const getEnrollRequests = (roomId: string) =>
+  fetch(`${BASE}/dataroom/enroll/requests/${roomId}`).then(j<EnrollRequestsResp>);
+
+export const getEnrollStatus = (roomId: string, commitment: string) =>
+  fetch(`${BASE}/dataroom/enroll/status/${roomId}/${commitment}`).then(
+    j<{ state: EnrollState; memberIndex?: number }>,
+  );
+
+export const enrollReject = (roomId: string, commitment: string) =>
+  post<{ ok: boolean; removed: boolean; error?: string }>("/dataroom/enroll/reject", { roomId, commitment });
+
+/** Owner approves a pending member: appends the commitment and pins set_eligible_root. With a wallet signer
+ *  the owner signs the root change; otherwise the server relay signs (a room it owns). */
+export const enrollApprove = (
+  roomId: string,
+  commitment: string,
+  signer?: TxSigner,
+): Promise<WalletWriteResult> =>
+  signer
+    ? writeViaWallet("/dataroom/enroll/approve", { roomId, commitment }, signer)
+    : post<WalletWriteResult>("/dataroom/enroll/approve", { roomId, commitment });
+
 // Accepts either UTF-8 `content` or base64 `contentB64` (binary: PDF, image, any file). The backend
 // encrypts whichever is supplied; only one is sent so an empty text box never overrides a chosen file.
 export const proveSeal = (

@@ -166,6 +166,11 @@ export const DATAROOM_TABS: DataroomTab[] = [
     blurb: "Store and open encrypted files, and browse the rooms you own.",
   },
   {
+    slug: "membership",
+    label: "Membership",
+    blurb: "Request to join a room, or approve members of a room you own. Joining is by name; getting in stays anonymous.",
+  },
+  {
     slug: "eligibility",
     label: "Get in anonymously",
     blurb: "Prove you're allowed in without revealing who you are. Each pass works once.",
