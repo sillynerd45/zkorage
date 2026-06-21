@@ -53,6 +53,7 @@ import { shareEciesOpen, reconstructWithCommitment, type SealedShare } from "./c
 import { buildMembershipJob, buildEligibleTree, idCommitment, freshIdentity } from "./membership.js";
 import { buildDocauthJob, bankIssuer } from "./docauth.js";
 import { getEligible, addEligible, indexOfCommitment } from "./eligible-store.js";
+import { addRequest, listRequests, removeRequest, hasRequest } from "./enroll-store.js";
 import { demoDenyTree, DENY_DEPTH } from "./denylist.js";
 import { verifyOnChain, type Bundle } from "./verify.js";
 import { readContract, invokeContract, buildUnsignedXdr, submitSignedXdr, scBytes, scAddress, scOptAddress, scI128, scU32, scU64, scBool, jsonSafe } from "./chain.js";
@@ -2017,6 +2018,125 @@ app.post("/dataroom/membership/set-root", async (req, res) => {
     const rootHex = toHex(root);
     const out = await invokeContract(DATAROOM_ID, "set_eligible_root", [scBytes(roomIdHex), scBytes(rootHex)]);
     res.json({ ok: true, txHash: out.hash, cost: out.cost, roomId: roomIdHex, eligibleRoot: rootHex, memberCount: commitments.length });
+  } catch (e) {
+    res.json({ ok: false, error: err(e), roomId: roomIdHex });
+  }
+});
+
+// ---- M1: request-then-approve enrollment (Model B) ----
+// A would-be member REQUESTS to join (submits only their public id_commitment); the room OWNER approves,
+// which appends the commitment to the eligible set and re-pins the root (owner-signed via the wallet XDR
+// path, else the server relay if it owns the room). Joining is identified (the owner sees who they approve);
+// accessing stays anonymous (the membership proof hides which member). Pending requests are off-chain and
+// have NO on-chain effect until approval; the eligible ROOT is the on-chain gate.
+
+// Member: file a pending join request (public id_commitment only; an optional label/requester identifies the
+// asker to the owner). No-op-friendly: already-eligible => eligible; already-pending => pending.
+app.post("/dataroom/enroll/request", (req, res) => {
+  let roomIdHex: string;
+  let commitmentHex: string;
+  try {
+    roomIdHex = toBytes32(req.body?.roomId);
+    commitmentHex = toHex(hex32(req.body?.commitment, "commitment"));
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  const label = typeof req.body?.label === "string" ? req.body.label.slice(0, 200) : undefined;
+  const requester = userSource(req) ?? undefined;
+  try {
+    if (indexOfCommitment(roomIdHex, commitmentHex) >= 0) {
+      return res.json({ ok: true, state: "eligible", roomId: roomIdHex, commitment: commitmentHex });
+    }
+    const { added } = addRequest(roomIdHex, { commitment: commitmentHex, label, requester, ts: Date.now() });
+    res.json({ ok: true, state: "pending", added, roomId: roomIdHex, commitment: commitmentHex });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+// Owner view: the pending requests for a room + the current approved member count. (Demo: not auth-gated;
+// production would require the owner to authenticate. Pending entries are identified-join, not anonymous.)
+app.get("/dataroom/enroll/requests/:roomId", (req, res) => {
+  let roomIdHex: string;
+  try {
+    roomIdHex = toBytes32(req.params.roomId);
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    res.json({ roomId: roomIdHex, pending: listRequests(roomIdHex), memberCount: getEligible(roomIdHex).length });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// Anyone: the state of a commitment in a room (eligible | pending | none).
+app.get("/dataroom/enroll/status/:roomId/:commitment", (req, res) => {
+  let roomIdHex: string;
+  let commitmentHex: string;
+  try {
+    roomIdHex = toBytes32(req.params.roomId);
+    commitmentHex = toHex(hex32(req.params.commitment, "commitment"));
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  const idx = indexOfCommitment(roomIdHex, commitmentHex);
+  if (idx >= 0) return res.json({ state: "eligible", memberIndex: idx });
+  if (hasRequest(roomIdHex, commitmentHex)) return res.json({ state: "pending" });
+  res.json({ state: "none" });
+});
+
+// Owner: reject (drop) a pending request without admitting it.
+app.post("/dataroom/enroll/reject", (req, res) => {
+  let roomIdHex: string;
+  let commitmentHex: string;
+  try {
+    roomIdHex = toBytes32(req.body?.roomId);
+    commitmentHex = toHex(hex32(req.body?.commitment, "commitment"));
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    res.json({ ok: true, removed: removeRequest(roomIdHex, commitmentHex) });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+// Owner: approve a pending request — append the commitment to the eligible set, recompute the root, and pin
+// it on-chain. Verifies on-chain that the caller (`source`, else the relay) owns the room before mutating
+// the set, so a non-owner cannot pollute it. With a wallet `source`, returns the unsigned set_eligible_root
+// XDR for the owner to sign; otherwise the server relay signs (demo rooms it owns).
+app.post("/dataroom/enroll/approve", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  let roomIdHex: string;
+  let commitmentHex: string;
+  try {
+    roomIdHex = toBytes32(req.body?.roomId);
+    commitmentHex = toHex(hex32(req.body?.commitment, "commitment"));
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const source = userSource(req);
+    const owner = source ?? ADMIN_ADDRESS;
+    // Only the room owner may change the eligible set / root — verify ownership on-chain before touching it.
+    const { value: roomVal } = await readContract(DATAROOM_ID, "get_room", [scBytes(roomIdHex)]);
+    const room = roomVal ? (jsonSafe(roomVal) as { owner?: string }) : null;
+    if (!room) return res.status(404).json({ error: "room not found" });
+    if (room.owner !== owner) return res.status(403).json({ error: "only the room owner may approve members" });
+
+    addEligible(roomIdHex, commitmentHex);
+    removeRequest(roomIdHex, commitmentHex);
+    const commitments = getEligible(roomIdHex).map((h) => fromHex(h));
+    const { root } = buildEligibleTree(commitments);
+    const rootHex = toHex(root);
+    const idField = { roomId: roomIdHex, commitment: commitmentHex, eligibleRoot: rootHex, memberCount: String(commitments.length) };
+    if (source) {
+      if (await maybeXdr(req, res, DATAROOM_ID, "set_eligible_root", [scBytes(roomIdHex), scBytes(rootHex)], idField)) return;
+    }
+    const out = await invokeContract(DATAROOM_ID, "set_eligible_root", [scBytes(roomIdHex), scBytes(rootHex)]);
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, ...idField });
   } catch (e) {
     res.json({ ok: false, error: err(e), roomId: roomIdHex });
   }
