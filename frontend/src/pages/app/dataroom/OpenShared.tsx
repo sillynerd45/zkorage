@@ -258,6 +258,11 @@ export default function OpenShared() {
             {s.opening ? "Rebuilding…" : "Get the key and open"}
           </Button>
         </div>
+        {admitted && s.belowFloor && (
+          <p className="mt-2 text-sm text-destructive" data-testid="access-open-floor-note">
+            This room has fewer than {ANON_FLOOR} members, so the key cannot be released until it grows.
+          </p>
+        )}
         <p className="mt-2 text-sm text-muted-foreground" data-testid="access-open-note">
           <span aria-hidden="true">🔑</span> The key that opens the parts is derived from your wallet and stays
           in this browser. The keepers only ever pass <i>sealed</i> parts, and we{" "}
