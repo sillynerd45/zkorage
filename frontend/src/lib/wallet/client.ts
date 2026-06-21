@@ -10,6 +10,7 @@ import {
   getAddress as fiGetAddress,
   getNetwork as fiGetNetwork,
   signTransaction as fiSignTransaction,
+  signMessage as fiSignMessage,
 } from "@stellar/freighter-api";
 
 export interface FreighterClient {
@@ -28,6 +29,13 @@ export interface FreighterClient {
     xdr: string,
     opts: { networkPassphrase: string; address?: string },
   ): Promise<{ signedTxXdr: string; error?: { message: string } }>;
+  /** Sign an arbitrary message (SEP-53) with the connected key. The result encoding varies by Freighter
+   *  version (V3 = Buffer, V4 = base64 string); the caller normalizes to raw bytes. Used to deterministically
+   *  derive the Data Room identity (sign-to-derive), never to authorize a transaction. */
+  signMessage(
+    message: string,
+    opts: { networkPassphrase?: string; address?: string },
+  ): Promise<{ signedMessage: unknown; signerAddress?: string; error?: { message: string } }>;
 }
 
 const real: FreighterClient = {
@@ -37,6 +45,7 @@ const real: FreighterClient = {
   getAddress: () => fiGetAddress(),
   getNetwork: () => fiGetNetwork(),
   signTransaction: (xdr, opts) => fiSignTransaction(xdr, opts),
+  signMessage: (message, opts) => fiSignMessage(message, opts),
 };
 
 /** Returns the active Freighter client: the real extension, or a Playwright-injected mock if present. */

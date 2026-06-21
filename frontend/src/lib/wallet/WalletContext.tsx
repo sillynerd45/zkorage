@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { Networks } from "@stellar/stellar-sdk";
 import { freighter } from "./client";
 import { short as shortHex } from "@/lib/format";
+import { toSignatureBytes } from "@/lib/dataroom/identity";
 import type { TxSigner } from "@/lib/api";
 
 // zkorage runs on Stellar testnet, where every contract is deployed. A wallet pointed elsewhere can
@@ -32,6 +33,9 @@ export interface WalletState {
   disconnect: () => void;
   /** Sign an XDR with the connected key. Throws if not connected, on the wrong network, or the user rejects. */
   sign: (xdr: string) => Promise<string>;
+  /** Sign a fixed message (SEP-53) and return the raw signature bytes, for sign-to-derive identity. Throws if
+   *  not connected, on the wrong network, or the user rejects. Never used to authorize a transaction. */
+  signMessage: (message: string) => Promise<Uint8Array>;
 }
 
 const Ctx = createContext<WalletState | null>(null);
@@ -150,6 +154,20 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     [address, network],
   );
 
+  const signMessage = useCallback(
+    async (message: string): Promise<Uint8Array> => {
+      if (!address) throw new Error("Wallet not connected.");
+      if (network !== EXPECTED_NETWORK)
+        throw new Error(`Switch Freighter to ${EXPECTED_NETWORK} to derive your room identity.`);
+      const fi = freighter();
+      const r = await fi.signMessage(message, { networkPassphrase: EXPECTED_PASSPHRASE, address });
+      if (r.error || r.signedMessage == null)
+        throw new Error(r.error?.message ?? "Message signing was declined.");
+      return toSignatureBytes(r.signedMessage);
+    },
+    [address, network],
+  );
+
   const value: WalletState = {
     status,
     connected: status === "connected",
@@ -161,6 +179,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     connect,
     disconnect,
     sign,
+    signMessage,
   };
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
