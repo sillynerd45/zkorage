@@ -887,8 +887,6 @@ export const queueAccess = (args: { bundle: Bundle; roomId: string; accessor: st
 export interface QueueStatusResp {
   ticket: string;
   status: BatchStatus;
-  roomId: string;
-  accessor: string;
   flushAt: number;
   nextFlushAt: number;
   windowMs: number;

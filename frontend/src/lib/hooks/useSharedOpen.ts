@@ -42,6 +42,10 @@ import { isHex32 } from "@/lib/format";
 // relay, which records the access on-chain SHUFFLED at the next fixed window boundary, together with the other
 // accesses in that window. So the room owner reads only "an approved member accessed in this window", not when
 // (or whether) THIS member acted. Latency until the access lands is the price of breaking that timing link.
+// Honest residual (NOT closed by batching): the on-chain grant also records the membership snapshot
+// (eligible_root) the proof checked, so a stable member list gives everyone the same cover, while a room that
+// re-pins its set in batches narrows a grant to that snapshot's cohort. The full fix (a recent-roots ring /
+// epoch roots) is a contract change, deferred.
 export type ProveStage = "idle" | "proving" | "queuing" | "queued";
 
 // One source of truth for the below-floor block message (shown when the reader tries to prove/open a room
@@ -234,7 +238,13 @@ export function useSharedOpen() {
           landed = true;
           break;
         }
-        if (st.status === "error") throw new Error(st.error || "the batched submission was rejected");
+        if (st.status === "error") {
+          // A common cause is the room re-pinning its eligible set while the access waited (the proof was built
+          // against the old snapshot), so point the reader at re-proving rather than showing a raw chain error.
+          throw new Error(
+            `${st.error || "the batched submission did not go through"}. If the room changed its members while you waited, check access again and prove once more.`,
+          );
+        }
       }
       if (!landed) throw new Error("your batched access has not landed yet; try Check access again shortly");
 

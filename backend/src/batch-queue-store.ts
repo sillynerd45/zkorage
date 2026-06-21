@@ -151,7 +151,10 @@ export function purgeTerminal(olderThanMs: number, now: number): number {
   const s = load();
   let removed = 0;
   for (const [t, e] of Object.entries(s)) {
-    if (e.status !== "queued" && typeof e.submittedAt === "number" && now - e.submittedAt > olderThanMs) {
+    // Age out by submittedAt, falling back to enqueuedAt so a terminal entry that somehow lacks submittedAt
+    // (legacy / hand-edited store) can still be reaped rather than living forever.
+    const at = typeof e.submittedAt === "number" ? e.submittedAt : e.enqueuedAt;
+    if (e.status !== "queued" && now - at > olderThanMs) {
       delete s[t];
       removed++;
     }

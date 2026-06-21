@@ -119,11 +119,14 @@ export default function OpenShared() {
         <div className="mt-4 space-y-3">
           <AnonymityMeter count={s.anonCount} />
           <Callout icon={ShieldQuestion}>
-            What the room can see: that an approved member opened a document in a time window, never which member,
-            never exactly when. Accesses in a window are recorded on-chain together, in shuffled order, at fixed
-            boundaries, so the on-chain time and order do not track your action. How well you blend in depends on
-            how many others access in the same window, which is why access needs at least {ANON_FLOOR} members.
-            Over many windows the pattern can still narrow, and this hides you from the room owner, not from us.
+            What the room can see: that an approved member opened a document in a time window, never which member.
+            Accesses in a window are recorded on-chain together, in shuffled order, at fixed boundaries, so the
+            timestamp and order of the record do not show when you acted. The record does note which membership
+            snapshot you proved against, so a room with one stable member list gives every member the same cover,
+            while a room that keeps adding members in batches narrows you to the people present at your snapshot.
+            How well you blend in also depends on how many others access in the same window, which is why access
+            needs at least {ANON_FLOOR} members. Over many windows the pattern can still narrow, and this hides you
+            from the room owner, not from us.
           </Callout>
         </div>
 

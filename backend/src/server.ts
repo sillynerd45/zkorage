@@ -2519,14 +2519,49 @@ app.post("/dataroom/membership/request-access", async (req, res) => {
 
 // M7 — submit ONE proven request_access bundle (used by both the immediate route above and the batch flusher).
 // request_access is permissionless (the in-guest NEW-5 holder sig is the authorization), so the relay just
-// pays fees. Returns the tx hash or throws.
+// pays fees. Bounded by a timeout so a stalled RPC cannot wedge the whole flush (the overlap guard would
+// otherwise stay held forever). Returns the tx hash or throws.
+const SUBMIT_TIMEOUT_MS = 90_000;
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms} ms`)), ms).unref?.()),
+  ]);
+}
 async function submitOneAccess(bundle: QueuedBundle): Promise<{ txHash: string }> {
-  const out = await invokeContract(
-    DATAROOM_ID,
-    "request_access",
-    [scBytes(bundle.seal), scBytes(bundle.image_id), scBytes(bundle.journal)],
+  const out = await withTimeout(
+    invokeContract(DATAROOM_ID, "request_access", [scBytes(bundle.seal), scBytes(bundle.image_id), scBytes(bundle.journal)]),
+    SUBMIT_TIMEOUT_MS,
+    "request_access submit",
   );
   return { txHash: out.hash };
+}
+
+// M7 — per-IP throttle on queue-access. Batching amplifies a spray (a valid-image but invalid-proof bundle
+// still costs the relay a fee + a serial verify at flush), and an unthrottled (room,nullifier) probe is a weak
+// queue-occupancy oracle. This blunts both. Best-effort (CF-Connecting-IP authoritative behind Cloudflare; a
+// direct caller can spoof). A stronger option is to simulateTransaction each bundle at enqueue and reject
+// non-simulating ones (no fee), deferred. Mirrors the M5 enroll limiter shape.
+const QUEUE_RL_WINDOW_MS = 10 * 60_000;
+const QUEUE_RL_MAX = Math.max(1, Number(process.env.DR_BATCH_RL_MAX || 30));
+const QUEUE_RL_MAX_IPS = 10_000;
+const queueHits = new Map<string, number[]>();
+function queueRateLimited(ip: string, nowMs: number): boolean {
+  if (queueHits.size > QUEUE_RL_MAX_IPS) {
+    for (const [k, ts] of queueHits) {
+      const live = ts.filter((t) => nowMs - t < QUEUE_RL_WINDOW_MS);
+      if (live.length === 0) queueHits.delete(k);
+      else queueHits.set(k, live);
+    }
+    if (queueHits.size > QUEUE_RL_MAX_IPS) {
+      let toEvict = queueHits.size - QUEUE_RL_MAX_IPS;
+      for (const k of queueHits.keys()) { if (toEvict-- <= 0) break; queueHits.delete(k); }
+    }
+  }
+  const hits = (queueHits.get(ip) ?? []).filter((t) => nowMs - t < QUEUE_RL_WINDOW_MS);
+  hits.push(nowMs);
+  queueHits.set(ip, hits);
+  return hits.length > QUEUE_RL_MAX;
 }
 
 // M7 — flush the batch queue NOW: shuffle every queued bundle and submit each request_access in shuffled order
@@ -2579,13 +2614,19 @@ app.post("/dataroom/membership/queue-access", (req, res) => {
     return res.status(400).json({ error: err(e) });
   }
   try {
-    // Cap the queue (a full queue is the amplification backstop). Idempotent re-queues of an already-queued
-    // (room, nullifier) are still allowed below (they do not grow the queue), so a member can re-poll/re-submit.
-    const existing = findQueuedBatch(roomIdHex, nullifierHex);
-    if (!existing && batchQueuedCount() >= DR_BATCH_MAX_QUEUE) {
-      return res.status(429).json({ error: "the batch queue is full; please try again shortly" });
-    }
     const now = Date.now();
+    // Cap the queue (a full queue is the amplification backstop) + throttle per IP. Idempotent re-queues of an
+    // already-queued (room, nullifier) are still allowed (they do not grow the queue or count against the IP),
+    // so a member can re-poll/re-submit their own access freely.
+    const existing = findQueuedBatch(roomIdHex, nullifierHex);
+    if (!existing) {
+      if (queueRateLimited(clientIp(req), now)) {
+        return res.status(429).json({ error: "too many queued accesses; please try again shortly" });
+      }
+      if (batchQueuedCount() >= DR_BATCH_MAX_QUEUE) {
+        return res.status(429).json({ error: "the batch queue is full; please try again shortly" });
+      }
+    }
     const entry = enqueueBatch({ roomId: roomIdHex, accessor: accessorHex, nullifier: nullifierHex, bundle, now, windowMs: DR_BATCH_WINDOW_MS });
     res.json({
       ok: true,
@@ -2608,11 +2649,11 @@ app.get("/dataroom/membership/queue-status/:ticket", (req, res) => {
   if (!/^[0-9a-f]{32}$/.test(ticket)) return res.status(400).json({ error: "ticket must be 32 hex chars" });
   const entry = getBatchTicket(ticket);
   if (!entry) return res.status(404).json({ error: "no such ticket" });
+  // Deliberately does NOT echo the accessor/room (a leaked ticket should not disclose the pseudonym it queues);
+  // the member already knows their own access. Status + the window ETA + the landed tx is all the poll needs.
   res.json({
     ticket: entry.ticket,
     status: entry.status,
-    roomId: entry.roomId,
-    accessor: entry.accessor,
     flushAt: entry.flushAt,
     nextFlushAt: nextFlushAt(Date.now(), DR_BATCH_WINDOW_MS),
     windowMs: DR_BATCH_WINDOW_MS,
