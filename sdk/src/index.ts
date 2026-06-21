@@ -63,6 +63,16 @@ export type { OpenedDisclosure } from "./disclosure.js";
 export { recoverDocumentKey, recipientPublicKeyFromSecret, aeadDecrypt } from "./dataroom.js";
 export type { DataroomDisclosure, RecoveredKey } from "./dataroom.js";
 export {
+  deriveDataRoomIdentity,
+  idCommitment,
+  nullifierFor,
+  accessorFromSeed,
+  recipientFromSecret,
+  holderSignature,
+  DATAROOM_IDENTITY_MESSAGE,
+} from "./identity.js";
+export type { DataRoomIdentity } from "./identity.js";
+export {
   shamirReconstruct,
   openShare,
   reconstructWithCommitment,
