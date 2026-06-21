@@ -695,7 +695,7 @@ export const getDirectory = () =>
 /** Resolve one room by EXACT id. A private room reveals nothing (discoverable=false); unlisted/listed
  *  return the opt-in name/description + a coarse count. */
 export const getRoomMeta = (roomId: string) =>
-  fetch(`${BASE}/dataroom/room-meta/${roomId}`).then(j<RoomMeta>);
+  fetch(`${BASE}/dataroom/room-meta/${encodeURIComponent(roomId)}`).then(j<RoomMeta>);
 
 /** Owner: set a room's discovery tier + opt-in public name/description (off-chain, no tx). The connected
  *  wallet address is sent as `source` so the backend's on-chain owner-gate passes for a wallet-owned room

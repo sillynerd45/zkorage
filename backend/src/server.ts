@@ -2060,12 +2060,31 @@ app.post("/dataroom/membership/set-root", async (req, res) => {
 // enroll-store, so this only bounds genuinely-FRESH requests. In-memory (demo); a shared store in production.
 const ENROLL_RL_WINDOW_MS = 10 * 60_000; // 10 minutes
 const ENROLL_RL_MAX = 10; // new requests per IP per window
+const ENROLL_RL_MAX_IPS = 10_000; // hard cap on tracked IPs (backstop vs header-spoofed key churn)
 const ENROLL_PENDING_CAP = 200; // max pending requests held per room
 const enrollHits = new Map<string, number[]>();
 
-/** Record a hit for `ip` and report whether it is now over the window limit. Prunes the window in place;
- *  drops the entry when it empties so the map does not grow without bound. */
+/** Record a hit for `ip` and report whether it is now over the window limit. Keeps the map BOUNDED: only
+ *  when it crosses ENROLL_RL_MAX_IPS do we sweep window-expired entries (cheap O(1) the rest of the time),
+ *  and if it is still over the cap afterwards (e.g. spoofed X-Forwarded-For churn from a direct-to-origin
+ *  caller) we evict the oldest-inserted entries so memory cannot grow without bound. The throttle itself is
+ *  best-effort: behind Cloudflare CF-Connecting-IP is authoritative, but a direct caller can spoof the IP,
+ *  so this is a griefing speed-bump, not a security control. */
 function enrollRateLimited(ip: string, nowMs: number): boolean {
+  if (enrollHits.size > ENROLL_RL_MAX_IPS) {
+    for (const [k, ts] of enrollHits) {
+      const live = ts.filter((t) => nowMs - t < ENROLL_RL_WINDOW_MS);
+      if (live.length === 0) enrollHits.delete(k);
+      else enrollHits.set(k, live);
+    }
+    if (enrollHits.size > ENROLL_RL_MAX_IPS) {
+      let toEvict = enrollHits.size - ENROLL_RL_MAX_IPS;
+      for (const k of enrollHits.keys()) {
+        if (toEvict-- <= 0) break;
+        enrollHits.delete(k); // Map iterates in insertion order -> evicts the oldest first
+      }
+    }
+  }
   const hits = (enrollHits.get(ip) ?? []).filter((t) => nowMs - t < ENROLL_RL_WINDOW_MS);
   hits.push(nowMs);
   enrollHits.set(ip, hits);
@@ -2209,32 +2228,43 @@ app.post("/dataroom/enroll/approve", async (req, res) => {
 // listed (in the public directory, opt-in). Counts are COARSE BUCKETS only — the exact member count never
 // crosses the wire here — and there is NO public access feed (we never expose who/when accessed).
 
+// Short TTL cache for the directory payload: it is identical for every caller and the route fans out one
+// on-chain get_room per listed room, so caching the resolved list bounds RPC load under traffic. A
+// just-listed/unlisted room appears/disappears within the TTL (and a visibility change busts it immediately
+// below), which is fine for a discovery directory. Module-scoped; invalidated on POST /room/visibility.
+const DIRECTORY_TTL_MS = 15_000;
+let directoryCache: { at: number; rooms: unknown[] } | null = null;
+
 // PUBLIC directory: only rooms the owner opted into ("listed"). Coarse counts, no exact numbers, no access
 // feed. Each listing is re-verified on-chain (drop phantoms whose recorded owner no longer matches).
 app.get("/dataroom/directory", async (_req, res) => {
   if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
   try {
-    const listed = listListedRooms();
-    const resolved = await Promise.all(
-      listed.map(async (r) => {
-        const { value: room } = await readContract(DATAROOM_ID, "get_room", [scBytes(r.roomId)]);
-        const chain = room ? (jsonSafe(room) as { owner?: string }) : null;
-        if (!chain || chain.owner !== r.owner) return null; // chain authoritative; drop stale/unsubmitted
-        const n = getEligible(r.roomId).length;
-        return {
-          roomId: r.roomId,
-          name: r.name ?? null,
-          description: r.description ?? null,
-          memberBucket: memberBucket(n),
-          anonTier: bucketTier(n),
-          listedAt: r.listedAt ?? null,
-        };
-      }),
-    );
-    const rooms = resolved
-      .filter((x): x is NonNullable<typeof x> => x !== null)
-      .sort((a, b) => (b.listedAt ?? 0) - (a.listedAt ?? 0)); // newest listings first
-    res.json({ count: rooms.length, rooms, dataroomId: DATAROOM_ID });
+    const now = Date.now();
+    if (!directoryCache || now - directoryCache.at >= DIRECTORY_TTL_MS) {
+      const listed = listListedRooms();
+      const resolved = await Promise.all(
+        listed.map(async (r) => {
+          const { value: room } = await readContract(DATAROOM_ID, "get_room", [scBytes(r.roomId)]);
+          const chain = room ? (jsonSafe(room) as { owner?: string }) : null;
+          if (!chain || chain.owner !== r.owner) return null; // chain authoritative; drop stale/unsubmitted
+          const n = getEligible(r.roomId).length;
+          return {
+            roomId: r.roomId,
+            name: r.name ?? null,
+            description: r.description ?? null,
+            memberBucket: memberBucket(n),
+            anonTier: bucketTier(n),
+            listedAt: r.listedAt ?? null,
+          };
+        }),
+      );
+      const rooms = resolved
+        .filter((x): x is NonNullable<typeof x> => x !== null)
+        .sort((a, b) => (b.listedAt ?? 0) - (a.listedAt ?? 0)); // newest listings first
+      directoryCache = { at: now, rooms };
+    }
+    res.json({ count: directoryCache.rooms.length, rooms: directoryCache.rooms, dataroomId: DATAROOM_ID });
   } catch (e) {
     res.status(500).json({ error: err(e) });
   }
@@ -2309,6 +2339,7 @@ app.post("/dataroom/room/visibility", async (req, res) => {
       description: req.body?.description,
       nowMs: Date.now(),
     });
+    directoryCache = null; // a listing changed -> the owner sees it in the directory immediately
     res.json({
       ok: true,
       roomId: roomIdHex,

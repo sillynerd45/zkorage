@@ -51,12 +51,22 @@ export function bucketTier(n: number): "forming" | "ok" | "strong" {
   return "strong";
 }
 
-/** Strip control chars + angle brackets (defense in depth vs HTML even though React escapes), collapse
- *  whitespace, trim, and cap the length. Empty after sanitizing means undefined (treated as "not set"). */
+/**
+ * Sanitize an opt-in PUBLIC room name/description. This string is rendered to every directory visitor, so it
+ * is the one attacker-controlled public surface and must be neutered for DISPLAY (React already blocks HTML):
+ *   - C0 + DEL + C1 control chars -> space (C1 incl. U+0085 NEL, which `\s` does not match);
+ *   - zero-width + bidi controls removed (U+202E RLO etc. can visually reverse adjacent text; zero-width
+ *     chars defeat the eyeball-dedupe of two look-alike listings);
+ *   - angle brackets removed (defense in depth);
+ *   - whitespace collapsed, trimmed, length-capped.
+ * Combining-mark ("Zalgo") spam is intentionally NOT stripped (removing combining marks would corrupt
+ * legitimate non-Latin names); the length cap bounds its blast radius. Empty after sanitizing -> undefined.
+ */
 export function sanitizeRoomText(input: unknown, maxLen: number): string | undefined {
   if (typeof input !== "string") return undefined;
   const cleaned = input
-    .replace(/[\x00-\x1f\x7f]/g, " ") // control chars -> space
+    .replace(/[\x00-\x1f\x7f-\x9f]/g, " ") // C0 + DEL + C1 controls -> space
+    .replace(/[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, "") // zero-width + bidi controls + ZWNBSP
     .replace(/[<>]/g, "") // no angle brackets
     .replace(/\s+/g, " ")
     .trim()
