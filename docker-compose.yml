@@ -71,6 +71,10 @@ services:
       DEAL_TOKEN: "${KEYPER_DEAL_TOKEN:?set KEYPER_DEAL_TOKEN in ./.env}"
       SIM_SOURCE_PUBKEY: "${SIM_SOURCE_PUBKEY:?set SIM_SOURCE_PUBKEY in ./.env}"
       STELLAR_RPC_URL: "https://soroban-testnet.stellar.org"
+      # Static x25519 SEAL key (Model B browser dealer): the dealer seals this keeper's share to its seal_pub
+      # so the relay never sees K. Per-keeper, in ./.env (NOT committed); fail-loud so prod never runs the
+      # public dev-default. Only the keeper PROCESS gets it (not the backend) → the relay can't open shares.
+      KEYPER_SEAL_SECRET: "${KEYPER1_SEAL_SECRET:?set KEYPER1_SEAL_SECRET in ./.env}"
       SHARE_STORE_PATH: "/app/keyper/data/keyper-1.json"
       SHARE_RATE_PER_MIN: "120"
       KEYPER_ALLOWED_ORIGINS: "https://zkorage.wazowsky.id"
@@ -90,6 +94,7 @@ services:
       DEAL_TOKEN: "${KEYPER_DEAL_TOKEN:?set KEYPER_DEAL_TOKEN in ./.env}"
       SIM_SOURCE_PUBKEY: "${SIM_SOURCE_PUBKEY:?set SIM_SOURCE_PUBKEY in ./.env}"
       STELLAR_RPC_URL: "https://soroban-rpc.testnet.stellar.gateway.fm"
+      KEYPER_SEAL_SECRET: "${KEYPER2_SEAL_SECRET:?set KEYPER2_SEAL_SECRET in ./.env}"
       SHARE_STORE_PATH: "/app/keyper/data/keyper-2.json"
       SHARE_RATE_PER_MIN: "120"
       KEYPER_ALLOWED_ORIGINS: "https://zkorage.wazowsky.id"
@@ -112,6 +117,7 @@ services:
       # keyper2=Gateway.fm, keyper3=this). The keyed URL lives in the VM's ./.env (KEYPER3_RPC_URL), never
       # committed; falls back to keyless SDF testnet if unset.
       STELLAR_RPC_URL: "${KEYPER3_RPC_URL:-https://soroban-testnet.stellar.org}"
+      KEYPER_SEAL_SECRET: "${KEYPER3_SEAL_SECRET:?set KEYPER3_SEAL_SECRET in ./.env}"
       SHARE_STORE_PATH: "/app/keyper/data/keyper-3.json"
       SHARE_RATE_PER_MIN: "120"
       KEYPER_ALLOWED_ORIGINS: "https://zkorage.wazowsky.id"
