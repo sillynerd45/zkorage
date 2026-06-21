@@ -792,6 +792,8 @@ export interface CommitteeKeyper {
   keyperIndex?: number;
   shares?: number;
   rpc?: string;
+  /** The keeper's static x25519 key the browser dealer seals this keeper's share to (Model B). */
+  sealPub?: string;
   error?: string;
 }
 
@@ -817,6 +819,43 @@ export interface CommitteeDoc {
 
 export const getCommitteeInfo = () =>
   fetch(`${BASE}/dataroom/committee/info`).then(j<CommitteeInfoResp>);
+
+// ── M2: browser-dealer committee store (Model B) ──
+// The browser does all the crypto and posts only ciphertext + SEALED shares; the relay never sees K.
+export interface SealedShareWire {
+  keyperIndex: number;
+  eph_pub: string;
+  ct: string;
+  tag: string;
+}
+export interface DealSealedResp {
+  ok: boolean;
+  roomId?: string;
+  docId?: string;
+  contentHash?: string;
+  blobPointer?: string;
+  kCommitment?: string;
+  dealt?: number;
+  error?: string;
+}
+
+export const dealSealed = (payload: {
+  roomId: string;
+  docId: string;
+  blobB64: string;
+  kCommitment: string;
+  sealedShares: SealedShareWire[];
+  escrow?: { ephPub: string; ct: string; tag: string; recipientPub: string };
+}) => post<DealSealedResp>("/dataroom/committee/deal-sealed", payload);
+
+/** Owner-wallet-signed put_committee_document for a browser-dealt doc (or relay if no signer). */
+export const committeeAnchor = (
+  args: { roomId: string; docId: string; contentHash: string; kCommitment: string; blobPointer: string },
+  signer?: TxSigner,
+): Promise<WalletWriteResult> =>
+  signer
+    ? writeViaWallet("/dataroom/committee/anchor", args, signer)
+    : post<WalletWriteResult>("/dataroom/committee/anchor", args);
 
 // ── DR4: document-authenticity (signed-PDF / zkPDF: third-party truth) ──
 

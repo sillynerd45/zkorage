@@ -29,8 +29,10 @@ test("dataroom: recipient opens the sealed doc in-browser (faithful); wrong key 
 
   await page.goto("/app/dataroom/documents");
 
-  // STORE sub-tab is the default. The seal guest + demo recipient are demoted behind a "Verify details" expander.
+  // STORE sub-tab is the default. The DR1 direct-seal engine rows (seal guest + demo recipient) live under
+  // the "Direct (1:1)" access mode, demoted behind a "Verify details" expander.
   await expect(page.getByTestId("room-label")).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId("access-mode-direct").click();
   await page.getByTestId("anchor-engine-details").click();
   await expect(page.getByTestId("recipient-pub")).toContainText("x25519");
   await expect(page.getByTestId("seal-image")).toBeVisible();
