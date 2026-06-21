@@ -131,17 +131,20 @@ export function buildMembershipJob(args: {
   idSecret: Uint8Array;
   idTrapdoor: Uint8Array;
   roomId: Uint8Array;
-  holderSeed: Uint8Array;
   recipientPub: Uint8Array;
   commitments: Uint8Array[];
   memberIndex: number;
+  /** Provide EITHER the holder seed (the backend signs the NEW-5 consent) OR a precomputed { accessor, sig }
+   *  (the CLIENT signed it, so accessor_seed never reaches the backend/prover). Exactly one is required. */
+  holderSeed?: Uint8Array;
+  signature?: { accessor: Uint8Array; sig: Uint8Array };
 }): {
   job: Record<string, string | number>;
   eligibleRoot: string;
   nullifier: string;
   accessor: string;
 } {
-  const { idSecret, idTrapdoor, roomId, holderSeed, recipientPub, commitments, memberIndex } = args;
+  const { idSecret, idTrapdoor, roomId, recipientPub, commitments, memberIndex } = args;
   // The depth-20 tree holds at most 2^20 leaves; an index at/above capacity has no valid path (and the
   // guest's fold uses only the low 20 bits of leaf_index). Reject explicitly rather than silently aliasing.
   if (memberIndex < 0 || memberIndex >= (1 << TREE_DEPTH)) {
@@ -154,7 +157,24 @@ export function buildMembershipJob(args: {
   }
   const { root, witness } = buildEligibleTree(commitments);
   const { siblings, leafIndex } = witness(memberIndex);
-  const { accessor, sig } = holderSign(holderSeed, roomId, recipientPub);
+  // The NEW-5 holder consent: either the client signed it (preferred — accessor_seed stays on the device) or
+  // the backend signs with the seed (legacy / server-minted demo identities). A client-supplied signature is
+  // VERIFIED here so a bad value fails early and cleanly (the guest also re-verifies it).
+  let accessor: Uint8Array;
+  let sig: Uint8Array;
+  if (args.signature) {
+    accessor = need32(args.signature.accessor, "accessor");
+    sig = args.signature.sig;
+    if (sig.length !== 64) throw new Error("holder signature must be 64 bytes");
+    const msg = concat(SIG_DOMAIN, need32(roomId, "room_id"), accessor, need32(recipientPub, "recipient_pub"));
+    if (!ed.verify(sig, msg, accessor)) {
+      throw new Error("holder signature does not verify for (room_id, accessor, recipient_pub)");
+    }
+  } else if (args.holderSeed) {
+    ({ accessor, sig } = holderSign(args.holderSeed, roomId, recipientPub));
+  } else {
+    throw new Error("buildMembershipJob requires either holderSeed or a precomputed { accessor, sig }");
+  }
   const nf = nullifier(idSecret, roomId);
   return {
     job: {

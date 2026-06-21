@@ -16,6 +16,7 @@ import { ANON_FLOOR } from "@/components/app/dataroom/AnonymityMeter";
 import {
   DEMO_MODELB_ROOM,
   DEMO_MODELB_DOC,
+  signDataRoomAccess,
   type DataRoomIdentity,
   type OpenedCommitteeDocument,
   type RoomAccess,
@@ -166,14 +167,18 @@ export function useSharedOpen() {
     setProveStage("proving");
     try {
       cancelled.current = false;
-      const pa = await proveAccess(
-        room.trim(),
-        identity.idSecret,
-        identity.idTrapdoor,
-        identity.accessorSeed,
-        identity.recipientPub,
-        ANON_FLOOR,
-      );
+      // Sign the NEW-5 consent IN THE BROWSER, so accessor_seed never leaves the device; the backend + prover
+      // receive only the signature + the public accessor.
+      const holderSig = signDataRoomAccess(identity);
+      const pa = await proveAccess({
+        roomId: room.trim(),
+        idSecret: identity.idSecret,
+        idTrapdoor: identity.idTrapdoor,
+        accessor: identity.accessor,
+        holderSig,
+        recipientPub: identity.recipientPub,
+        minAnonSet: ANON_FLOOR,
+      });
       if (!pa.jobId) throw new Error(pa.error || "could not start the membership proof");
       let bundle: Bundle | null = null;
       const t0 = Date.now();

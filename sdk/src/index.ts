@@ -66,6 +66,7 @@ export { recoverDocumentKey, recipientPublicKeyFromSecret, aeadDecrypt, aeadSeal
 export type { DataroomDisclosure, RecoveredKey } from "./dataroom.js";
 export {
   deriveDataRoomIdentity,
+  signDataRoomAccess,
   idCommitment,
   nullifierFor,
   accessorFromSeed,

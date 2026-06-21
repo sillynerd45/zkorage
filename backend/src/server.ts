@@ -2149,13 +2149,24 @@ app.post("/dataroom/enroll/approve", async (req, res) => {
 app.post("/dataroom/membership/prove-access", async (req, res) => {
   if (!PROVER_URL) return res.status(503).json({ error: "PROVER_URL not configured" });
   if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
-  let roomIdHex: string, idSecret: Uint8Array, idTrapdoor: Uint8Array, holderSeed: Uint8Array, recipientPubHex: string;
+  let roomIdHex: string, idSecret: Uint8Array, idTrapdoor: Uint8Array, recipientPubHex: string;
+  let holderSeed: Uint8Array | undefined;
+  let signature: { accessor: Uint8Array; sig: Uint8Array } | undefined;
   try {
     roomIdHex = toBytes32(req.body?.roomId);
     idSecret = hex32(req.body?.idSecret, "idSecret");
     idTrapdoor = hex32(req.body?.idTrapdoor, "idTrapdoor");
-    holderSeed = hex32(req.body?.holderSeed, "holderSeed");
     recipientPubHex = toX25519PubHex(req.body?.recipientPub, () => toHex(recipientPublicKey()));
+    // NEW-5 consent: prefer a CLIENT-supplied signature (so accessor_seed never leaves the member's device);
+    // fall back to a holder seed (server-minted demo identities). Exactly one path. A client-supplied sig is
+    // re-verified in buildMembershipJob against (room_id, accessor, recipient_pub).
+    if (req.body?.holderSig !== undefined || req.body?.accessor !== undefined) {
+      const sig = fromHex(String(req.body?.holderSig ?? ""));
+      if (sig.length !== 64) throw new Error("holderSig must be 64-byte hex (128 hex chars)");
+      signature = { accessor: hex32(req.body?.accessor, "accessor"), sig };
+    } else {
+      holderSeed = hex32(req.body?.holderSeed, "holderSeed");
+    }
   } catch (e) {
     return res.status(400).json({ error: err(e) });
   }
@@ -2182,8 +2193,9 @@ app.post("/dataroom/membership/prove-access", async (req, res) => {
       }
     }
     const built = buildMembershipJob({
-      idSecret, idTrapdoor, roomId: fromHex(roomIdHex), holderSeed,
+      idSecret, idTrapdoor, roomId: fromHex(roomIdHex),
       recipientPub: fromHex(recipientPubHex), commitments, memberIndex,
+      ...(signature ? { signature } : { holderSeed }),
     });
     const r = await fetch(`${PROVER_URL}/prove`, {
       method: "POST",

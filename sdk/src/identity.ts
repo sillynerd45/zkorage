@@ -142,3 +142,21 @@ export function deriveDataRoomIdentity(signature: Uint8Array, roomIdHex: string)
     nullifier: toHex(nullifierFor(idSecret, roomId)),
   };
 }
+
+/**
+ * The NEW-5 holder consent signature (hex) for a derived identity. Signing in the BROWSER lets the member
+ * keep `accessor_seed` on their own device: the prover (and the relay backend) then receive only this
+ * signature + the public accessor, never the seed, so neither can forge the accessor's consent. The bytes are
+ * identical to a backend-produced signature (deterministic ed25519 over the same message), so the guest
+ * accepts it unchanged.
+ */
+export function signDataRoomAccess(identity: DataRoomIdentity): string {
+  return toHex(
+    holderSignature(
+      fromHex(identity.accessorSeed),
+      fromHex(identity.roomId),
+      fromHex(identity.accessor),
+      fromHex(identity.recipientPub),
+    ),
+  );
+}

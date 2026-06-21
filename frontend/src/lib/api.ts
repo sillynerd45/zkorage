@@ -770,18 +770,30 @@ export const registerMember = (roomId: string, mint = true) =>
 export const setEligibleRoot = (roomId: string) =>
   post<SetRootResp>("/dataroom/membership/set-root", { roomId });
 
-export const proveAccess = (
-  roomId: string,
-  idSecret: string,
-  idTrapdoor: string,
-  holderSeed: string,
-  recipientPub?: string,
-  minAnonSet?: number,
-) =>
+export interface ProveAccessArgs {
+  roomId: string;
+  idSecret: string;
+  idTrapdoor: string;
+  recipientPub?: string;
+  minAnonSet?: number;
+  /** Legacy: the backend signs the NEW-5 consent with this seed (server-minted demo identities). */
+  holderSeed?: string;
+  /** Preferred: the client signed the consent in-browser, so accessor_seed never leaves the device. Pass
+   *  both `accessor` and `holderSig` together. */
+  accessor?: string;
+  holderSig?: string;
+}
+
+export const proveAccess = (a: ProveAccessArgs) =>
   post<ProveAccessResp>("/dataroom/membership/prove-access", {
-    roomId, idSecret, idTrapdoor, holderSeed,
-    ...(recipientPub ? { recipientPub } : {}),
-    ...(minAnonSet ? { minAnonSet } : {}),
+    roomId: a.roomId,
+    idSecret: a.idSecret,
+    idTrapdoor: a.idTrapdoor,
+    ...(a.recipientPub ? { recipientPub: a.recipientPub } : {}),
+    ...(a.minAnonSet ? { minAnonSet: a.minAnonSet } : {}),
+    ...(a.holderSeed ? { holderSeed: a.holderSeed } : {}),
+    ...(a.accessor ? { accessor: a.accessor } : {}),
+    ...(a.holderSig ? { holderSig: a.holderSig } : {}),
   });
 
 export const requestAccess = (bundle: Bundle) =>
