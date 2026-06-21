@@ -54,6 +54,7 @@ import { buildMembershipJob, buildEligibleTree, idCommitment, freshIdentity } fr
 import { buildDocauthJob, bankIssuer } from "./docauth.js";
 import { getEligible, addEligible, indexOfCommitment } from "./eligible-store.js";
 import { addRequest, listRequests, removeRequest, hasRequest } from "./enroll-store.js";
+import { putEscrow, getEscrow } from "./escrow-store.js";
 import { demoDenyTree, DENY_DEPTH } from "./denylist.js";
 import { verifyOnChain, type Bundle } from "./verify.js";
 import { readContract, invokeContract, buildUnsignedXdr, submitSignedXdr, scBytes, scAddress, scOptAddress, scI128, scU32, scU64, scBool, jsonSafe } from "./chain.js";
@@ -2289,7 +2290,7 @@ app.get("/dataroom/committee/info", async (_req, res) => {
       try {
         const r = await fetch(`${ep}/health`, { signal: AbortSignal.timeout(4000) });
         const h = (await r.json()) as Record<string, unknown>;
-        return { endpoint: ep, ok: h.ok === true, keyperIndex: h.keyper_index, shares: h.shares, rpc: h.rpc };
+        return { endpoint: ep, ok: h.ok === true, keyperIndex: h.keyper_index, shares: h.shares, rpc: h.rpc, sealPub: h.seal_pub };
       } catch (e) {
         return { endpoint: ep, ok: false, error: err(e) };
       }
@@ -2385,6 +2386,135 @@ app.post("/dataroom/committee/seal-doc", async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: err(e) });
   }
+});
+
+// ---- M2: BROWSER DEALER relay (Model B, Option B) ----
+// The OWNER's browser is the dealer: it generates K, AES-encrypts the document, Shamir-splits K, ECIES-seals
+// each share to a keeper's static seal key, and seals an owner-escrow copy. This relay only ever sees the
+// CIPHERTEXT and the SEALED shares — never K or the plaintext. It stores the blob, forwards each sealed share
+// to its keeper, and stashes the escrow copy. The owner then anchors put_committee_document (next endpoint).
+app.post("/dataroom/committee/deal-sealed", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  const n = KEYPER_ENDPOINTS.length;
+  let roomIdHex: string, docIdHex: string, blob: Uint8Array, kCommitmentHex: string;
+  let sealedShares: Array<Record<string, unknown>>;
+  let escrow: Record<string, unknown> | undefined;
+  try {
+    roomIdHex = toBytes32(req.body?.roomId);
+    docIdHex = toBytes32(req.body?.docId); // browser-chosen (binds the share + escrow tags)
+    kCommitmentHex = toHex(hex32(req.body?.kCommitment, "kCommitment"));
+    const b64 = req.body?.blobB64;
+    if (typeof b64 !== "string" || !b64) throw new Error("blobB64 (ciphertext) required");
+    blob = new Uint8Array(Buffer.from(b64, "base64"));
+    const ss = req.body?.sealedShares;
+    if (!Array.isArray(ss) || ss.length !== n) throw new Error(`sealedShares must have ${n} entries`);
+    sealedShares = ss as Array<Record<string, unknown>>;
+    escrow = req.body?.escrow && typeof req.body.escrow === "object" ? (req.body.escrow as Record<string, unknown>) : undefined;
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const { value: roomRaw } = await readContract(DATAROOM_ID, "get_room", [scBytes(roomIdHex)]);
+    if (!roomRaw) return res.status(404).json({ error: "room not found — create it first", roomId: roomIdHex });
+
+    // Persist the (already-encrypted) blob; content-addressed → contentHash + pointer.
+    const { contentHash, blobPointer } = await getBlobStore().put(blob);
+
+    // Forward each SEALED share to its keeper's /deal (bearer-gated). The relay never holds K or a raw share.
+    const settled = await Promise.allSettled(
+      sealedShares.map(async (sh) => {
+        const idx = Number(sh.keyperIndex);
+        if (!(idx >= 1 && idx <= n)) throw new Error(`bad keyperIndex ${idx}`);
+        const ep = KEYPER_ENDPOINTS[idx - 1];
+        const r = await fetch(`${ep}/deal`, {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${KEYPER_DEAL_TOKEN}` },
+          body: JSON.stringify({ room_id: roomIdHex, doc_id: docIdHex, keyper_index: idx, sealed: { eph_pub: sh.eph_pub, ct: sh.ct, tag: sh.tag } }),
+          signal: AbortSignal.timeout(8000),
+        });
+        return { idx, ok: r.ok, status: r.status };
+      }),
+    );
+    const results = settled.map((s, i) =>
+      s.status === "fulfilled" ? s.value : { idx: i + 1, ok: false, status: 0, error: String((s.reason as Error)?.message ?? s.reason) },
+    );
+    const failed = results.filter((d) => !d.ok);
+    if (failed.length > 0) {
+      return res.status(502).json({ error: "sealed-share distribution failed — document NOT dealt (anchor not attempted)", failed });
+    }
+
+    // Stash the owner-escrow copy (sealed to the owner's own key) so the owner can reopen without the keepers.
+    if (escrow) {
+      try {
+        putEscrow(roomIdHex, docIdHex, {
+          ephPub: toHex(hex32(escrow.ephPub, "escrow.ephPub")),
+          ct: toHex(hex32(escrow.ct, "escrow.ct")),
+          tag: toHex(hex32(escrow.tag, "escrow.tag")),
+          contentHash,
+          roomId: roomIdHex,
+          docId: docIdHex,
+          recipientPub: toHex(hex32(escrow.recipientPub, "escrow.recipientPub")),
+        });
+      } catch (e) {
+        return res.status(400).json({ error: `bad escrow copy: ${err(e)}` });
+      }
+    }
+
+    res.json({
+      ok: true,
+      roomId: roomIdHex,
+      docId: docIdHex,
+      contentHash,
+      blobPointer,
+      kCommitment: kCommitmentHex,
+      dealt: results.length,
+      threshold: COMMITTEE_THRESHOLD,
+      note: "K never reached the server; now anchor via POST /dataroom/committee/anchor (owner signs put_committee_document)",
+    });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// Anchor a (browser-dealt) committee document on-chain. The room OWNER signs put_committee_document via the
+// wallet XDR path (membership-only needs no set_doc_policy: is_doc_admitted falls back to bare membership).
+app.post("/dataroom/committee/anchor", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  let roomIdHex: string, docIdHex: string, contentHashHex: string, kCommitmentHex: string, blobPointer: string;
+  try {
+    roomIdHex = toBytes32(req.body?.roomId);
+    docIdHex = toBytes32(req.body?.docId);
+    contentHashHex = toHex(hex32(req.body?.contentHash, "contentHash"));
+    kCommitmentHex = toHex(hex32(req.body?.kCommitment, "kCommitment"));
+    blobPointer = String(req.body?.blobPointer ?? "");
+    if (!blobPointer) throw new Error("blobPointer required");
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  const args = [scBytes(roomIdHex), scBytes(docIdHex), scBytes(contentHashHex), scBytes(kCommitmentHex), scBytesUtf8(blobPointer)];
+  const idField = { roomId: roomIdHex, docId: docIdHex, contentHash: contentHashHex, kCommitment: kCommitmentHex };
+  try {
+    if (userSource(req)) {
+      if (await maybeXdr(req, res, DATAROOM_ID, "put_committee_document", args, idField)) return;
+    }
+    const out = await invokeContract(DATAROOM_ID, "put_committee_document", args);
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, ...idField });
+  } catch (e) {
+    res.json({ ok: false, error: err(e), roomId: roomIdHex, docId: docIdHex });
+  }
+});
+
+// The owner-escrow copy for a document (sealed to the owner's key). The owner opens it client-side with their
+// sign-to-derive secret (recoverDocumentKey) to reopen the document without the keeper committee.
+app.get("/dataroom/committee/escrow/:roomId/:docId", (req, res) => {
+  let roomIdHex: string, docIdHex: string;
+  try {
+    roomIdHex = toBytes32(req.params.roomId);
+    docIdHex = toBytes32(req.params.docId);
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  res.json({ roomId: roomIdHex, docId: docIdHex, escrow: getEscrow(roomIdHex, docIdHex) });
 });
 
 app.get("/dataroom/committee/document/:roomId/:docId", async (req, res) => {
