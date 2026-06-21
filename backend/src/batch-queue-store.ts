@@ -138,6 +138,28 @@ export function listQueued(): BatchEntry[] {
     .sort((a, b) => a.enqueuedAt - b.enqueuedAt);
 }
 
+/** The number of still-queued entries (across all rooms) — used to cap the queue against griefing. */
+export function queuedCount(): number {
+  let n = 0;
+  for (const e of Object.values(load())) if (e.status === "queued") n++;
+  return n;
+}
+
+/** Drop terminal (submitted/error) entries older than `olderThanMs`, so the store file stays bounded. A member
+ *  polls their ticket only until it is submitted, so terminal entries are safe to age out. Returns how many. */
+export function purgeTerminal(olderThanMs: number, now: number): number {
+  const s = load();
+  let removed = 0;
+  for (const [t, e] of Object.entries(s)) {
+    if (e.status !== "queued" && typeof e.submittedAt === "number" && now - e.submittedAt > olderThanMs) {
+      delete s[t];
+      removed++;
+    }
+  }
+  if (removed) save(s);
+  return removed;
+}
+
 /** Record a submission outcome for one ticket. Re-loads so a concurrent enqueue is never clobbered. */
 export function markResult(ticket: string, r: { status: BatchStatus; txHash?: string; error?: string; at: number }): void {
   const s = load();

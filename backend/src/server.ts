@@ -57,7 +57,8 @@ import { addRequest, listRequests, removeRequest, hasRequest } from "./enroll-st
 import { putEscrow, getEscrow } from "./escrow-store.js";
 import {
   enqueue as enqueueBatch, getByTicket as getBatchTicket, listQueued as listBatchQueued,
-  flush as flushBatch, nextFlushAt, type QueuedBundle,
+  flush as flushBatch, nextFlushAt, queuedCount as batchQueuedCount, purgeTerminal as purgeBatchTerminal,
+  findQueuedByNullifier as findQueuedBatch, type QueuedBundle,
 } from "./batch-queue-store.js";
 import { demoDenyTree, DENY_DEPTH } from "./denylist.js";
 import { verifyOnChain, type Bundle } from "./verify.js";
@@ -152,6 +153,11 @@ const PROVER_URL = process.env.PROVER_URL || "";
 // more latency; shorter = snappier but thinner cover (the demo/e2e set it low to show the mechanism quickly,
 // production runs it ~10 min). The on-chain decorrelation story is identical at any window length.
 const DR_BATCH_WINDOW_MS = Math.max(1000, Number(process.env.DR_BATCH_WINDOW_MS || 10 * 60_000));
+// Bound the queue against griefing: batching amplifies a junk-bundle spray (one flush would try every queued
+// bundle serially through the relay account). The nullifier-dedup + the image_id pre-filter reject the easy
+// junk; this caps the rest. Terminal (submitted/error) entries age out after DR_BATCH_PURGE_MS.
+const DR_BATCH_MAX_QUEUE = Math.max(1, Number(process.env.DR_BATCH_MAX_QUEUE || 500));
+const DR_BATCH_PURGE_MS = Math.max(60_000, Number(process.env.DR_BATCH_PURGE_MS || 60 * 60_000));
 const BUNDLE_PATH = process.env.BUNDLE_PATH || path.join("data", "bundle.json");
 // Public RPC the trust-minimized "verify it yourself" channels point at (page + CLI). Not our server.
 const PUBLIC_RPC_URL = process.env.PUBLIC_RPC_URL || "https://soroban-testnet.stellar.org";
@@ -2537,6 +2543,7 @@ async function runBatchFlush(reason: string): Promise<{ flushed: number; submitt
     if (summary.flushed > 0) {
       console.log(`[dr-batch] flush (${reason}): ${summary.submitted} submitted, ${summary.failed} failed of ${summary.flushed} shuffled`);
     }
+    purgeBatchTerminal(DR_BATCH_PURGE_MS, Date.now()); // keep the store file bounded
     return summary;
   } finally {
     batchFlushing = false;
@@ -2559,6 +2566,12 @@ app.post("/dataroom/membership/queue-access", (req, res) => {
       throw new Error("seal, image_id, journal must be hex");
     }
     bundle = { seal: b.seal, image_id: b.image_id, journal: b.journal };
+    // Cheap pre-filter: a membership bundle MUST carry the pinned membership image_id (the contract checks it
+    // too, but rejecting the wrong circuit here keeps obvious junk out of the relay queue). Not a full verify —
+    // the chain does that at flush — just a guard against a junk-bundle spray amplifying through the batch.
+    if (bundle.image_id.toLowerCase() !== MEMBERSHIP_IMAGE_ID.toLowerCase()) {
+      throw new Error("bundle image_id is not the pinned membership image");
+    }
     roomIdHex = toBytes32(b.roomId);
     accessorHex = toHex(hex32(b.accessor, "accessor"));
     nullifierHex = toHex(hex32(b.nullifier, "nullifier"));
@@ -2566,6 +2579,12 @@ app.post("/dataroom/membership/queue-access", (req, res) => {
     return res.status(400).json({ error: err(e) });
   }
   try {
+    // Cap the queue (a full queue is the amplification backstop). Idempotent re-queues of an already-queued
+    // (room, nullifier) are still allowed below (they do not grow the queue), so a member can re-poll/re-submit.
+    const existing = findQueuedBatch(roomIdHex, nullifierHex);
+    if (!existing && batchQueuedCount() >= DR_BATCH_MAX_QUEUE) {
+      return res.status(429).json({ error: "the batch queue is full; please try again shortly" });
+    }
     const now = Date.now();
     const entry = enqueueBatch({ roomId: roomIdHex, accessor: accessorHex, nullifier: nullifierHex, bundle, now, windowMs: DR_BATCH_WINDOW_MS });
     res.json({

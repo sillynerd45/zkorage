@@ -8,6 +8,7 @@
 // reload (persistence). The HTTP routes + the real on-chain shuffled landing are covered by live curl + the e2e.
 import {
   enqueue, getByTicket, listQueued, flush, markResult, nextFlushAt, findQueuedByNullifier, fisherYates,
+  queuedCount, purgeTerminal,
   type QueuedBundle, type BatchEntry,
 } from "../src/batch-queue-store.js";
 
@@ -109,6 +110,20 @@ ok(listQueued().every((e, i, a) => i === 0 || a[i - 1].enqueuedAt <= e.enqueuedA
   markResult(a.ticket, { status: "submitted", txHash: "tx-aaa", at: t0 + 4100 });
   ok(getByTicket(a.ticket)?.status === "submitted", "markResult updates the target ticket");
   ok(getByTicket(b.ticket)?.status === "queued", "a concurrently-queued ticket is untouched by markResult");
+}
+
+// ---- queuedCount + purgeTerminal (the griefing/growth bounds) ----
+{
+  const before = queuedCount();
+  const a = enqueue({ roomId: ROOM, accessor: acc(30), nullifier: nf(30), bundle: bundle(30), now: t0 + 5000, windowMs: WINDOW });
+  enqueue({ roomId: ROOM, accessor: acc(31), nullifier: nf(31), bundle: bundle(31), now: t0 + 5001, windowMs: WINDOW });
+  ok(queuedCount() === before + 2, "queuedCount counts only still-queued entries");
+  // Submit one, then purge terminal entries older than a TTL — the queued one survives, old terminal goes.
+  markResult(a.ticket, { status: "submitted", txHash: "tx-purge", at: t0 + 5100 });
+  ok(queuedCount() === before + 1, "a submitted entry no longer counts as queued");
+  const removed = purgeTerminal(1000, t0 + 5100 + 2000); // 2s > 1s TTL
+  ok(removed >= 1 && getByTicket(a.ticket) === null, "purgeTerminal drops aged terminal entries");
+  ok(getByTicket(listQueued()[0]?.ticket ?? "")?.status === "queued" || queuedCount() === before + 1, "purgeTerminal keeps still-queued entries");
 }
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILED`);
