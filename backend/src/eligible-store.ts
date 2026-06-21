@@ -73,3 +73,62 @@ export function addEligible(roomIdHex: string, commitmentHex: string): { index: 
 export function indexOfCommitment(roomIdHex: string, commitmentHex: string): number {
   return getEligible(roomIdHex).indexOf(commitmentHex.toLowerCase());
 }
+
+/** Uniform Fisher-Yates shuffle (in place); the default new-batch ordering for addEligibleBatch. */
+function fisherYates<T>(arr: T[], rng: () => number = Math.random): T[] {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+/**
+ * M7 (timing defense #2) — append a BATCH of new commitments in RANDOMIZED order, in a single set-root.
+ *
+ * Why this is not theater: enrollment is identified (the owner approves each commitment, so they know
+ * commitment -> wallet AND the order they approved). If every approval appended one leaf and re-pinned a new
+ * root, each `eligible_root` would act as a fine-grained "enrolled-by" marker the owner could correlate with the
+ * exact wallet they just approved, and early accessors would prove against smaller-set roots. Approving a BATCH
+ * coarsens that: one root jump for the whole batch, so a grant only reveals "enrolled by batch B", not "after
+ * member m". Shuffling the new leaves' order on top is defense-in-depth — the leaf index never appears on-chain
+ * today (the depth-20 Merkle proof hides it and the witness length is fixed), so the shuffle costs nothing and
+ * removes approval-order -> leaf-position coupling if the position ever became observable.
+ *
+ * EXISTING leaves keep their index (their witnesses stay valid); only the NEW commitments are shuffled, among
+ * themselves, before being appended. Duplicates (already-eligible, or repeated in the input) are skipped.
+ * `order` is injectable for deterministic tests (defaults to Fisher-Yates).
+ */
+export function addEligibleBatch(
+  roomIdHex: string,
+  commitmentHexes: string[],
+  order: <T>(a: T[]) => T[] = (a) => fisherYates(a),
+): { added: { commitment: string; index: number }[]; skipped: string[]; total: number } {
+  const room = roomIdHex.toLowerCase();
+  const s = load();
+  const list = s[room] ?? [];
+  const present = new Set(list);
+  const fresh: string[] = [];
+  const skipped: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of commitmentHexes) {
+    const c = raw.toLowerCase();
+    if (present.has(c) || seen.has(c)) {
+      skipped.push(c);
+      continue;
+    }
+    seen.add(c);
+    fresh.push(c);
+  }
+  if (list.length + fresh.length > MAX_MEMBERS) {
+    throw new Error(`eligible set for room would exceed capacity (max ${MAX_MEMBERS} members, the depth-20 tree)`);
+  }
+  const shuffled = order([...fresh]);
+  const added = shuffled.map((c) => {
+    list.push(c);
+    return { commitment: c, index: list.length - 1 };
+  });
+  s[room] = list;
+  save(s);
+  return { added, skipped, total: list.length };
+}

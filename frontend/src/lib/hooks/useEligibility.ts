@@ -77,7 +77,12 @@ export function useEligibility() {
       const sr = await setEligibleRoot(room);
       if (!sr.ok) throw new Error(sr.error || "set-root failed");
       setStep("Proving membership (sha256-Merkle, nullifier, holder sig), worker-first. This takes a few minutes…");
-      const pa = await proveAccess(room, me.minted.idSecret, me.minted.idTrapdoor, me.minted.holderSeed);
+      const pa = await proveAccess({
+        roomId: room,
+        idSecret: me.minted.idSecret,
+        idTrapdoor: me.minted.idTrapdoor,
+        holderSeed: me.minted.holderSeed,
+      });
       if (!pa.jobId) throw new Error(pa.error || "prove-access failed");
       let bundle: Bundle | null = null;
       const t0 = Date.now();

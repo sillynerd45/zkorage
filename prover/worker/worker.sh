@@ -18,6 +18,12 @@ HOST_SOLVENCY_BIN="${HOST_SOLVENCY_BIN:-/prover/target/release/host_solvency}"  
 HOST_TIER_BIN="${HOST_TIER_BIN:-/prover/target/release/host_tier}"                             # tier (BP5)
 POLL="${POLL_SECONDS:-3}"
 AUTH=(); [ -n "$TOKEN" ] && AUTH=(-H "X-Worker-Token: $TOKEN")
+# Witness hygiene: keep the per-job witness file in RAM (tmpfs) when available, and remove it after every job
+# (and on exit), so the private witness never lingers on disk between proofs.
+WORK="${ZK_WORK_DIR:-/dev/shm}"; { [ -d "$WORK" ] && [ -w "$WORK" ]; } || WORK=/tmp
+JOB="$WORK/zk.job"; OUT="$WORK/zk.out.json"; LOG="$WORK/zk.log"
+cleanup() { rm -f "$JOB" "$OUT" "$LOG" 2>/dev/null || true; }
+trap cleanup EXIT
 
 echo "zkorage worker -> $VM_URL (poll ${POLL}s, kinds: reserves/identity/compliance/payroll/accredited/dataroom_seal/membership/docauth/solvency/tier)"
 while true; do
@@ -45,11 +51,11 @@ while true; do
   # Build the job file, FAIL-CLOSED on any missing field: `jq -e` exits non-zero on null, so a field-list
   # drift (gateway REQUIRED vs run_host_local vs this worker getting out of sync) surfaces as a job ERROR
   # instead of silently feeding the host bin the literal string "null" -> a wrong-input proof.
-  : > /tmp/zk.job
+  : > "$JOB"
   JOB_OK=1
   for f in "${FIELDS[@]}"; do
     if V="$(printf '%s' "$RESP" | jq -er "$f" 2>/dev/null)"; then
-      printf '%s\n' "$V" >> /tmp/zk.job
+      printf '%s\n' "$V" >> "$JOB"
     else
       JOB_OK=0; break
     fi
@@ -58,6 +64,7 @@ while true; do
     curl -sf "${AUTH[@]}" -H 'content-type: application/json' \
       -X POST "$VM_URL/jobs/$JID/result" -d "{\"error\":\"worker: missing job field for kind $KIND\"}" >/dev/null
     echo "[$(date -u +%H:%M:%S)] BAD JOB $JID ($KIND): missing field"
+    cleanup
     continue
   fi
 
@@ -68,18 +75,20 @@ while true; do
   PROVE_ATTEMPTS="${PROVE_ATTEMPTS:-4}"
   PROVED=0
   for try in $(seq 1 "$PROVE_ATTEMPTS"); do
-    if ZKORAGE_JOB=/tmp/zk.job ZKORAGE_OUT=/tmp/zk.out.json "$BIN" >/tmp/zk.log 2>&1; then PROVED=1; break; fi
+    if ZKORAGE_JOB="$JOB" ZKORAGE_OUT="$OUT" "$BIN" >"$LOG" 2>&1; then PROVED=1; break; fi
     echo "[$(date -u +%H:%M:%S)] prove attempt $try/$PROVE_ATTEMPTS failed for $JID ($KIND); retrying"
   done
   if [ "$PROVED" = 1 ]; then
-    BUNDLE="$(cat /tmp/zk.out.json)"
+    BUNDLE="$(cat "$OUT")"
     curl -sf "${AUTH[@]}" -H 'content-type: application/json' \
       -X POST "$VM_URL/jobs/$JID/result" -d "{\"bundle\":$BUNDLE}" >/dev/null \
       && echo "[$(date -u +%H:%M:%S)] done $JID"
   else
-    ERR="$(tail -3 /tmp/zk.log | tr '\n' ' ' | tr '"' "'" )"
+    ERR="$(tail -3 "$LOG" | tr '\n' ' ' | tr '"' "'" )"
     curl -sf "${AUTH[@]}" -H 'content-type: application/json' \
       -X POST "$VM_URL/jobs/$JID/result" -d "{\"error\":\"$ERR\"}" >/dev/null
     echo "[$(date -u +%H:%M:%S)] FAILED $JID after $PROVE_ATTEMPTS tries: $ERR"
   fi
+  # Remove the witness file as soon as the job is finished (don't wait for the next job to overwrite it).
+  cleanup
 done

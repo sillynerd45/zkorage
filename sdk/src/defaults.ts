@@ -145,6 +145,16 @@ export const DEMO_DATAROOM_POLICY = {
   accessor: "ed4928c628d1c2c6eae90338905995612959273a5c63f93636c14614ac8737d1",
 };
 
+/** A stable Model B (membership-only) demo room + committee document anchored on testnet
+ * (`zkorage-modelb-demo-v1` -> `roomId`; `docId` = sha256("zkorage-modelb-demo-doc-v1")). This is the
+ * sign-to-derive reader demo: any approved member of the room opens `docId` by proving ANONYMOUS membership
+ * once (the reader's wallet-derived identity), the keepers release the key to that member's wallet-derived
+ * recipient key, and the file decrypts in the browser. The room never learns which member opened it. A reader
+ * who is not yet on the room's list is sent to request to join (Membership). Provisioned + validated by
+ * backend/scripts/m3-live-e2e.mjs. */
+export const DEMO_MODELB_ROOM = "9cec7bcada8b0666c59f0b0e435b3a2359960e647204c6dba95f8037631e8fd0";
+export const DEMO_MODELB_DOC = "dc4a61c504f4f528a1bb7fed7f0bfb613e1b85f1053afc32d308f20903e4ac0d";
+
 /** Live Stellar testnet deployment. Verifier + token W1/W2; policy W3; gate W5; compliance W6;
  * payroll W7; accredited + fundraise W8; dataroom DR1–DR6. */
 export const TESTNET: ZkorageConfig = {

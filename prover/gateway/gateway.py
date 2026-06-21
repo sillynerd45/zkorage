@@ -45,6 +45,10 @@ PORT = int(os.environ.get("PORT", "8080"))
 FALLBACK_SECS = int(os.environ.get("FALLBACK_SECS", "30"))
 CLAIM_TIMEOUT = int(os.environ.get("CLAIM_TIMEOUT", "1800"))  # worker claimed but never returned
 WORKER_TOKEN = os.environ.get("WORKER_TOKEN", "")
+JOB_TTL = int(os.environ.get("JOB_TTL", "900"))  # purge a finished job this many seconds after it completes
+# Witness hygiene: keep the per-proof job file (the PRIVATE witness, for a VM-CPU fallback prove) in RAM
+# (tmpfs) when available, so the witness never lands on disk; fall back to the default temp dir otherwise.
+_WORK_DIR = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else None
 # Required input fields per claim kind. Reserves binds a supply threshold; identity binds a public
 # accessor; compliance binds an accessor PLUS a sanctions non-membership witness.
 REQUIRED = {
@@ -142,7 +146,7 @@ def run_host_local(inputs, kind):
         bin_path = HOST_BIN
         lines = [inputs["envelope_hex"], inputs["signature_hex"], inputs["issuer_pubkey_hex"],
                  str(int(inputs["threshold"]))]
-    jf = tempfile.NamedTemporaryFile("w", suffix=".job", delete=False)
+    jf = tempfile.NamedTemporaryFile("w", suffix=".job", delete=False, dir=_WORK_DIR)
     jf.write("\n".join(lines) + "\n")
     jf.close()
     out = jf.name + ".out.json"
@@ -164,6 +168,13 @@ def run_host_local(inputs, kind):
 def fallback_loop():
     while True:
         time.sleep(5)
+        # Purge finished jobs JOB_TTL seconds after they complete (the witness was already scrubbed on
+        # completion); bounds memory and removes the residual result + status.
+        now = time.time()
+        with lock:
+            for jid in [k for k, j in jobs.items()
+                        if j["status"] in ("done", "error") and j.get("done_at") and now - j["done_at"] > JOB_TTL]:
+                del jobs[jid]
         cand = None
         with lock:
             for j in sorted(jobs.values(), key=lambda x: x["created"]):
@@ -174,9 +185,10 @@ def fallback_loop():
         if cand:
             try:
                 b = run_host_local(cand["inputs"], cand.get("kind", "reserves"))
-                with lock: cand["status"] = "done"; cand["bundle"] = b
+                # Scrub the witness the moment the proof is done: a finished job keeps only its public result.
+                with lock: cand["status"] = "done"; cand["bundle"] = b; cand["inputs"] = None; cand["done_at"] = time.time()
             except Exception as e:  # noqa
-                with lock: cand["status"] = "error"; cand["error"] = str(e)
+                with lock: cand["status"] = "error"; cand["error"] = str(e); cand["inputs"] = None; cand["done_at"] = time.time()
 
 
 class H(BaseHTTPRequestHandler):
@@ -350,6 +362,8 @@ class H(BaseHTTPRequestHandler):
                     j["bundle"] = data["bundle"]; j["status"] = "done"
                 else:
                     j["status"] = "error"; j["error"] = data.get("error", "worker error")
+                # Scrub the witness once the proof is finished; keep only the public result + status.
+                j["inputs"] = None; j["done_at"] = time.time()
             return self._send(200, {"ok": True})
         return self._send(404, {"error": "not found"})
 

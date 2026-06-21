@@ -36,6 +36,13 @@ services:
       KEYPER_ENDPOINTS: "http://keyper1:8801,http://keyper2:8802,http://keyper3:8803"
       KEYPER_DEAL_TOKEN: "${KEYPER_DEAL_TOKEN:?set KEYPER_DEAL_TOKEN in ./.env}"
       COMMITTEE_THRESHOLD: "2"
+      # Reach the prover gateway DIRECTLY at the VM's LAN IP (it listens on 0.0.0.0:8080), NOT through the
+      # Cloudflare hairpin. An apizk-inbound prove-access that makes an outbound to https://prover.wazowsky.id
+      # on the SAME cloudflared head-of-line blocks until CF times out (the proof still completes, but the
+      # jobId response is lost). The direct path needs the host firewall to allow the docker subnets to port
+      # 8080 (ufw: `allow from 172.16.0.0/12 to any port 8080 proto tcp`). <vm-host> is stable across
+      # docker network recreates (unlike the bridge gateway 172.20.0.1). Overrides backend/.env's PROVER_URL.
+      PROVER_URL: "http://<vm-host>:8080"
     ports:
       - "8787:8787"
     volumes:
@@ -71,6 +78,10 @@ services:
       DEAL_TOKEN: "${KEYPER_DEAL_TOKEN:?set KEYPER_DEAL_TOKEN in ./.env}"
       SIM_SOURCE_PUBKEY: "${SIM_SOURCE_PUBKEY:?set SIM_SOURCE_PUBKEY in ./.env}"
       STELLAR_RPC_URL: "https://soroban-testnet.stellar.org"
+      # Static x25519 SEAL key (Model B browser dealer): the dealer seals this keeper's share to its seal_pub
+      # so the relay never sees K. Per-keeper, in ./.env (NOT committed); fail-loud so prod never runs the
+      # public dev-default. Only the keeper PROCESS gets it (not the backend) → the relay can't open shares.
+      KEYPER_SEAL_SECRET: "${KEYPER1_SEAL_SECRET:?set KEYPER1_SEAL_SECRET in ./.env}"
       SHARE_STORE_PATH: "/app/keyper/data/keyper-1.json"
       SHARE_RATE_PER_MIN: "120"
       KEYPER_ALLOWED_ORIGINS: "https://zkorage.wazowsky.id"
@@ -90,6 +101,7 @@ services:
       DEAL_TOKEN: "${KEYPER_DEAL_TOKEN:?set KEYPER_DEAL_TOKEN in ./.env}"
       SIM_SOURCE_PUBKEY: "${SIM_SOURCE_PUBKEY:?set SIM_SOURCE_PUBKEY in ./.env}"
       STELLAR_RPC_URL: "https://soroban-rpc.testnet.stellar.gateway.fm"
+      KEYPER_SEAL_SECRET: "${KEYPER2_SEAL_SECRET:?set KEYPER2_SEAL_SECRET in ./.env}"
       SHARE_STORE_PATH: "/app/keyper/data/keyper-2.json"
       SHARE_RATE_PER_MIN: "120"
       KEYPER_ALLOWED_ORIGINS: "https://zkorage.wazowsky.id"
@@ -112,6 +124,7 @@ services:
       # keyper2=Gateway.fm, keyper3=this). The keyed URL lives in the VM's ./.env (KEYPER3_RPC_URL), never
       # committed; falls back to keyless SDF testnet if unset.
       STELLAR_RPC_URL: "${KEYPER3_RPC_URL:-https://soroban-testnet.stellar.org}"
+      KEYPER_SEAL_SECRET: "${KEYPER3_SEAL_SECRET:?set KEYPER3_SEAL_SECRET in ./.env}"
       SHARE_STORE_PATH: "/app/keyper/data/keyper-3.json"
       SHARE_RATE_PER_MIN: "120"
       KEYPER_ALLOWED_ORIGINS: "https://zkorage.wazowsky.id"

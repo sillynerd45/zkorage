@@ -21,6 +21,8 @@ import DataroomRelease from "./pages/app/dataroom/Release";
 import DataroomDisclosure from "./pages/app/dataroom/Disclosure";
 import DataroomPolicy from "./pages/app/dataroom/Policy";
 import DataroomAnchor from "./pages/app/dataroom/Anchor";
+import DataroomMembership from "./pages/app/dataroom/Membership";
+import DataroomDiscover from "./pages/app/dataroom/Discover";
 import DataroomAuthenticity from "./pages/app/dataroom/Authenticity";
 import DataroomOpenShared from "./pages/app/dataroom/OpenShared";
 import BondedLayout from "./pages/app/bonded/Layout";
@@ -67,6 +69,8 @@ export default function App() {
           <Route path="policy" element={<DataroomPolicy />} />
           {/* "documents" = store + open + browse (the page is still implemented in Anchor.tsx) */}
           <Route path="documents" element={<DataroomAnchor />} />
+          <Route path="membership" element={<DataroomMembership />} />
+          <Route path="discover" element={<DataroomDiscover />} />
           <Route path="authenticity" element={<DataroomAuthenticity />} />
         </Route>
         <Route path="bonded" element={<BondedLayout />}>

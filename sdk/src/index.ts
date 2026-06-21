@@ -30,6 +30,8 @@ export {
   DEMO_DATAROOM_DOCAUTH,
   DEMO_DATAROOM_TEASER,
   DEMO_DATAROOM_POLICY,
+  DEMO_MODELB_ROOM,
+  DEMO_MODELB_DOC,
   DEMO_ISSUER_ID,
   DEMO_KYC_ISSUER_ID,
   DEMO_USER,
@@ -60,11 +62,24 @@ export {
 } from "./journal.js";
 export { openDisclosure, auditorPublicKeyFromSecret } from "./disclosure.js";
 export type { OpenedDisclosure } from "./disclosure.js";
-export { recoverDocumentKey, recipientPublicKeyFromSecret, aeadDecrypt } from "./dataroom.js";
+export { recoverDocumentKey, recipientPublicKeyFromSecret, aeadDecrypt, aeadSeal, sealDocumentKey, randomBytes, randomKey } from "./dataroom.js";
 export type { DataroomDisclosure, RecoveredKey } from "./dataroom.js";
 export {
+  deriveDataRoomIdentity,
+  signDataRoomAccess,
+  idCommitment,
+  nullifierFor,
+  accessorFromSeed,
+  recipientFromSecret,
+  holderSignature,
+  DATAROOM_IDENTITY_MESSAGE,
+} from "./identity.js";
+export type { DataRoomIdentity } from "./identity.js";
+export {
   shamirReconstruct,
+  shamirSplit,
   openShare,
+  sealShare,
   reconstructWithCommitment,
   assertFrozenVectors as assertCommitteeFrozenVectors,
 } from "./committee.js";

@@ -52,11 +52,27 @@ import { shamirSplit } from "./shamir.js";
 import { shareEciesOpen, reconstructWithCommitment, type SealedShare } from "./committee.js";
 import { buildMembershipJob, buildEligibleTree, idCommitment, freshIdentity } from "./membership.js";
 import { buildDocauthJob, bankIssuer } from "./docauth.js";
-import { getEligible, addEligible, indexOfCommitment } from "./eligible-store.js";
+import { getEligible, addEligible, addEligibleBatch, indexOfCommitment } from "./eligible-store.js";
+import { addRequest, listRequests, removeRequest, hasRequest } from "./enroll-store.js";
+import { putEscrow, getEscrow } from "./escrow-store.js";
+import {
+  enqueue as enqueueBatch, getByTicket as getBatchTicket, listQueued as listBatchQueued,
+  flush as flushBatch, nextFlushAt, queuedCount as batchQueuedCount, purgeTerminal as purgeBatchTerminal,
+  findQueuedByNullifier as findQueuedBatch, type QueuedBundle,
+} from "./batch-queue-store.js";
 import { demoDenyTree, DENY_DEPTH } from "./denylist.js";
 import { verifyOnChain, type Bundle } from "./verify.js";
 import { readContract, invokeContract, buildUnsignedXdr, submitSignedXdr, scBytes, scAddress, scOptAddress, scI128, scU32, scU64, scBool, jsonSafe } from "./chain.js";
-import { recordRoom, listRoomsByOwner } from "./rooms-store.js";
+import {
+  recordRoom,
+  listRoomsByOwner,
+  getRoom,
+  setRoomVisibility,
+  listListedRooms,
+  memberBucket,
+  bucketTier,
+  type RoomVisibility,
+} from "./rooms-store.js";
 import { ESCROW_ID, BOND_TOKEN_ID, listLocks, getLock as escrowGetLock, isLocked as escrowIsLocked, bondBalance as escrowBondBalance } from "./escrow.js";
 import {
   SOLVENCY_GATE_ID, SOLVENCY_IMAGE_ID, SOLVENCY_SUPPLY_TOKEN_ID,
@@ -131,6 +147,17 @@ const KEYPER_DEAL_TOKEN = process.env.KEYPER_DEAL_TOKEN || "dr3-demo-deal-token"
 const COMMITTEE_THRESHOLD = Number(process.env.COMMITTEE_THRESHOLD || "2");
 const NETWORK = process.env.STELLAR_NETWORK || "testnet";
 const PROVER_URL = process.env.PROVER_URL || "";
+// M7 — anonymous-access batching window (the timing defense). The relay holds proven request_access bundles
+// and flushes them, SHUFFLED, at fixed epoch-aligned boundaries every DR_BATCH_WINDOW_MS, so the on-chain
+// grant timestamp+order bins to the window instead of tracking the member's action. Longer = more cover but
+// more latency; shorter = snappier but thinner cover (the demo/e2e set it low to show the mechanism quickly,
+// production runs it ~10 min). The on-chain decorrelation story is identical at any window length.
+const DR_BATCH_WINDOW_MS = Math.max(1000, Number(process.env.DR_BATCH_WINDOW_MS || 10 * 60_000));
+// Bound the queue against griefing: batching amplifies a junk-bundle spray (one flush would try every queued
+// bundle serially through the relay account). The nullifier-dedup + the image_id pre-filter reject the easy
+// junk; this caps the rest. Terminal (submitted/error) entries age out after DR_BATCH_PURGE_MS.
+const DR_BATCH_MAX_QUEUE = Math.max(1, Number(process.env.DR_BATCH_MAX_QUEUE || 500));
+const DR_BATCH_PURGE_MS = Math.max(60_000, Number(process.env.DR_BATCH_PURGE_MS || 60 * 60_000));
 const BUNDLE_PATH = process.env.BUNDLE_PATH || path.join("data", "bundle.json");
 // Public RPC the trust-minimized "verify it yourself" channels point at (page + CLI). Not our server.
 const PUBLIC_RPC_URL = process.env.PUBLIC_RPC_URL || "https://soroban-testnet.stellar.org";
@@ -256,6 +283,17 @@ async function maybeXdr(
   const { xdr: x, cost } = await buildUnsignedXdr(contractId, method, args, source);
   res.json({ ok: true, mode: "xdr", xdr: x, cost, source, ...idField });
   return true;
+}
+
+/** Best-effort client IP for rate-limiting. Behind Cloudflare the real client is in CF-Connecting-IP;
+ *  otherwise fall back to the first X-Forwarded-For hop, then the socket. Spoofable when not behind a
+ *  trusted proxy, which is acceptable for a demo griefing throttle (not a security control). */
+function clientIp(req: express.Request): string {
+  const cf = req.headers["cf-connecting-ip"];
+  if (typeof cf === "string" && cf.length > 0) return cf;
+  const xff = req.headers["x-forwarded-for"];
+  if (typeof xff === "string" && xff.length > 0) return xff.split(",")[0].trim();
+  return req.socket?.remoteAddress ?? "unknown";
 }
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
@@ -1649,7 +1687,18 @@ app.get("/dataroom/rooms", async (req, res) => {
           const r = room ? (jsonSafe(room) as { owner?: string }) : null;
           if (!r || r.owner !== owner) return null; // chain is authoritative; drop stale/unsubmitted entries
           const { value: cnt } = await readContract(DATAROOM_ID, "get_doc_count", [scBytes(c.roomId)]);
-          return { roomId: c.roomId, label: c.label ?? null, owner, docCount: Number(cnt ?? 0), ledger: (r as { ledger?: number }).ledger ?? null };
+          // M5: include the owner's OWN discovery settings (their own rooms — not a public leak) so the
+          // visibility control can show + prefill the current state. Absent visibility reads as "private".
+          return {
+            roomId: c.roomId,
+            label: c.label ?? null,
+            owner,
+            docCount: Number(cnt ?? 0),
+            ledger: (r as { ledger?: number }).ledger ?? null,
+            visibility: c.visibility ?? "private",
+            name: c.name ?? null,
+            description: c.description ?? null,
+          };
         }),
       )
     ).filter(Boolean);
@@ -2022,19 +2071,377 @@ app.post("/dataroom/membership/set-root", async (req, res) => {
   }
 });
 
+// M5 — griefing throttle on the (now publicly discoverable) join-request endpoint. A rolling window per
+// client IP plus a per-room pending-queue cap. Idempotent repeats (same commitment) are already deduped by
+// enroll-store, so this only bounds genuinely-FRESH requests. In-memory (demo); a shared store in production.
+const ENROLL_RL_WINDOW_MS = 10 * 60_000; // 10 minutes
+const ENROLL_RL_MAX = 10; // new requests per IP per window
+const ENROLL_RL_MAX_IPS = 10_000; // hard cap on tracked IPs (backstop vs header-spoofed key churn)
+const ENROLL_PENDING_CAP = 200; // max pending requests held per room
+const enrollHits = new Map<string, number[]>();
+
+/** Record a hit for `ip` and report whether it is now over the window limit. Keeps the map BOUNDED: only
+ *  when it crosses ENROLL_RL_MAX_IPS do we sweep window-expired entries (cheap O(1) the rest of the time),
+ *  and if it is still over the cap afterwards (e.g. spoofed X-Forwarded-For churn from a direct-to-origin
+ *  caller) we evict the oldest-inserted entries so memory cannot grow without bound. The throttle itself is
+ *  best-effort: behind Cloudflare CF-Connecting-IP is authoritative, but a direct caller can spoof the IP,
+ *  so this is a griefing speed-bump, not a security control. */
+function enrollRateLimited(ip: string, nowMs: number): boolean {
+  if (enrollHits.size > ENROLL_RL_MAX_IPS) {
+    for (const [k, ts] of enrollHits) {
+      const live = ts.filter((t) => nowMs - t < ENROLL_RL_WINDOW_MS);
+      if (live.length === 0) enrollHits.delete(k);
+      else enrollHits.set(k, live);
+    }
+    if (enrollHits.size > ENROLL_RL_MAX_IPS) {
+      let toEvict = enrollHits.size - ENROLL_RL_MAX_IPS;
+      for (const k of enrollHits.keys()) {
+        if (toEvict-- <= 0) break;
+        enrollHits.delete(k); // Map iterates in insertion order -> evicts the oldest first
+      }
+    }
+  }
+  const hits = (enrollHits.get(ip) ?? []).filter((t) => nowMs - t < ENROLL_RL_WINDOW_MS);
+  hits.push(nowMs);
+  enrollHits.set(ip, hits);
+  return hits.length > ENROLL_RL_MAX;
+}
+
+// ---- M1: request-then-approve enrollment (Model B) ----
+// A would-be member REQUESTS to join (submits only their public id_commitment); the room OWNER approves,
+// which appends the commitment to the eligible set and re-pins the root (owner-signed via the wallet XDR
+// path, else the server relay if it owns the room). Joining is identified (the owner sees who they approve);
+// accessing stays anonymous (the membership proof hides which member). Pending requests are off-chain and
+// have NO on-chain effect until approval; the eligible ROOT is the on-chain gate.
+
+// Member: file a pending join request (public id_commitment only; an optional label/requester identifies the
+// asker to the owner). No-op-friendly: already-eligible => eligible; already-pending => pending.
+app.post("/dataroom/enroll/request", (req, res) => {
+  let roomIdHex: string;
+  let commitmentHex: string;
+  try {
+    roomIdHex = toBytes32(req.body?.roomId);
+    commitmentHex = toHex(hex32(req.body?.commitment, "commitment"));
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  const label = typeof req.body?.label === "string" ? req.body.label.slice(0, 200) : undefined;
+  const requester = userSource(req) ?? undefined;
+  try {
+    // Idempotent reads first (a member polling their own status), NOT counted against the rate limit.
+    if (indexOfCommitment(roomIdHex, commitmentHex) >= 0) {
+      return res.json({ ok: true, state: "eligible", roomId: roomIdHex, commitment: commitmentHex });
+    }
+    if (hasRequest(roomIdHex, commitmentHex)) {
+      return res.json({ ok: true, state: "pending", added: false, roomId: roomIdHex, commitment: commitmentHex });
+    }
+    // A genuinely NEW request: throttle by IP + cap the per-room queue (blunts directory griefing).
+    if (enrollRateLimited(clientIp(req), Date.now())) {
+      return res.status(429).json({ ok: false, error: "too many join requests; please try again later" });
+    }
+    if (listRequests(roomIdHex).length >= ENROLL_PENDING_CAP) {
+      return res.status(429).json({ ok: false, error: "this room's request queue is full; please try again later" });
+    }
+    const { added } = addRequest(roomIdHex, { commitment: commitmentHex, label, requester, ts: Date.now() });
+    res.json({ ok: true, state: "pending", added, roomId: roomIdHex, commitment: commitmentHex });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+// Owner view: the pending requests for a room + the current approved member count. (Demo: not auth-gated;
+// production would require the owner to authenticate. Pending entries are identified-join, not anonymous.)
+app.get("/dataroom/enroll/requests/:roomId", (req, res) => {
+  let roomIdHex: string;
+  try {
+    roomIdHex = toBytes32(req.params.roomId);
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    res.json({ roomId: roomIdHex, pending: listRequests(roomIdHex), memberCount: getEligible(roomIdHex).length });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// Anyone: the state of a commitment in a room (eligible | pending | none).
+app.get("/dataroom/enroll/status/:roomId/:commitment", (req, res) => {
+  let roomIdHex: string;
+  let commitmentHex: string;
+  try {
+    roomIdHex = toBytes32(req.params.roomId);
+    commitmentHex = toHex(hex32(req.params.commitment, "commitment"));
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  const idx = indexOfCommitment(roomIdHex, commitmentHex);
+  if (idx >= 0) return res.json({ state: "eligible", memberIndex: idx });
+  if (hasRequest(roomIdHex, commitmentHex)) return res.json({ state: "pending" });
+  res.json({ state: "none" });
+});
+
+// Owner: reject (drop) a pending request without admitting it.
+app.post("/dataroom/enroll/reject", (req, res) => {
+  let roomIdHex: string;
+  let commitmentHex: string;
+  try {
+    roomIdHex = toBytes32(req.body?.roomId);
+    commitmentHex = toHex(hex32(req.body?.commitment, "commitment"));
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    res.json({ ok: true, removed: removeRequest(roomIdHex, commitmentHex) });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+// Owner: approve a pending request — append the commitment to the eligible set, recompute the root, and pin
+// it on-chain. Verifies on-chain that the caller (`source`, else the relay) owns the room before mutating
+// the set, so a non-owner cannot pollute it. With a wallet `source`, returns the unsigned set_eligible_root
+// XDR for the owner to sign; otherwise the server relay signs (demo rooms it owns).
+app.post("/dataroom/enroll/approve", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  let roomIdHex: string;
+  let commitmentHex: string;
+  try {
+    roomIdHex = toBytes32(req.body?.roomId);
+    commitmentHex = toHex(hex32(req.body?.commitment, "commitment"));
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const source = userSource(req);
+    const owner = source ?? ADMIN_ADDRESS;
+    // Only the room owner may change the eligible set / root — verify ownership on-chain before touching it.
+    const { value: roomVal } = await readContract(DATAROOM_ID, "get_room", [scBytes(roomIdHex)]);
+    const room = roomVal ? (jsonSafe(roomVal) as { owner?: string }) : null;
+    if (!room) return res.status(404).json({ error: "room not found" });
+    if (room.owner !== owner) return res.status(403).json({ error: "only the room owner may approve members" });
+
+    addEligible(roomIdHex, commitmentHex);
+    removeRequest(roomIdHex, commitmentHex);
+    const commitments = getEligible(roomIdHex).map((h) => fromHex(h));
+    const { root } = buildEligibleTree(commitments);
+    const rootHex = toHex(root);
+    const idField = { roomId: roomIdHex, commitment: commitmentHex, eligibleRoot: rootHex, memberCount: String(commitments.length) };
+    if (source) {
+      if (await maybeXdr(req, res, DATAROOM_ID, "set_eligible_root", [scBytes(roomIdHex), scBytes(rootHex)], idField)) return;
+    }
+    const out = await invokeContract(DATAROOM_ID, "set_eligible_root", [scBytes(roomIdHex), scBytes(rootHex)]);
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, ...idField });
+  } catch (e) {
+    res.json({ ok: false, error: err(e), roomId: roomIdHex });
+  }
+});
+
+// Owner: approve MANY pending requests in ONE root re-pin (M7 timing defense #2). Appends the new commitments
+// in RANDOMIZED order (existing leaves keep their index) and re-pins the root once, so the eligible_root jumps
+// by a batch instead of by a member — it stops acting as a per-member "enrolled-by" marker the owner could
+// correlate with the exact wallet they just approved (see addEligibleBatch). Body: { roomId, commitments? };
+// commitments omitted => approve ALL currently-pending. Only commitments that are actually pending are admitted.
+app.post("/dataroom/enroll/approve-batch", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  let roomIdHex: string;
+  let requested: string[] | null;
+  try {
+    roomIdHex = toBytes32(req.body?.roomId);
+    if (req.body?.commitments === undefined) {
+      requested = null; // approve all pending
+    } else {
+      if (!Array.isArray(req.body.commitments)) throw new Error("commitments must be an array of hex commitments");
+      requested = req.body.commitments.map((c: unknown) => toHex(hex32(c, "commitment")));
+    }
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const source = userSource(req);
+    const owner = source ?? ADMIN_ADDRESS;
+    const { value: roomVal } = await readContract(DATAROOM_ID, "get_room", [scBytes(roomIdHex)]);
+    const room = roomVal ? (jsonSafe(roomVal) as { owner?: string }) : null;
+    if (!room) return res.status(404).json({ error: "room not found" });
+    if (room.owner !== owner) return res.status(403).json({ error: "only the room owner may approve members" });
+
+    // Only admit commitments that are actually pending for this room (an owner cannot append arbitrary
+    // commitments). Default (no list) = every pending request.
+    const pending = new Set(listRequests(roomIdHex).map((r) => r.commitment.toLowerCase()));
+    const toAdmit = (requested ?? [...pending]).map((c) => c.toLowerCase()).filter((c) => pending.has(c));
+    if (toAdmit.length === 0) return res.status(400).json({ error: "no matching pending requests to approve" });
+
+    const { added } = addEligibleBatch(roomIdHex, toAdmit); // randomized order, single set-root
+    for (const a of added) removeRequest(roomIdHex, a.commitment);
+    const commitments = getEligible(roomIdHex).map((h) => fromHex(h));
+    const { root } = buildEligibleTree(commitments);
+    const rootHex = toHex(root);
+    const idField = { roomId: roomIdHex, approved: String(added.length), eligibleRoot: rootHex, memberCount: String(commitments.length) };
+    if (source) {
+      if (await maybeXdr(req, res, DATAROOM_ID, "set_eligible_root", [scBytes(roomIdHex), scBytes(rootHex)], idField)) return;
+    }
+    const out = await invokeContract(DATAROOM_ID, "set_eligible_root", [scBytes(roomIdHex), scBytes(rootHex)]);
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, ...idField, approvedCommitments: added.map((a) => a.commitment) });
+  } catch (e) {
+    res.json({ ok: false, error: err(e), roomId: roomIdHex });
+  }
+});
+
+// ---- M5: discovery tiers + public directory ----
+// Visibility is an OFF-CHAIN, NON-security discovery flag (rooms-store): anonymity + access control stay
+// enforced by the membership proof + the k=5 floor + the keepers, so a wrong listing can never grant access
+// or deanonymize anyone. Tiers: private (no metadata leak by id) / unlisted (resolvable by EXACT id) /
+// listed (in the public directory, opt-in). Counts are COARSE BUCKETS only — the exact member count never
+// crosses the wire here — and there is NO public access feed (we never expose who/when accessed).
+
+// Short TTL cache for the directory payload: it is identical for every caller and the route fans out one
+// on-chain get_room per listed room, so caching the resolved list bounds RPC load under traffic. A
+// just-listed/unlisted room appears/disappears within the TTL (and a visibility change busts it immediately
+// below), which is fine for a discovery directory. Module-scoped; invalidated on POST /room/visibility.
+const DIRECTORY_TTL_MS = 15_000;
+let directoryCache: { at: number; rooms: unknown[] } | null = null;
+
+// PUBLIC directory: only rooms the owner opted into ("listed"). Coarse counts, no exact numbers, no access
+// feed. Each listing is re-verified on-chain (drop phantoms whose recorded owner no longer matches).
+app.get("/dataroom/directory", async (_req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  try {
+    const now = Date.now();
+    if (!directoryCache || now - directoryCache.at >= DIRECTORY_TTL_MS) {
+      const listed = listListedRooms();
+      const resolved = await Promise.all(
+        listed.map(async (r) => {
+          const { value: room } = await readContract(DATAROOM_ID, "get_room", [scBytes(r.roomId)]);
+          const chain = room ? (jsonSafe(room) as { owner?: string }) : null;
+          if (!chain || chain.owner !== r.owner) return null; // chain authoritative; drop stale/unsubmitted
+          const n = getEligible(r.roomId).length;
+          return {
+            roomId: r.roomId,
+            name: r.name ?? null,
+            description: r.description ?? null,
+            memberBucket: memberBucket(n),
+            anonTier: bucketTier(n),
+            listedAt: r.listedAt ?? null,
+          };
+        }),
+      );
+      const rooms = resolved
+        .filter((x): x is NonNullable<typeof x> => x !== null)
+        .sort((a, b) => (b.listedAt ?? 0) - (a.listedAt ?? 0)); // newest listings first
+      directoryCache = { at: now, rooms };
+    }
+    res.json({ count: directoryCache.rooms.length, rooms: directoryCache.rooms, dataroomId: DATAROOM_ID });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// Resolve ONE room by exact id. private -> reveal nothing (the room is still reachable by anyone the owner
+// hands the id to, via the join flow; we just do not confirm it or leak metadata to a browser). unlisted /
+// listed -> confirm it exists on-chain + return opt-in name/desc + a coarse count.
+app.get("/dataroom/room-meta/:roomId", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  let roomIdHex: string;
+  try {
+    roomIdHex = toBytes32(req.params.roomId);
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const rec = getRoom(roomIdHex);
+    const visibility: RoomVisibility = rec?.visibility ?? "private";
+    if (visibility === "private") {
+      // No metadata, no count, no existence confirmation — a private room is dark to discovery.
+      return res.json({ roomId: roomIdHex, visibility: "private", discoverable: false });
+    }
+    const { value: room } = await readContract(DATAROOM_ID, "get_room", [scBytes(roomIdHex)]);
+    if (!room) return res.json({ roomId: roomIdHex, visibility, discoverable: false, exists: false });
+    const n = getEligible(roomIdHex).length;
+    res.json({
+      roomId: roomIdHex,
+      visibility,
+      discoverable: true,
+      listed: visibility === "listed",
+      name: rec?.name ?? null,
+      description: rec?.description ?? null,
+      memberBucket: memberBucket(n),
+      anonTier: bucketTier(n),
+    });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// Owner: set a room's discovery tier + opt-in public name/description. Off-chain write (no tx). Gated by the
+// on-chain get_room.owner == source check. NOTE (demo): like the other DR enroll endpoints, `source` is an
+// unauthenticated request claim; because visibility is a non-security discovery flag, a forged source can at
+// worst toggle a discovery hint, never grant access or deanonymize. Production would require the owner to
+// sign the change (SEP-53). name/description are sanitized + length-capped in the store.
+app.post("/dataroom/room/visibility", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  if (!ADMIN_ADDRESS) return res.status(503).json({ error: "ADMIN_ADDRESS not configured" });
+  let roomIdHex: string;
+  let visibility: RoomVisibility;
+  try {
+    roomIdHex = toBytes32(req.body?.roomId);
+    const v = String(req.body?.visibility ?? "");
+    if (v !== "private" && v !== "unlisted" && v !== "listed") {
+      throw new Error("visibility must be private, unlisted, or listed");
+    }
+    visibility = v;
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const source = userSource(req);
+    const owner = source ?? ADMIN_ADDRESS;
+    const { value: roomVal } = await readContract(DATAROOM_ID, "get_room", [scBytes(roomIdHex)]);
+    const room = roomVal ? (jsonSafe(roomVal) as { owner?: string }) : null;
+    if (!room) return res.status(404).json({ error: "room not found" });
+    if (room.owner !== owner) return res.status(403).json({ error: "only the room owner may change visibility" });
+    const rec = setRoomVisibility(roomIdHex, owner, {
+      visibility,
+      name: req.body?.name,
+      description: req.body?.description,
+      nowMs: Date.now(),
+    });
+    directoryCache = null; // a listing changed -> the owner sees it in the directory immediately
+    res.json({
+      ok: true,
+      roomId: roomIdHex,
+      visibility: rec.visibility,
+      name: rec.name ?? null,
+      description: rec.description ?? null,
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: err(e) });
+  }
+});
+
 // Build the membership witness (from the room's eligible set) + the NEW-5 holder signature, then enqueue
 // the membership proof (kind=membership) worker-first via the gateway. Poll the generic /prove-status/:id;
 // on done, POST /dataroom/membership/request-access. The private witness goes only to the trusted prover.
 app.post("/dataroom/membership/prove-access", async (req, res) => {
   if (!PROVER_URL) return res.status(503).json({ error: "PROVER_URL not configured" });
   if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
-  let roomIdHex: string, idSecret: Uint8Array, idTrapdoor: Uint8Array, holderSeed: Uint8Array, recipientPubHex: string;
+  let roomIdHex: string, idSecret: Uint8Array, idTrapdoor: Uint8Array, recipientPubHex: string;
+  let holderSeed: Uint8Array | undefined;
+  let signature: { accessor: Uint8Array; sig: Uint8Array } | undefined;
   try {
     roomIdHex = toBytes32(req.body?.roomId);
     idSecret = hex32(req.body?.idSecret, "idSecret");
     idTrapdoor = hex32(req.body?.idTrapdoor, "idTrapdoor");
-    holderSeed = hex32(req.body?.holderSeed, "holderSeed");
     recipientPubHex = toX25519PubHex(req.body?.recipientPub, () => toHex(recipientPublicKey()));
+    // NEW-5 consent: prefer a CLIENT-supplied signature (so accessor_seed never leaves the member's device);
+    // fall back to a holder seed (server-minted demo identities). Exactly one path. A client-supplied sig is
+    // re-verified in buildMembershipJob against (room_id, accessor, recipient_pub).
+    if (req.body?.holderSig !== undefined || req.body?.accessor !== undefined) {
+      const sig = fromHex(String(req.body?.holderSig ?? ""));
+      if (sig.length !== 64) throw new Error("holderSig must be 64-byte hex (128 hex chars)");
+      signature = { accessor: hex32(req.body?.accessor, "accessor"), sig };
+    } else {
+      holderSeed = hex32(req.body?.holderSeed, "holderSeed");
+    }
   } catch (e) {
     return res.status(400).json({ error: err(e) });
   }
@@ -2045,10 +2452,34 @@ app.post("/dataroom/membership/prove-access", async (req, res) => {
     const memberIndex = indexOfCommitment(roomIdHex, commitmentHex);
     if (memberIndex < 0) return res.status(400).json({ error: "not in the room's eligible set — register first", idCommitment: commitmentHex });
     const commitments = getEligible(roomIdHex).map((h) => fromHex(h));
-    const built = buildMembershipJob({
-      idSecret, idTrapdoor, roomId: fromHex(roomIdHex), holderSeed,
-      recipientPub: fromHex(recipientPubHex), commitments, memberIndex,
-    });
+    // Model B anonymity floor (k): a caller (the Model B reader) may require a minimum eligible-set size, so a
+    // member cannot record an on-chain access (request_access) in a room too small to be anonymous. Legacy
+    // callers (e.g. the DR2 set-of-2 teaching demo) OMIT minAnonSet and are unaffected. A present-but-malformed
+    // value is an error (fail closed), never a silently skipped floor. NOTE: the count is the off-chain
+    // eligible-set size (kept in sync with the pinned root by the enroll/approve flow), so the floor is a
+    // service-level guardrail, not an on-chain invariant (the member count is not stored on-chain).
+    if (req.body?.minAnonSet !== undefined) {
+      const minAnonSet = Number(req.body.minAnonSet);
+      if (!Number.isInteger(minAnonSet) || minAnonSet <= 0) {
+        return res.status(400).json({ error: "minAnonSet must be a positive integer" });
+      }
+      if (commitments.length < minAnonSet) {
+        return res.status(400).json({ error: `anonymity set too small: ${commitments.length} of ${minAnonSet} members`, anonSetSize: commitments.length, minAnonSet });
+      }
+    }
+    // Build the witness (client-input errors here -> 400, NOT 5xx: a bad signature / mismatched witness is the
+    // caller's fault, and Cloudflare masks 5xx origin responses with its own HTML error page, so the client
+    // would never see the real reason). Genuine upstream/prover failures below stay 502.
+    let built: ReturnType<typeof buildMembershipJob>;
+    try {
+      built = buildMembershipJob({
+        idSecret, idTrapdoor, roomId: fromHex(roomIdHex),
+        recipientPub: fromHex(recipientPubHex), commitments, memberIndex,
+        ...(signature ? { signature } : { holderSeed }),
+      });
+    } catch (e) {
+      return res.status(400).json({ error: err(e) });
+    }
     const r = await fetch(`${PROVER_URL}/prove`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -2083,6 +2514,166 @@ app.post("/dataroom/membership/request-access", async (req, res) => {
     res.json({ ok: true, txHash: out.hash, cost: out.cost, grant: jsonSafe(out.returnValue), dataroomId: DATAROOM_ID });
   } catch (e) {
     res.json({ ok: false, error: err(e), dataroomId: DATAROOM_ID });
+  }
+});
+
+// M7 — submit ONE proven request_access bundle (used by both the immediate route above and the batch flusher).
+// request_access is permissionless (the in-guest NEW-5 holder sig is the authorization), so the relay just
+// pays fees. Bounded by a timeout so a stalled RPC cannot wedge the whole flush (the overlap guard would
+// otherwise stay held forever). Returns the tx hash or throws.
+const SUBMIT_TIMEOUT_MS = 90_000;
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms} ms`)), ms).unref?.()),
+  ]);
+}
+async function submitOneAccess(bundle: QueuedBundle): Promise<{ txHash: string }> {
+  const out = await withTimeout(
+    invokeContract(DATAROOM_ID, "request_access", [scBytes(bundle.seal), scBytes(bundle.image_id), scBytes(bundle.journal)]),
+    SUBMIT_TIMEOUT_MS,
+    "request_access submit",
+  );
+  return { txHash: out.hash };
+}
+
+// M7 — per-IP throttle on queue-access. Batching amplifies a spray (a valid-image but invalid-proof bundle
+// still costs the relay a fee + a serial verify at flush), and an unthrottled (room,nullifier) probe is a weak
+// queue-occupancy oracle. This blunts both. Best-effort (CF-Connecting-IP authoritative behind Cloudflare; a
+// direct caller can spoof). A stronger option is to simulateTransaction each bundle at enqueue and reject
+// non-simulating ones (no fee), deferred. Mirrors the M5 enroll limiter shape.
+const QUEUE_RL_WINDOW_MS = 10 * 60_000;
+const QUEUE_RL_MAX = Math.max(1, Number(process.env.DR_BATCH_RL_MAX || 30));
+const QUEUE_RL_MAX_IPS = 10_000;
+const queueHits = new Map<string, number[]>();
+function queueRateLimited(ip: string, nowMs: number): boolean {
+  if (queueHits.size > QUEUE_RL_MAX_IPS) {
+    for (const [k, ts] of queueHits) {
+      const live = ts.filter((t) => nowMs - t < QUEUE_RL_WINDOW_MS);
+      if (live.length === 0) queueHits.delete(k);
+      else queueHits.set(k, live);
+    }
+    if (queueHits.size > QUEUE_RL_MAX_IPS) {
+      let toEvict = queueHits.size - QUEUE_RL_MAX_IPS;
+      for (const k of queueHits.keys()) { if (toEvict-- <= 0) break; queueHits.delete(k); }
+    }
+  }
+  const hits = (queueHits.get(ip) ?? []).filter((t) => nowMs - t < QUEUE_RL_WINDOW_MS);
+  hits.push(nowMs);
+  queueHits.set(ip, hits);
+  return hits.length > QUEUE_RL_MAX;
+}
+
+// M7 — flush the batch queue NOW: shuffle every queued bundle and submit each request_access in shuffled order
+// through the single relay account (serial seq numbers => the on-chain grant index order is the shuffled
+// order). Guarded so two flushes never overlap. Wired to a fixed epoch-aligned timer in startBatchFlusher().
+let batchFlushing = false;
+async function runBatchFlush(reason: string): Promise<{ flushed: number; submitted: number; failed: number; order: string[] } | null> {
+  if (batchFlushing) return null;
+  if (!DATAROOM_ID) return null;
+  if (listBatchQueued().length === 0) return { flushed: 0, submitted: 0, failed: 0, order: [] };
+  batchFlushing = true;
+  try {
+    const summary = await flushBatch({ submit: (b) => submitOneAccess(b), now: Date.now() });
+    if (summary.flushed > 0) {
+      console.log(`[dr-batch] flush (${reason}): ${summary.submitted} submitted, ${summary.failed} failed of ${summary.flushed} shuffled`);
+    }
+    purgeBatchTerminal(DR_BATCH_PURGE_MS, Date.now()); // keep the store file bounded
+    return summary;
+  } finally {
+    batchFlushing = false;
+  }
+}
+
+// M7 — queue an anonymous access for batched, shuffled on-chain submission (the timing defense). The member
+// has already proven membership (the self-authenticating bundle) and hands it here instead of submitting it
+// themselves; the relay flushes it at the next fixed window boundary. The relay learns nothing it could
+// deanonymize with: the journal carries only per-room pseudonyms (accessor/nullifier), never the wallet.
+// Idempotent on (room, nullifier) while queued. Body: { seal, image_id, journal, roomId, accessor, nullifier }.
+app.post("/dataroom/membership/queue-access", (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  let roomIdHex: string, accessorHex: string, nullifierHex: string;
+  let bundle: QueuedBundle;
+  try {
+    const b = req.body as Partial<Bundle> & { roomId?: string; accessor?: string; nullifier?: string };
+    if (!b?.seal || !b?.image_id || !b?.journal) throw new Error("seal, image_id, journal (raw hex) required");
+    if (!/^[0-9a-fA-F]+$/.test(b.seal) || !/^[0-9a-fA-F]+$/.test(b.image_id) || !/^[0-9a-fA-F]+$/.test(b.journal)) {
+      throw new Error("seal, image_id, journal must be hex");
+    }
+    bundle = { seal: b.seal, image_id: b.image_id, journal: b.journal };
+    // Cheap pre-filter: a membership bundle MUST carry the pinned membership image_id (the contract checks it
+    // too, but rejecting the wrong circuit here keeps obvious junk out of the relay queue). Not a full verify —
+    // the chain does that at flush — just a guard against a junk-bundle spray amplifying through the batch.
+    if (bundle.image_id.toLowerCase() !== MEMBERSHIP_IMAGE_ID.toLowerCase()) {
+      throw new Error("bundle image_id is not the pinned membership image");
+    }
+    roomIdHex = toBytes32(b.roomId);
+    accessorHex = toHex(hex32(b.accessor, "accessor"));
+    nullifierHex = toHex(hex32(b.nullifier, "nullifier"));
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const now = Date.now();
+    // Cap the queue (a full queue is the amplification backstop) + throttle per IP. Idempotent re-queues of an
+    // already-queued (room, nullifier) are still allowed (they do not grow the queue or count against the IP),
+    // so a member can re-poll/re-submit their own access freely.
+    const existing = findQueuedBatch(roomIdHex, nullifierHex);
+    if (!existing) {
+      if (queueRateLimited(clientIp(req), now)) {
+        return res.status(429).json({ error: "too many queued accesses; please try again shortly" });
+      }
+      if (batchQueuedCount() >= DR_BATCH_MAX_QUEUE) {
+        return res.status(429).json({ error: "the batch queue is full; please try again shortly" });
+      }
+    }
+    const entry = enqueueBatch({ roomId: roomIdHex, accessor: accessorHex, nullifier: nullifierHex, bundle, now, windowMs: DR_BATCH_WINDOW_MS });
+    res.json({
+      ok: true,
+      ticket: entry.ticket,
+      status: entry.status,
+      flushAt: entry.flushAt,
+      nextFlushAt: nextFlushAt(now, DR_BATCH_WINDOW_MS),
+      windowMs: DR_BATCH_WINDOW_MS,
+      queued: listBatchQueued().length,
+      note: "your access is batched: it lands on-chain at the next window boundary, shuffled with the others in that window. Poll /dataroom/membership/queue-status/<ticket>, then open once it is submitted.",
+    });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+// M7 — poll a queued access by its (unlinkable) ticket. Reports queued | submitted (txHash) | error.
+app.get("/dataroom/membership/queue-status/:ticket", (req, res) => {
+  const ticket = String(req.params.ticket || "");
+  if (!/^[0-9a-f]{32}$/.test(ticket)) return res.status(400).json({ error: "ticket must be 32 hex chars" });
+  const entry = getBatchTicket(ticket);
+  if (!entry) return res.status(404).json({ error: "no such ticket" });
+  // Deliberately does NOT echo the accessor/room (a leaked ticket should not disclose the pseudonym it queues);
+  // the member already knows their own access. Status + the window ETA + the landed tx is all the poll needs.
+  res.json({
+    ticket: entry.ticket,
+    status: entry.status,
+    flushAt: entry.flushAt,
+    nextFlushAt: nextFlushAt(Date.now(), DR_BATCH_WINDOW_MS),
+    windowMs: DR_BATCH_WINDOW_MS,
+    txHash: entry.txHash ?? null,
+    error: entry.error ?? null,
+  });
+});
+
+// M7 — force a flush NOW (test/e2e only; OFF unless DR_BATCH_ALLOW_MANUAL_FLUSH=1). The production path is the
+// fixed-interval timer; this exists so the e2e can demonstrate the shuffled batch landing without waiting a
+// full window. Never enabled in production (a forced flush only submits already-proven, already-queued
+// bundles, so the worst a caller could do is collapse the window early, but we gate it anyway).
+app.post("/dataroom/membership/flush-now", async (_req, res) => {
+  if (process.env.DR_BATCH_ALLOW_MANUAL_FLUSH !== "1") return res.status(403).json({ error: "manual flush disabled" });
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  try {
+    const summary = await runBatchFlush("manual");
+    res.json({ ok: true, summary });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
   }
 });
 
@@ -2169,7 +2760,7 @@ app.get("/dataroom/committee/info", async (_req, res) => {
       try {
         const r = await fetch(`${ep}/health`, { signal: AbortSignal.timeout(4000) });
         const h = (await r.json()) as Record<string, unknown>;
-        return { endpoint: ep, ok: h.ok === true, keyperIndex: h.keyper_index, shares: h.shares, rpc: h.rpc };
+        return { endpoint: ep, ok: h.ok === true, keyperIndex: h.keyper_index, shares: h.shares, rpc: h.rpc, sealPub: h.seal_pub };
       } catch (e) {
         return { endpoint: ep, ok: false, error: err(e) };
       }
@@ -2267,6 +2858,146 @@ app.post("/dataroom/committee/seal-doc", async (req, res) => {
   }
 });
 
+// ---- M2: BROWSER DEALER relay (Model B, Option B) ----
+// The OWNER's browser is the dealer: it generates K, AES-encrypts the document, Shamir-splits K, ECIES-seals
+// each share to a keeper's static seal key, and seals an owner-escrow copy. This relay only ever sees the
+// CIPHERTEXT and the SEALED shares — never K or the plaintext. It stores the blob, forwards each sealed share
+// to its keeper, and stashes the escrow copy. The owner then anchors put_committee_document (next endpoint).
+app.post("/dataroom/committee/deal-sealed", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  const n = KEYPER_ENDPOINTS.length;
+  let roomIdHex: string, docIdHex: string, blob: Uint8Array, kCommitmentHex: string;
+  let sealedShares: Array<Record<string, unknown>>;
+  let escrow: Record<string, unknown> | undefined;
+  try {
+    roomIdHex = toBytes32(req.body?.roomId);
+    docIdHex = toBytes32(req.body?.docId); // browser-chosen (binds the share + escrow tags)
+    kCommitmentHex = toHex(hex32(req.body?.kCommitment, "kCommitment"));
+    const b64 = req.body?.blobB64;
+    if (typeof b64 !== "string" || !b64) throw new Error("blobB64 (ciphertext) required");
+    blob = new Uint8Array(Buffer.from(b64, "base64"));
+    const ss = req.body?.sealedShares;
+    if (!Array.isArray(ss) || ss.length !== n) throw new Error(`sealedShares must have ${n} entries`);
+    sealedShares = ss as Array<Record<string, unknown>>;
+    // Each keeper index 1..n must appear exactly once; otherwise a malformed client could deal two shares to
+    // one keeper (overwriting) and leave the document unreadable (< t keepers hold a share).
+    const idxs = sealedShares.map((s) => Number(s.keyperIndex));
+    if (new Set(idxs).size !== n || idxs.some((i) => !Number.isInteger(i) || i < 1 || i > n)) {
+      throw new Error(`sealedShares must cover keeper indices 1..${n} exactly once`);
+    }
+    escrow = req.body?.escrow && typeof req.body.escrow === "object" ? (req.body.escrow as Record<string, unknown>) : undefined;
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const { value: roomRaw } = await readContract(DATAROOM_ID, "get_room", [scBytes(roomIdHex)]);
+    if (!roomRaw) return res.status(404).json({ error: "room not found — create it first", roomId: roomIdHex });
+    // Refuse dealing to an already-anchored (room, doc): the doc_id is public on-chain once anchored, so a
+    // re-deal of garbage shares would overwrite the keepers' shares and make the real document unreadable
+    // (a targeted DoS). Shares are immutable once anchored; pre-anchor retries (doc_id still secret) are fine.
+    const { value: existingDoc } = await readContract(DATAROOM_ID, "get_committee_document", [scBytes(roomIdHex), scBytes(docIdHex)]);
+    if (existingDoc) return res.status(409).json({ error: "a committee document already exists for this (room, doc); re-dealing would overwrite its shares", roomId: roomIdHex, docId: docIdHex });
+
+    // Persist the (already-encrypted) blob; content-addressed → contentHash + pointer.
+    const { contentHash, blobPointer } = await getBlobStore().put(blob);
+
+    // Forward each SEALED share to its keeper's /deal (bearer-gated). The relay never holds K or a raw share.
+    const settled = await Promise.allSettled(
+      sealedShares.map(async (sh) => {
+        const idx = Number(sh.keyperIndex);
+        if (!(idx >= 1 && idx <= n)) throw new Error(`bad keyperIndex ${idx}`);
+        const ep = KEYPER_ENDPOINTS[idx - 1];
+        const r = await fetch(`${ep}/deal`, {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${KEYPER_DEAL_TOKEN}` },
+          body: JSON.stringify({ room_id: roomIdHex, doc_id: docIdHex, keyper_index: idx, sealed: { eph_pub: sh.eph_pub, ct: sh.ct, tag: sh.tag } }),
+          signal: AbortSignal.timeout(8000),
+        });
+        return { idx, ok: r.ok, status: r.status };
+      }),
+    );
+    const results = settled.map((s, i) =>
+      s.status === "fulfilled" ? s.value : { idx: i + 1, ok: false, status: 0, error: String((s.reason as Error)?.message ?? s.reason) },
+    );
+    const failed = results.filter((d) => !d.ok);
+    if (failed.length > 0) {
+      return res.status(502).json({ error: "sealed-share distribution failed — document NOT dealt (anchor not attempted)", failed });
+    }
+
+    // Stash the owner-escrow copy (sealed to the owner's own key) so the owner can reopen without the keepers.
+    if (escrow) {
+      try {
+        putEscrow(roomIdHex, docIdHex, {
+          ephPub: toHex(hex32(escrow.ephPub, "escrow.ephPub")),
+          ct: toHex(hex32(escrow.ct, "escrow.ct")),
+          tag: toHex(hex32(escrow.tag, "escrow.tag")),
+          contentHash,
+          roomId: roomIdHex,
+          docId: docIdHex,
+          recipientPub: toHex(hex32(escrow.recipientPub, "escrow.recipientPub")),
+        });
+      } catch (e) {
+        return res.status(400).json({ error: `bad escrow copy: ${err(e)}` });
+      }
+    }
+
+    res.json({
+      ok: true,
+      roomId: roomIdHex,
+      docId: docIdHex,
+      contentHash,
+      blobPointer,
+      kCommitment: kCommitmentHex,
+      dealt: results.length,
+      threshold: COMMITTEE_THRESHOLD,
+      note: "K never reached the server; now anchor via POST /dataroom/committee/anchor (owner signs put_committee_document)",
+    });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// Anchor a (browser-dealt) committee document on-chain. The room OWNER signs put_committee_document via the
+// wallet XDR path (membership-only needs no set_doc_policy: is_doc_admitted falls back to bare membership).
+app.post("/dataroom/committee/anchor", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  let roomIdHex: string, docIdHex: string, contentHashHex: string, kCommitmentHex: string, blobPointer: string;
+  try {
+    roomIdHex = toBytes32(req.body?.roomId);
+    docIdHex = toBytes32(req.body?.docId);
+    contentHashHex = toHex(hex32(req.body?.contentHash, "contentHash"));
+    kCommitmentHex = toHex(hex32(req.body?.kCommitment, "kCommitment"));
+    blobPointer = String(req.body?.blobPointer ?? "");
+    if (!blobPointer) throw new Error("blobPointer required");
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  const args = [scBytes(roomIdHex), scBytes(docIdHex), scBytes(contentHashHex), scBytes(kCommitmentHex), scBytesUtf8(blobPointer)];
+  const idField = { roomId: roomIdHex, docId: docIdHex, contentHash: contentHashHex, kCommitment: kCommitmentHex };
+  try {
+    if (userSource(req)) {
+      if (await maybeXdr(req, res, DATAROOM_ID, "put_committee_document", args, idField)) return;
+    }
+    const out = await invokeContract(DATAROOM_ID, "put_committee_document", args);
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, ...idField });
+  } catch (e) {
+    res.json({ ok: false, error: err(e), roomId: roomIdHex, docId: docIdHex });
+  }
+});
+
+// The owner-escrow copy for a document (sealed to the owner's key). The owner opens it client-side with their
+// sign-to-derive secret (recoverDocumentKey) to reopen the document without the keeper committee.
+app.get("/dataroom/committee/escrow/:roomId/:docId", (req, res) => {
+  let roomIdHex: string, docIdHex: string;
+  try {
+    roomIdHex = toBytes32(req.params.roomId);
+    docIdHex = toBytes32(req.params.docId);
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  res.json({ roomId: roomIdHex, docId: docIdHex, escrow: getEscrow(roomIdHex, docIdHex) });
+});
+
 app.get("/dataroom/committee/document/:roomId/:docId", async (req, res) => {
   if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
   try {
@@ -2290,6 +3021,23 @@ app.post("/dataroom/committee/collect/:roomId/:docId", async (req, res) => {
     accessorHex = toHex(hex32(req.body?.accessor, "accessor"));
   } catch (e) {
     return res.status(400).json({ error: err(e) });
+  }
+  // Model B anonymity floor (k): the Model B reader passes minAnonSet so this aggregator does NOT release the
+  // key in a room too small to be anonymous, even if the accessor was granted earlier (a room can shrink after
+  // a grant). Legacy callers OMIT minAnonSet and are unaffected; a present-but-malformed value is an error
+  // (fail closed). SCOPE: this is enforced here (the relay aggregator the app uses) and on prove-access, NOT at
+  // the keypers themselves (they gate only on is_doc_admitted and are size-unaware, since the member count is
+  // off-chain). So the floor protects the accessing member's own anonymity on the sanctioned path; it is a
+  // service-level guardrail, not a non-bypassable on-chain invariant.
+  if (req.body?.minAnonSet !== undefined) {
+    const minAnonSet = Number(req.body.minAnonSet);
+    if (!Number.isInteger(minAnonSet) || minAnonSet <= 0) {
+      return res.status(400).json({ error: "minAnonSet must be a positive integer" });
+    }
+    const n = getEligible(roomIdHex).length;
+    if (n < minAnonSet) {
+      return res.status(403).json({ error: `anonymity set too small: ${n} of ${minAnonSet} members`, anonSetSize: n, minAnonSet });
+    }
   }
   try {
     const { shares, recipientPub, errors } = await collectSealedShares(roomIdHex, docIdHex, accessorHex);
@@ -3623,4 +4371,26 @@ app.get("/bonded/tier/nullifier/:nullifier", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => console.log(`zkorage backend :${PORT} | token=${TOKEN_ID || "-"} policy=${POLICY_ID || "-"}`));
+// M7 — the fixed-interval batch flusher. Flushes the access queue at epoch-aligned boundaries every
+// DR_BATCH_WINDOW_MS, regardless of when bundles arrived (arrival-independent = the on-chain time reveals the
+// window, not the action). Self-rescheduling to the next exact boundary so it does not drift. A flush with an
+// empty queue is a cheap no-op. Only armed when the DataRoom contract is configured.
+function startBatchFlusher(): void {
+  if (!DATAROOM_ID) return;
+  const tick = () => {
+    void runBatchFlush("window").catch((e) => console.error(`[dr-batch] flush error: ${err(e)}`));
+    scheduleNext();
+  };
+  const scheduleNext = () => {
+    const now = Date.now();
+    const delay = Math.max(250, nextFlushAt(now, DR_BATCH_WINDOW_MS) - now);
+    setTimeout(tick, delay).unref?.();
+  };
+  scheduleNext();
+  console.log(`[dr-batch] access-batching flusher armed | window ${DR_BATCH_WINDOW_MS} ms${process.env.DR_BATCH_ALLOW_MANUAL_FLUSH === "1" ? " | manual-flush ENABLED" : ""}`);
+}
+
+app.listen(PORT, () => {
+  console.log(`zkorage backend :${PORT} | token=${TOKEN_ID || "-"} policy=${POLICY_ID || "-"}`);
+  startBatchFlusher();
+});

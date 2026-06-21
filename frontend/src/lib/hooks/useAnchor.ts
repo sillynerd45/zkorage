@@ -8,6 +8,9 @@ import {
   getProveStatus,
   getDataroomDocuments,
   getMyRooms,
+  getCommitteeInfo,
+  dealSealed,
+  committeeAnchor,
   type DataroomInfoResp,
   type DataroomDoc,
   type MyRoom,
@@ -20,11 +23,33 @@ import {
   DEMO_RECIPIENT_PUB,
   decodeDataroomSealJournal,
   recipientPublicKeyFromSecret,
+  aeadSeal,
+  randomKey,
+  randomBytes,
+  shamirSplit,
+  sealShare,
+  sealDocumentKey,
+  sha256Hex,
+  toHex,
   type OpenedDocument,
 } from "zkorage-sdk";
+import { useDataRoomIdentity } from "@/lib/hooks/useDataRoomIdentity";
 import { type ClaimState } from "@/components/StatusBadge";
 import { sdk, DEMO_RECIPIENT_SECRET } from "@/lib/sdk";
 import { isHex32 } from "@/lib/format";
+
+// base64 <-> bytes (chunked so a multi-MB blob doesn't blow the call stack on String.fromCharCode).
+function b64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bytesToB64(bytes: Uint8Array): string {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
 
 // A file chosen in the Store flow, already read to base64 in the browser.
 export type PickedFile = { name: string; type: string; size: number; b64: string };
@@ -47,6 +72,12 @@ export function useAnchor() {
   // (default "file"); switching modes preserves both inputs (an accidental tap is reversible), and submit
   // sends only the active mode's input. Picking/dropping a file snaps the mode to "file".
   const [storeMode, setStoreMode] = useState<"file" | "text">("file");
+  // Access mode: "shared" = anonymous policy-gated committee doc (Model B, browser dealer); "direct" = a seal
+  // to one named recipient (Model A, explicitly NOT anonymous). Default shared (the headline).
+  const [accessMode, setAccessMode] = useState<"shared" | "direct">("shared");
+  const identity = useDataRoomIdentity();
+  // On a successful shared (committee) store: the room/doc ids to open it from "Open a shared document".
+  const [sharedResult, setSharedResult] = useState<{ roomId: string; docId: string } | null>(null);
   // A chosen file (PDF, image, any bytes). Read to base64 in the browser; the backend encrypts the bytes
   // exactly like text. Capped so the base64 body stays under the backend's JSON limit.
   const [file, setFileState] = useState<PickedFile | null>(null);
@@ -140,6 +171,107 @@ export function useAnchor() {
       setResp({ ok: false, error: String((e as Error).message ?? e), dataroomId: info?.dataroomId ?? "" });
       setState("rejected");
     } finally { setBusy(false); setStep(""); }
+  }
+
+  // Model B browser dealer: K is generated, the document encrypted, the key split, and every share + the
+  // owner-escrow copy sealed ALL IN THIS BROWSER. The relay receives only ciphertext + sealed shares, so the
+  // server never sees K or the plaintext. Then the owner signs put_committee_document. No slow prover.
+  async function onStoreShared() {
+    if (!roomLabel.trim()) {
+      setResp({ ok: false, error: "Name a room, or pick one you already own.", dataroomId: "" });
+      setState("rejected"); setBundle(null); return;
+    }
+    if (!connected || !address) {
+      setResp({ ok: false, error: "Connect your wallet to store a shared document.", dataroomId: "" });
+      setState("rejected"); setBundle(null); return;
+    }
+    if (storeMode === "file" && !file) {
+      setResp({ ok: false, error: "Choose a file to store, or switch to Text.", dataroomId: "" });
+      setState("rejected"); setBundle(null); return;
+    }
+    if (storeMode === "text" && !content.trim()) {
+      setResp({ ok: false, error: "Paste some text to store, or switch to File.", dataroomId: "" });
+      setState("rejected"); setBundle(null); return;
+    }
+    setBusy(true); setResp(null); setBundle(null); setSharedResult(null); setState("verifying");
+    try {
+      // 1) resolve the room's 32-byte id. The backend hashes a label deterministically, so `roomId` is present
+      //    even before the room is on-chain (avoids a create→read propagation race). It binds the share +
+      //    escrow tags and your room identity.
+      setStep("Resolving the room…");
+      const roomResp = await getDataroomRoom(roomLabel).catch(() => null);
+      const roomIdHex = roomResp?.roomId;
+      if (!roomIdHex || !isHex32(roomIdHex)) throw new Error("could not resolve the room id");
+
+      // 2) the keeper committee + their static seal keys — checked BEFORE any wallet popup so a committee that
+      //    is offline fails fast (no wasted signatures).
+      setStep("Checking the keeper committee…");
+      const info = await getCommitteeInfo();
+      const sealedKeepers = info.keypers.filter((k) => k.ok && k.sealPub && k.keyperIndex);
+      if (sealedKeepers.length < info.n) {
+        throw new Error(`all ${info.n} keepers must be online with a seal key (got ${sealedKeepers.length})`);
+      }
+
+      // 3) create the room on-chain if it doesn't exist yet (your wallet signs + owns it).
+      if (!roomResp?.room) {
+        setStep("Creating the room (your wallet signs)…");
+        const cr = await createRoom(roomLabel, signer).catch((e) => ({ ok: false, error: String((e as Error)?.message ?? e) }));
+        if (!cr.ok) throw new Error((cr as { error?: string }).error || "could not create the room (the wallet signature is needed to own it)");
+      }
+
+      // 4) derive YOUR room identity — the owner-escrow copy is sealed to it so you can reopen on any device.
+      setStep("Deriving your room key…");
+      const ident = await identity.derive(roomIdHex);
+      if (!ident) throw new Error(identity.error || "could not derive your room identity");
+
+      // 5) THE DEALER, in your browser: generate K, encrypt the file, split + seal — none of it leaves as plaintext.
+      setStep("Encrypting and splitting the key in your browser…");
+      const k = randomKey();
+      const plaintext = storeMode === "file" && file ? b64ToBytes(file.b64) : new TextEncoder().encode(content);
+      const blob = await aeadSeal(plaintext, k);
+      const contentHash = sha256Hex(blob);
+      const kCommitment = sha256Hex(k);
+      const docIdHex = toHex(randomBytes(32));
+      const shares = shamirSplit(k, info.threshold, info.n);
+      const sealedShares = shares.map((sh) => {
+        const keeper = sealedKeepers.find((kp) => kp.keyperIndex === sh.x);
+        if (!keeper?.sealPub) throw new Error(`no seal key for keeper ${sh.x}`);
+        const s = sealShare(sh.y, sh.x, keeper.sealPub, roomIdHex, docIdHex);
+        return { keyperIndex: sh.x, eph_pub: s.ephPub, ct: s.ct, tag: s.tag };
+      });
+      const escrow = sealDocumentKey(k, ident.recipientPub, contentHash, roomIdHex, docIdHex);
+
+      // 6) relay: ciphertext + sealed shares + the owner-escrow copy (the server never sees K).
+      setStep("Uploading the encrypted file and sealed shares…");
+      const dealt = await dealSealed({
+        roomId: roomIdHex,
+        docId: docIdHex,
+        blobB64: bytesToB64(blob),
+        kCommitment,
+        sealedShares,
+        escrow: { ephPub: escrow.ephPub, ct: escrow.ct, tag: escrow.tag, recipientPub: ident.recipientPub },
+      });
+      if (!dealt.ok || !dealt.blobPointer || !dealt.contentHash) throw new Error(dealt.error || "share distribution failed");
+
+      // 7) anchor on-chain — your wallet signs put_committee_document.
+      setStep("Anchoring on Soroban (your wallet signs)…");
+      const anchored = await committeeAnchor(
+        { roomId: roomIdHex, docId: docIdHex, contentHash: dealt.contentHash, kCommitment, blobPointer: dealt.blobPointer },
+        signer,
+      );
+      if (!anchored.ok) throw new Error(anchored.error || "anchoring failed");
+
+      setResp({ ok: true, txHash: anchored.txHash, blobPointer: dealt.blobPointer, dataroomId: info.dataroomId ?? "" });
+      setSharedResult({ roomId: roomIdHex, docId: docIdHex });
+      setState("verified");
+      loadMyRooms(connected ? address : null);
+    } catch (e) {
+      setResp({ ok: false, error: String((e as Error).message ?? e), dataroomId: "" });
+      setState("failed");
+    } finally {
+      setBusy(false);
+      setStep("");
+    }
   }
 
   async function onUpload() {
@@ -278,5 +410,10 @@ export function useAnchor() {
     onUpload,
     onOpen,
     sealedToYou,
+    accessMode,
+    setAccessMode,
+    onStoreShared,
+    sharedResult,
+    identityDrift: identity.drift,
   };
 }

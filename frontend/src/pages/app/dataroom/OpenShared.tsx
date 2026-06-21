@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { useSharedOpen } from "@/lib/hooks/useSharedOpen";
 import { Disclosure, Hex } from "@/components/Disclosure";
 import { GlossaryTip } from "@/components/GlossaryTip";
@@ -6,15 +7,38 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { DataRow, Verdict } from "@/components/app/blocks";
 import { DecryptedFile } from "@/components/app/DecryptedFile";
+import { AnonymityMeter, ANON_FLOOR } from "@/components/app/dataroom/AnonymityMeter";
+import { Callout } from "@/components/app/dataroom/kit";
+import { ShieldQuestion } from "lucide-react";
+import { short } from "@/lib/format";
 
-// Pattern 2 — prove a document's policy, get the key, open it (the self-serve reader flow). The room owner
-// attaches a policy to a document; whoever proves they meet it (anonymously) has the key released to them by
-// the 2-of-3 keepers, and decrypts in their browser. This folds the old "Meet all conditions" (admission)
-// and "Release the key" (committee) flows into one experience. ZK is load-bearing: the room releases the key
-// to someone it can't identify, because the proof, not a login, decides who qualifies.
+// M3: "Open a shared document" with sign-to-derive identity (Model B). The reader proves anonymous membership
+// once with their wallet-derived identity, the 2-of-3 keepers release the key to that member's wallet-derived
+// recipient key, and the file decrypts in the browser. The room learns that an approved member opened it,
+// never which one. ZK is load-bearing: a login would have to know you to let you in; a proof does not.
 export default function OpenShared() {
   const s = useSharedOpen();
   const leg = (v: boolean | null | undefined) => (v === null || v === undefined ? "(not required)" : v ? "✓" : "✗");
+
+  if (!s.connected) {
+    return (
+      <Card className="rounded-2xl border-brand/40 p-6" data-testid="access-connect-prompt">
+        <h2 className="text-base font-semibold tracking-tight">Open a shared document</h2>
+        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+          Connect your wallet to open a shared document. Your identity for a room is derived from your wallet in
+          this browser, so the room never learns who you are, and you can open from any device. The wallet only
+          signs a fixed message to derive your keys; it never moves funds here.
+        </p>
+        <div className="mt-4">
+          <Button onClick={s.connect} data-testid="access-connect-btn">Connect wallet</Button>
+        </div>
+      </Card>
+    );
+  }
+
+  const admitted = Boolean(s.access?.admitted);
+  const proving = s.proveStage !== "idle";
+
   return (
     <div data-testid="access-card" className="space-y-5">
       <Card className="rounded-2xl border-brand/40 p-6">
@@ -26,16 +50,15 @@ export default function OpenShared() {
         </div>
         <p className="text-sm leading-relaxed text-muted-foreground">
           A room owner can protect a document so only people who <b className="text-foreground">prove they
-          qualify</b> can open it. You prove the document's conditions (for example: a{" "}
-          <b className="text-foreground">member</b>, <b className="text-foreground">ID-checked</b>, and{" "}
-          <b className="text-foreground">accredited</b>), each a separate <b className="text-foreground">private
+          qualify</b> can open it. Your <b className="text-foreground">stand-in ID</b>
+          <GlossaryTip term="stand-in ID" /> is derived from your wallet in this browser, so the room never
+          learns <b className="text-foreground">who you are</b> or <b className="text-foreground">which member</b>{" "}
+          you are. You prove the document's conditions, each a separate <b className="text-foreground">private
           proof</b>
-          <GlossaryTip term="private proof" /> tied to one <b className="text-foreground">stand-in ID</b>
-          <GlossaryTip term="stand-in ID" />. If every condition holds, the key's{" "}
-          <b className="text-foreground">3 keepers</b> release their parts <b className="text-foreground">to
-          you</b>, and you rebuild the key and decrypt in your browser. The room never learns{" "}
-          <b className="text-foreground">who you are</b> or <b className="text-foreground">which member</b> you
-          are. A login can't do this: it would have to know you to let you in.
+          <GlossaryTip term="private proof" />. If every condition holds, the document's{" "}
+          <b className="text-foreground">3 keepers</b> release their parts of the key <b className="text-foreground">to
+          you</b>, and you rebuild the key and decrypt here. A login can't do this: it would have to know you to
+          let you in.
         </p>
 
         {/* the keepers + this document's fingerprints, demoted behind a "Verify details" expander */}
@@ -68,17 +91,18 @@ export default function OpenShared() {
         </Disclosure>
       </Card>
 
-      {/* Step 1: what this document requires + your live status */}
+      {/* Step 1: derive your identity, see what this document requires + your live status */}
       <Card className="rounded-2xl p-6">
         <div className="mb-3 flex items-center justify-between gap-3">
-          <h3 className="text-base font-semibold tracking-tight">1. What this document requires</h3>
+          <h3 className="text-base font-semibold tracking-tight">1. Prove you qualify</h3>
           <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
             read-only · runs in your browser
           </span>
         </div>
         <p className="text-sm leading-relaxed text-muted-foreground">
-          The document's policy is public, so you can see exactly what to prove before you try. Proving it
-          reveals only pass or fail per condition, never your identity or your underlying data.
+          The document's policy is public, so you can see exactly what to prove before you try. Checking derives
+          your room identity from your wallet (one signature) and reads your live status on-chain. It reveals
+          only your pseudonymous stand-in ID, never your identity or your data.
         </p>
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <label className="flex flex-col gap-1.5 text-[13px] text-muted-foreground">
@@ -89,27 +113,59 @@ export default function OpenShared() {
             doc
             <Input className="font-mono text-xs" value={s.doc} onChange={(e) => s.setDoc(e.target.value)} aria-label="access doc" data-testid="access-doc" />
           </label>
-          <label className="flex flex-col gap-1.5 text-[13px] text-muted-foreground sm:col-span-2">
-            your stand-in ID
-            <Input className="font-mono text-xs" value={s.accessor} onChange={(e) => s.setAccessor(e.target.value)} aria-label="access accessor" data-testid="access-accessor" />
-          </label>
         </div>
+
+        {/* anonymity meter (the room's eligible-set size) + the honest side-channel caveat */}
+        <div className="mt-4 space-y-3">
+          <AnonymityMeter count={s.anonCount} />
+          <Callout icon={ShieldQuestion}>
+            What the room can see: that an approved member opened a document in a time window, never which member.
+            Accesses in a window are recorded on-chain together, in shuffled order, at fixed boundaries, so the
+            timestamp and order of the record do not show when you acted. The record does note which membership
+            snapshot you proved against, so a room with one stable member list gives every member the same cover,
+            while a room that keeps adding members in batches narrows you to the people present at your snapshot.
+            How well you blend in also depends on how many others access in the same window, which is why access
+            needs at least {ANON_FLOOR} members. Over many windows the pattern can still narrow, and this hides you
+            from the room owner, not from us.
+          </Callout>
+        </div>
+
         <div className="mt-3">
-          <Button onClick={s.onCheck} disabled={s.checking} data-testid="access-check-btn">
-            {s.checking ? "Checking…" : "Check what I need to prove"}
+          <Button onClick={s.onCheck} disabled={s.checking || s.deriving} data-testid="access-check-btn">
+            {s.checking || s.deriving ? "Checking…" : "Check access"}
           </Button>
         </div>
+
+        {s.identity && (
+          <div className="mt-4" data-testid="access-identity">
+            <DataRow k="Your stand-in ID" testId="access-stand-in">
+              {short(s.identity.accessor, 8)}
+            </DataRow>
+            <DataRow k="Your identity / which member" mono={false} variant="private">
+              <span aria-hidden="true">🔒</span> derived in this browser, never revealed
+            </DataRow>
+          </div>
+        )}
+
+        {s.drift && (
+          <p className="mt-3 text-sm text-amber-600 dark:text-amber-500" data-testid="access-drift">
+            Your wallet produced a different identity than before. If you enrolled earlier with a different
+            wallet or signing format, access tied to the old identity may not match.
+          </p>
+        )}
 
         {s.access && (
           <div className="mt-4" data-testid="access-result" data-admitted={String(s.access.admitted)}>
             {s.access.admitted ? (
               <div data-testid="access-verdict-ok">
-                <Verdict ok>You qualify: every condition is met, proven anonymously. The key can be released to you.</Verdict>
+                <Verdict ok>You qualify: every condition is met, proven anonymously. The key can be released to you below.</Verdict>
               </div>
             ) : (
               <div data-testid="access-verdict-deny">
                 <Verdict ok={false}>
-                  {s.access.revoked ? "Access was removed for this stand-in ID." : "You don't qualify yet: a required condition isn't proven."}
+                  {s.access.revoked
+                    ? "Access was removed for this stand-in ID."
+                    : "You don't qualify yet: a required condition isn't proven."}
                 </Verdict>
               </div>
             )}
@@ -123,10 +179,72 @@ export default function OpenShared() {
               <DataRow k="Accredited investor" mono={false} testId="access-leg-accredited">
                 {leg(s.access.accredited)}
               </DataRow>
-              <DataRow k="Your identity / which member" mono={false} variant="private">
-                <span aria-hidden="true">🔒</span> never revealed
-              </DataRow>
             </div>
+
+            {/* Branch: granted -> open below; on the list, not granted -> prove once; not on the list -> join. */}
+            {!s.access.admitted && !s.access.revoked && (
+              <div className="mt-4 border-t border-border/70 pt-4">
+                {s.enrollState === "eligible" ? (
+                  <div data-testid="access-prove">
+                    <p className="text-sm leading-relaxed text-muted-foreground">
+                      You are on this room's list. Prove your membership once to unlock it. The proof runs on our
+                      <b className="text-foreground"> self-hosted prover</b>, which must see your secret keys to
+                      build it. That is why we run the prover ourselves and never send your data to a third
+                      party. Your keys are not stored and go to no one else. Your access is then recorded on-chain
+                      in a <b className="text-foreground">batch</b>, shuffled with the other accesses in a short
+                      time window, so the room cannot tell when you acted. After it lands, opening any document in
+                      the room is instant.
+                    </p>
+                    <div className="mt-3">
+                      <Button onClick={s.onProve} disabled={proving || s.belowFloor} data-testid="access-prove-btn">
+                        {s.proveStage === "proving"
+                          ? "Proving…"
+                          : s.proveStage === "queuing"
+                            ? "Queuing…"
+                            : s.proveStage === "queued"
+                              ? "Waiting for the window…"
+                              : "Prove membership and unlock"}
+                      </Button>
+                    </div>
+                    {s.belowFloor && (
+                      <p className="mt-2 text-sm text-destructive" data-testid="access-floor-note">
+                        This room has fewer than {ANON_FLOOR} members, so access is disabled until it grows.
+                      </p>
+                    )}
+                    {s.proveStep && (
+                      <p className="mt-3 text-sm text-muted-foreground" data-testid="access-prove-step">
+                        {s.proveStep}
+                        {s.proveBy ? ` (proving on: ${s.proveBy})` : ""}
+                      </p>
+                    )}
+                    {s.proveStage === "queued" && s.flushAt && (
+                      <p className="mt-1 text-sm text-muted-foreground" data-testid="access-queued-eta">
+                        Next batch window around {new Date(s.flushAt).toLocaleTimeString()}. You can leave this
+                        open; it unlocks once your access lands.
+                      </p>
+                    )}
+                    {s.proveErr && (
+                      <p className="mt-3 text-sm text-destructive" data-testid="access-prove-error">
+                        {s.proveErr}
+                      </p>
+                    )}
+                  </div>
+                ) : s.enrollState === "pending" ? (
+                  <p className="text-sm leading-relaxed text-muted-foreground" data-testid="access-pending">
+                    Your request to join this room is waiting for the owner to approve it. Once approved, come
+                    back here to prove your membership and open the document.
+                  </p>
+                ) : (
+                  <p className="text-sm leading-relaxed text-muted-foreground" data-testid="access-join-pointer">
+                    You are not on this room's list yet.{" "}
+                    <Link to="/app/dataroom/membership" className="text-brand hover:underline">
+                      Request to join in Membership
+                    </Link>
+                    , and once the owner approves you, come back to prove your membership and open the document.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         )}
         {s.accessErr && (
@@ -146,24 +264,23 @@ export default function OpenShared() {
         </div>
         <p className="text-sm leading-relaxed text-muted-foreground">
           If you qualify, each keeper releases its part of the key <b className="text-foreground">to you</b>,
-          locked to your key. You collect 2 parts, rebuild the key, and decrypt, all in your browser. No single
-          keeper can open the file; a non-qualifying reader gets no parts.
+          locked to your wallet-derived key. You collect 2 parts, rebuild the key, and decrypt, all in your
+          browser. No single keeper can open the file; a non-qualifying reader gets no parts.
         </p>
         <div className="mt-4">
-          <label className="flex flex-col gap-1.5 text-[13px] text-muted-foreground">
-            your private key (hex)
-            <Input className="font-mono text-xs" value={s.secret} onChange={(e) => s.setSecret(e.target.value)} aria-label="access secret" data-testid="access-secret" />
-          </label>
-        </div>
-        <div className="mt-4">
-          <Button onClick={s.onOpen} disabled={s.opening} data-testid="access-open-btn">
+          <Button onClick={s.onOpen} disabled={s.opening || !admitted || s.belowFloor} data-testid="access-open-btn">
             {s.opening ? "Rebuilding…" : "Get the key and open"}
           </Button>
         </div>
-        <p className="mt-2 text-sm text-muted-foreground" data-testid="access-secret-note">
-          <span aria-hidden="true">🔑</span> Your private key stays in this browser. The keepers only ever pass{" "}
-          <i>sealed</i> parts, and we <b className="text-foreground">can't recover it for you</b>. Prefilled with
-          the demo key.
+        {admitted && s.belowFloor && (
+          <p className="mt-2 text-sm text-destructive" data-testid="access-open-floor-note">
+            This room has fewer than {ANON_FLOOR} members, so the key cannot be released until it grows.
+          </p>
+        )}
+        <p className="mt-2 text-sm text-muted-foreground" data-testid="access-open-note">
+          <span aria-hidden="true">🔑</span> The key that opens the parts is derived from your wallet and stays
+          in this browser. The keepers only ever pass <i>sealed</i> parts, and we{" "}
+          <b className="text-foreground">never receive your key</b>.
         </p>
 
         {s.opened && (
@@ -190,8 +307,8 @@ export default function OpenShared() {
             ) : (
               <Verdict ok={false}>
                 <span data-testid="access-unfaithful">
-                  Parts released, but only {s.opened.faithfulShares} opened correctly. The private key is wrong,
-                  so the key can't be rebuilt.
+                  Parts released, but only {s.opened.faithfulShares} opened correctly. The wallet-derived key is
+                  wrong, so the key can't be rebuilt.
                 </span>
               </Verdict>
             )}

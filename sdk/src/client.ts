@@ -401,6 +401,9 @@ export interface CommitteeOpenOpts {
   committeeBaseUrl?: string;
   /** Reconstruction threshold (default 2). */
   threshold?: number;
+  /** Model B anonymity floor: require the room's eligible set to have at least this many members before the
+   *  aggregator releases shares. Forwarded to the backend collect endpoint; omit it for the legacy path. */
+  minAnonSet?: number;
   /** Blob source (same precedence as openDocument). */
   fetchBlob?: (contentHash: string) => Promise<Uint8Array>;
   blobBaseUrl?: string;
@@ -1513,7 +1516,7 @@ export class ZkorageClient {
     const r = await fetch(`${base}/dataroom/committee/collect/${roomIdHex}/${docIdHex}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ accessor: accessorHex }),
+      body: JSON.stringify({ accessor: accessorHex, ...(opts.minAnonSet ? { minAnonSet: opts.minAnonSet } : {}) }),
     });
     const j = (await r.json()) as { recipientPub?: string; shares?: SealedShareHex[]; error?: string };
     if (!r.ok) return { recipientPub: "", shares: [] }; // 403 (not granted) etc. → no shares

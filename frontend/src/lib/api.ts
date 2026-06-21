@@ -600,12 +600,118 @@ export interface MyRoom {
   owner: string;
   docCount: number;
   ledger: number | null;
+  // M5: the owner's own discovery settings (surfaced only on the owner's own rooms; not a public leak).
+  visibility?: RoomVisibility | null;
+  name?: string | null;
+  description?: string | null;
 }
 /** The rooms a given owner (Stellar G-address) owns on-chain — the owner's "my documents" view. */
 export const getMyRooms = (owner: string) =>
   fetch(`${BASE}/dataroom/rooms?owner=${encodeURIComponent(owner)}`).then(
     j<{ owner: string; count: number; rooms: MyRoom[]; dataroomId: string }>,
   );
+
+// ── M1: request-then-approve enrollment ──────────────────────────────────────────────────────────
+// A member files a public id_commitment (request); the room owner approves, which pins set_eligible_root.
+// Joining is identified; accessing stays anonymous (the membership proof hides which member).
+export type EnrollState = "eligible" | "pending" | "none";
+export interface EnrollRequestItem {
+  commitment: string;
+  label?: string;
+  requester?: string;
+  ts: number;
+}
+export interface EnrollRequestsResp {
+  roomId: string;
+  pending: EnrollRequestItem[];
+  memberCount: number;
+}
+
+export const enrollRequest = (
+  roomId: string,
+  commitment: string,
+  opts?: { label?: string; source?: string },
+) =>
+  post<{ ok: boolean; state: EnrollState; added?: boolean; error?: string }>("/dataroom/enroll/request", {
+    roomId,
+    commitment,
+    ...opts,
+  });
+
+export const getEnrollRequests = (roomId: string) =>
+  fetch(`${BASE}/dataroom/enroll/requests/${roomId}`).then(j<EnrollRequestsResp>);
+
+export const getEnrollStatus = (roomId: string, commitment: string) =>
+  fetch(`${BASE}/dataroom/enroll/status/${roomId}/${commitment}`).then(
+    j<{ state: EnrollState; memberIndex?: number }>,
+  );
+
+export const enrollReject = (roomId: string, commitment: string) =>
+  post<{ ok: boolean; removed: boolean; error?: string }>("/dataroom/enroll/reject", { roomId, commitment });
+
+/** Owner approves a pending member: appends the commitment and pins set_eligible_root. With a wallet signer
+ *  the owner signs the root change; otherwise the server relay signs (a room it owns). */
+export const enrollApprove = (
+  roomId: string,
+  commitment: string,
+  signer?: TxSigner,
+): Promise<WalletWriteResult> =>
+  signer
+    ? writeViaWallet("/dataroom/enroll/approve", { roomId, commitment }, signer)
+    : post<WalletWriteResult>("/dataroom/enroll/approve", { roomId, commitment });
+
+// ── M5: discovery tiers + public directory ───────────────────────────────────────────────────────
+// Visibility is an off-chain, NON-security discovery flag. The directory shows only rooms the owner opted
+// into ("listed"), with COARSE member buckets (never exact counts) and no access feed.
+export type RoomVisibility = "private" | "unlisted" | "listed";
+export type AnonTier = "forming" | "ok" | "strong";
+
+export interface DirectoryRoom {
+  roomId: string;
+  name: string | null;
+  description: string | null;
+  memberBucket: string; // coarse range, e.g. "5-19" — never an exact count
+  anonTier: AnonTier;
+  listedAt: number | null;
+}
+export interface RoomMeta {
+  roomId: string;
+  visibility: RoomVisibility;
+  discoverable: boolean;
+  listed?: boolean;
+  exists?: boolean;
+  name?: string | null;
+  description?: string | null;
+  memberBucket?: string;
+  anonTier?: AnonTier;
+}
+
+/** PUBLIC directory: only "listed" rooms, with coarse member buckets (never exact). Wallet not required. */
+export const getDirectory = () =>
+  fetch(`${BASE}/dataroom/directory`).then(
+    j<{ count: number; rooms: DirectoryRoom[]; dataroomId: string }>,
+  );
+
+/** Resolve one room by EXACT id. A private room reveals nothing (discoverable=false); unlisted/listed
+ *  return the opt-in name/description + a coarse count. */
+export const getRoomMeta = (roomId: string) =>
+  fetch(`${BASE}/dataroom/room-meta/${encodeURIComponent(roomId)}`).then(j<RoomMeta>);
+
+/** Owner: set a room's discovery tier + opt-in public name/description (off-chain, no tx). The connected
+ *  wallet address is sent as `source` so the backend's on-chain owner-gate passes for a wallet-owned room
+ *  (no source => the demo relay/ADMIN owner). Throws on a 4xx (e.g. not the owner). */
+export const setRoomVisibility = (
+  roomId: string,
+  patch: { visibility: RoomVisibility; name?: string; description?: string; source?: string },
+) =>
+  post<{
+    ok: boolean;
+    roomId: string;
+    visibility: RoomVisibility;
+    name: string | null;
+    description: string | null;
+    error?: string;
+  }>("/dataroom/room/visibility", { roomId, ...patch });
 
 // Accepts either UTF-8 `content` or base64 `contentB64` (binary: PDF, image, any file). The backend
 // encrypts whichever is supplied; only one is sent so an empty text box never overrides a chosen file.
@@ -721,19 +827,75 @@ export const registerMember = (roomId: string, mint = true) =>
 export const setEligibleRoot = (roomId: string) =>
   post<SetRootResp>("/dataroom/membership/set-root", { roomId });
 
-export const proveAccess = (
-  roomId: string,
-  idSecret: string,
-  idTrapdoor: string,
-  holderSeed: string,
-  recipientPub?: string,
-) =>
+export interface ProveAccessArgs {
+  roomId: string;
+  idSecret: string;
+  idTrapdoor: string;
+  recipientPub?: string;
+  minAnonSet?: number;
+  /** Legacy: the backend signs the NEW-5 consent with this seed (server-minted demo identities). */
+  holderSeed?: string;
+  /** Preferred: the client signed the consent in-browser, so accessor_seed never leaves the device. Pass
+   *  both `accessor` and `holderSig` together. */
+  accessor?: string;
+  holderSig?: string;
+}
+
+export const proveAccess = (a: ProveAccessArgs) =>
   post<ProveAccessResp>("/dataroom/membership/prove-access", {
-    roomId, idSecret, idTrapdoor, holderSeed, ...(recipientPub ? { recipientPub } : {}),
+    roomId: a.roomId,
+    idSecret: a.idSecret,
+    idTrapdoor: a.idTrapdoor,
+    ...(a.recipientPub ? { recipientPub: a.recipientPub } : {}),
+    ...(a.minAnonSet ? { minAnonSet: a.minAnonSet } : {}),
+    ...(a.holderSeed ? { holderSeed: a.holderSeed } : {}),
+    ...(a.accessor ? { accessor: a.accessor } : {}),
+    ...(a.holderSig ? { holderSig: a.holderSig } : {}),
   });
 
 export const requestAccess = (bundle: Bundle) =>
   post<RequestAccessResp>("/dataroom/membership/request-access", bundle);
+
+// M7 — anonymous-access batching. Instead of submitting request_access immediately (which would let the room
+// owner read the on-chain grant's timestamp + order and re-link the member by timing), the member hands the
+// proven bundle to the relay, which flushes it SHUFFLED at the next fixed window boundary. Poll the ticket
+// until it is submitted, then open. Latency is the price of breaking the timing link.
+export type BatchStatus = "queued" | "submitted" | "error";
+
+export interface QueueAccessResp {
+  ok: boolean;
+  ticket?: string;
+  status?: BatchStatus;
+  /** The window boundary (unix ms) this access lands at. */
+  flushAt?: number;
+  nextFlushAt?: number;
+  windowMs?: number;
+  queued?: number;
+  error?: string;
+}
+
+export const queueAccess = (args: { bundle: Bundle; roomId: string; accessor: string; nullifier: string }) =>
+  post<QueueAccessResp>("/dataroom/membership/queue-access", {
+    seal: args.bundle.seal,
+    image_id: args.bundle.image_id,
+    journal: args.bundle.journal,
+    roomId: args.roomId,
+    accessor: args.accessor,
+    nullifier: args.nullifier,
+  });
+
+export interface QueueStatusResp {
+  ticket: string;
+  status: BatchStatus;
+  flushAt: number;
+  nextFlushAt: number;
+  windowMs: number;
+  txHash: string | null;
+  error: string | null;
+}
+
+export const getQueueStatus = (ticket: string) =>
+  fetch(`${BASE}/dataroom/membership/queue-status/${ticket}`).then(j<QueueStatusResp>);
 
 // ── DR3: threshold-ECIES committee (key release) ──
 
@@ -743,6 +905,8 @@ export interface CommitteeKeyper {
   keyperIndex?: number;
   shares?: number;
   rpc?: string;
+  /** The keeper's static x25519 key the browser dealer seals this keeper's share to (Model B). */
+  sealPub?: string;
   error?: string;
 }
 
@@ -768,6 +932,43 @@ export interface CommitteeDoc {
 
 export const getCommitteeInfo = () =>
   fetch(`${BASE}/dataroom/committee/info`).then(j<CommitteeInfoResp>);
+
+// ── M2: browser-dealer committee store (Model B) ──
+// The browser does all the crypto and posts only ciphertext + SEALED shares; the relay never sees K.
+export interface SealedShareWire {
+  keyperIndex: number;
+  eph_pub: string;
+  ct: string;
+  tag: string;
+}
+export interface DealSealedResp {
+  ok: boolean;
+  roomId?: string;
+  docId?: string;
+  contentHash?: string;
+  blobPointer?: string;
+  kCommitment?: string;
+  dealt?: number;
+  error?: string;
+}
+
+export const dealSealed = (payload: {
+  roomId: string;
+  docId: string;
+  blobB64: string;
+  kCommitment: string;
+  sealedShares: SealedShareWire[];
+  escrow?: { ephPub: string; ct: string; tag: string; recipientPub: string };
+}) => post<DealSealedResp>("/dataroom/committee/deal-sealed", payload);
+
+/** Owner-wallet-signed put_committee_document for a browser-dealt doc (or relay if no signer). */
+export const committeeAnchor = (
+  args: { roomId: string; docId: string; contentHash: string; kCommitment: string; blobPointer: string },
+  signer?: TxSigner,
+): Promise<WalletWriteResult> =>
+  signer
+    ? writeViaWallet("/dataroom/committee/anchor", args, signer)
+    : post<WalletWriteResult>("/dataroom/committee/anchor", args);
 
 // ── DR4: document-authenticity (signed-PDF / zkPDF: third-party truth) ──
 

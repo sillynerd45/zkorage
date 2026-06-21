@@ -117,3 +117,72 @@ function toArrayBuffer(u: Uint8Array): ArrayBuffer {
   new Uint8Array(ab).set(u);
   return ab;
 }
+
+// ── Dealer side (browser): encrypt + seal, mirroring the backend byte-for-byte ──
+// These let the OWNER's browser be the dealer (Model B): generate K, AES-seal the document, and ECIES-seal
+// K to a recipient (the owner-escrow copy, or a 1:1 direct share), so the server never sees K or plaintext.
+
+/** Cryptographically-strong random bytes via WebCrypto (browser + Node >= 18). */
+export function randomBytes(n: number): Uint8Array {
+  const b = new Uint8Array(n);
+  const c = globalThis.crypto;
+  if (!c?.getRandomValues) throw new Error("WebCrypto getRandomValues unavailable (need a modern browser or Node >= 18)");
+  c.getRandomValues(b);
+  return b;
+}
+
+/** A fresh 32-byte document key K. */
+export function randomKey(): Uint8Array {
+  return randomBytes(K_LEN);
+}
+
+/**
+ * AES-256-GCM seal: returns `iv(12) ‖ ciphertext ‖ tag(16)`, the exact byte layout the backend `aeadSeal`
+ * produces (so {@link aeadDecrypt} and the on-chain `content_hash = sha256(blob)` agree). The document is
+ * encrypted in the caller's environment; only the resulting blob is uploaded.
+ */
+export async function aeadSeal(plaintext: Uint8Array, k: Uint8Array): Promise<Uint8Array> {
+  if (k.length !== K_LEN) throw new Error("AEAD key must be 32 bytes");
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) throw new Error("WebCrypto subtle unavailable (need a modern browser or Node >= 18)");
+  const iv = randomBytes(AEAD_IV_LEN);
+  const key = await subtle.importKey("raw", toArrayBuffer(k), "AES-GCM", false, ["encrypt"]);
+  const body = await subtle.encrypt({ name: "AES-GCM", iv: toArrayBuffer(iv) }, key, toArrayBuffer(plaintext));
+  return concat(iv, new Uint8Array(body)); // WebCrypto returns ciphertext ‖ tag, matching the backend
+}
+
+/**
+ * Seal a 32-byte document key `K` to a recipient's x25519 public key, bound to `(contentHash, room, doc)`.
+ * Returns the {@link DataroomDisclosure} the recipient opens with {@link recoverDocumentKey}. This is a plain
+ * ECIES seal (no ZK proof, no guest) used for the owner-escrow copy and 1:1 direct shares; the faithful tag
+ * makes a seal non-portable across documents. `ephSecret` is injectable for deterministic test vectors.
+ */
+export function sealDocumentKey(
+  k: Uint8Array,
+  recipientPubHex: string,
+  contentHashHex: string,
+  roomIdHex: string,
+  docIdHex: string,
+  ephSecret?: Uint8Array,
+): DataroomDisclosure {
+  if (k.length !== K_LEN) throw new Error("doc key K must be 32 bytes");
+  const recipientPub = fromHex(recipientPubHex);
+  const contentHash = fromHex(contentHashHex);
+  const roomId = fromHex(roomIdHex);
+  const docId = fromHex(docIdHex);
+  const eph = ephSecret ?? randomBytes(K_LEN);
+  if (eph.length !== K_LEN) throw new Error("ephSecret must be 32 bytes");
+  const ephPub = x25519.getPublicKey(eph);
+  const shared = x25519.getSharedSecret(eph, recipientPub);
+  const ks = keystream(shared, ephPub);
+  const ct = new Uint8Array(K_LEN);
+  for (let i = 0; i < K_LEN; i++) ct[i] = k[i] ^ ks[i];
+  return {
+    ephPub: toHex(ephPub),
+    ct: toHex(ct),
+    tag: toHex(sealTag(k, contentHash, roomId, docId)),
+    contentHash: contentHashHex,
+    roomId: roomIdHex,
+    docId: docIdHex,
+  };
+}
