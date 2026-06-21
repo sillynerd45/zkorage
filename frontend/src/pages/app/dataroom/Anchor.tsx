@@ -133,12 +133,46 @@ export default function Anchor() {
                     className="font-mono text-xs"
                     value={a.roomLabel}
                     onChange={(e) => a.setRoomLabel(e.target.value)}
+                    placeholder="Name a room, for example acme-board-docs"
                     aria-label="room"
                     data-testid="room-label"
                   />
                   <CopyIconButton value={a.roomLabel} label="room" />
                 </div>
               </label>
+
+              {/* Room picker: the connected wallet's existing rooms (read on-chain), shown only when there is
+                  at least one. Pick one to file this document into a room you already own, or type a new name
+                  above to create one. Selecting sets the field to the room's label (or its id if unlabelled). */}
+              {a.myRooms.length > 0 && (
+                <div className="space-y-1.5" data-testid="store-room-picker">
+                  <p className="text-[13px] text-muted-foreground">Or pick a room you own</p>
+                  <div className="flex flex-wrap gap-2">
+                    {a.myRooms.map((r) => {
+                      const pick = r.label || r.roomId;
+                      const active = a.roomLabel === pick;
+                      return (
+                        <button
+                          key={r.roomId}
+                          type="button"
+                          onClick={() => a.setRoomLabel(pick)}
+                          data-testid="store-room-pick"
+                          aria-pressed={active}
+                          className={cn(
+                            "rounded-xl border px-3 py-1.5 text-left text-xs transition-colors hover:border-brand/30 hover:bg-accent/40",
+                            active && "border-brand/40 bg-accent/40",
+                          )}
+                        >
+                          <span className="font-medium">{r.label || short(r.roomId, 8)}</span>
+                          <span className="ml-2 text-muted-foreground">
+                            {r.docCount} doc{r.docCount === 1 ? "" : "s"}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* Input-mode switcher (segmented, matching the section tabs). A radiogroup, not a tablist:
                   it picks which form field is shown, it does not navigate. Switching preserves both inputs. */}

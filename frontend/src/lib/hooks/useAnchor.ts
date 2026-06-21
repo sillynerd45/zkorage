@@ -39,7 +39,9 @@ export function useAnchor() {
   const [info, setInfo] = useState<DataroomInfoResp | null>(null);
 
   // --- upload / encrypt / anchor (the slow path: real proof) ---
-  const [roomLabel, setRoomLabel] = useState("zkorage-dataroom-demo");
+  // No default room: the field starts empty (placeholder-guided). The connected wallet's existing rooms are
+  // offered as a picker in the Store form, so you name a new room or pick one you already own.
+  const [roomLabel, setRoomLabel] = useState("");
   const [content, setContent] = useState("Confidential term sheet. Series A, $4M at $20M pre.");
   // The Store form asks for ONE input at a time: a file or pasted text. `storeMode` is the explicit choice
   // (default "file"); switching modes preserves both inputs (an accidental tap is reversible), and submit
@@ -141,6 +143,12 @@ export function useAnchor() {
   }
 
   async function onUpload() {
+    // Need a room to store into (the field has no default now): name a new one or pick an existing one.
+    if (!roomLabel.trim()) {
+      setResp({ ok: false, error: "Name a room, or pick one you already own.", dataroomId: "" });
+      setState("rejected"); setBundle(null);
+      return;
+    }
     // Fail fast (and clearly) on a malformed recipient pubkey before the multi-minute proof path.
     if (recipientPub.trim() && !isHex32(recipientPub)) {
       setResp({ ok: false, error: "recipient x25519 pub must be 32-byte hex (64 hex chars)", dataroomId: "" });
