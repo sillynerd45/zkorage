@@ -152,12 +152,20 @@ const PROVER_URL = process.env.PROVER_URL || "";
 // grant timestamp+order bins to the window instead of tracking the member's action. Longer = more cover but
 // more latency; shorter = snappier but thinner cover (the demo/e2e set it low to show the mechanism quickly,
 // production runs it ~10 min). The on-chain decorrelation story is identical at any window length.
-const DR_BATCH_WINDOW_MS = Math.max(1000, Number(process.env.DR_BATCH_WINDOW_MS || 10 * 60_000));
+// Parse a numeric env var: fall back to `dflt` on missing/empty/non-finite, then clamp to `min`. Using
+// Math.max(min, Number(x || d)) directly would let a non-numeric value (Number("abc") = NaN) slip through and
+// silently DISABLE a limiter (every `n > NaN` is false), so guard with Number.isFinite.
+function numEnv(raw: string | undefined, dflt: number, min: number): number {
+  if (!raw) return dflt;
+  const n = Number(raw);
+  return Number.isFinite(n) ? Math.max(min, Math.floor(n)) : dflt;
+}
+const DR_BATCH_WINDOW_MS = numEnv(process.env.DR_BATCH_WINDOW_MS, 10 * 60_000, 1000);
 // Bound the queue against griefing: batching amplifies a junk-bundle spray (one flush would try every queued
 // bundle serially through the relay account). The nullifier-dedup + the image_id pre-filter reject the easy
 // junk; this caps the rest. Terminal (submitted/error) entries age out after DR_BATCH_PURGE_MS.
-const DR_BATCH_MAX_QUEUE = Math.max(1, Number(process.env.DR_BATCH_MAX_QUEUE || 500));
-const DR_BATCH_PURGE_MS = Math.max(60_000, Number(process.env.DR_BATCH_PURGE_MS || 60 * 60_000));
+const DR_BATCH_MAX_QUEUE = numEnv(process.env.DR_BATCH_MAX_QUEUE, 500, 1);
+const DR_BATCH_PURGE_MS = numEnv(process.env.DR_BATCH_PURGE_MS, 60 * 60_000, 60_000);
 const BUNDLE_PATH = process.env.BUNDLE_PATH || path.join("data", "bundle.json");
 // Public RPC the trust-minimized "verify it yourself" channels point at (page + CLI). Not our server.
 const PUBLIC_RPC_URL = process.env.PUBLIC_RPC_URL || "https://soroban-testnet.stellar.org";
@@ -2075,7 +2083,7 @@ app.post("/dataroom/membership/set-root", async (req, res) => {
 // client IP plus a per-room pending-queue cap. Idempotent repeats (same commitment) are already deduped by
 // enroll-store, so this only bounds genuinely-FRESH requests. In-memory (demo); a shared store in production.
 const ENROLL_RL_WINDOW_MS = 10 * 60_000; // 10 minutes
-const ENROLL_RL_MAX = Math.max(1, Number(process.env.DR_ENROLL_RL_MAX || 10)); // new requests per IP per window (env-tunable for bulk provisioning; prod default 10)
+const ENROLL_RL_MAX = numEnv(process.env.DR_ENROLL_RL_MAX, 10, 1); // new requests per IP per window (env-tunable for bulk provisioning; prod default 10)
 const ENROLL_RL_MAX_IPS = 10_000; // hard cap on tracked IPs (backstop vs header-spoofed key churn)
 const ENROLL_PENDING_CAP = 200; // max pending requests held per room
 const enrollHits = new Map<string, number[]>();
@@ -2543,7 +2551,7 @@ async function submitOneAccess(bundle: QueuedBundle): Promise<{ txHash: string }
 // direct caller can spoof). A stronger option is to simulateTransaction each bundle at enqueue and reject
 // non-simulating ones (no fee), deferred. Mirrors the M5 enroll limiter shape.
 const QUEUE_RL_WINDOW_MS = 10 * 60_000;
-const QUEUE_RL_MAX = Math.max(1, Number(process.env.DR_BATCH_RL_MAX || 30));
+const QUEUE_RL_MAX = numEnv(process.env.DR_BATCH_RL_MAX, 30, 1);
 const QUEUE_RL_MAX_IPS = 10_000;
 const queueHits = new Map<string, number[]>();
 function queueRateLimited(ip: string, nowMs: number): boolean {
@@ -2718,6 +2726,15 @@ app.get("/dataroom/membership/grant/:roomId/:accessor", async (req, res) => {
 // clustered in time and shuffled in order, so the grant log reveals the window, not who acted when. Read-only,
 // no wallet. Optional `limit` (default 24, max 100) returns the most RECENT grants (highest indices). Nothing
 // here deanonymizes anyone: the accessor + nullifier + timestamp are already on-chain by design.
+//
+// One request fans out to up to `limit` parallel get_grant_by_index reads, and the panel mounts on the public
+// Overview, so cache the resolved payload per (room, limit) for a short TTL to bound the RPC fan-out under
+// traffic (the grant log is append-only, so a brief staleness only delays a brand-new grant by the TTL). Same
+// pattern as the M5 directory cache. Bounded in size (evict oldest) so it cannot grow without limit.
+const GRANTS_TTL_MS = 12_000;
+const GRANTS_CACHE_MAX = 256;
+const grantsCache = new Map<string, { at: number; payload: { roomId: string; count: number; grants: unknown[] } }>();
+
 app.get("/dataroom/membership/grants/:roomId", async (req, res) => {
   if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
   let roomIdHex: string;
@@ -2727,6 +2744,12 @@ app.get("/dataroom/membership/grants/:roomId", async (req, res) => {
     return res.status(400).json({ error: err(e) });
   }
   const limit = Math.min(100, Math.max(1, Number(req.query.limit ?? 24) || 24));
+  const cacheKey = `${roomIdHex}:${limit}`;
+  const now = Date.now();
+  const hit = grantsCache.get(cacheKey);
+  if (hit && now - hit.at < GRANTS_TTL_MS) {
+    return res.json({ ...hit.payload, dataroomId: DATAROOM_ID, cached: true });
+  }
   try {
     const { value: countVal } = await readContract(DATAROOM_ID, "get_grant_count", [scBytes(roomIdHex)]);
     const count = Number(countVal ?? 0);
@@ -2749,7 +2772,10 @@ app.get("/dataroom/membership/grants/:roomId", async (req, res) => {
         }),
       )
     ).filter((x): x is NonNullable<typeof x> => x !== null);
-    res.json({ roomId: roomIdHex, count, grants, dataroomId: DATAROOM_ID });
+    const payload = { roomId: roomIdHex, count, grants };
+    if (grantsCache.size >= GRANTS_CACHE_MAX) grantsCache.delete(grantsCache.keys().next().value as string); // evict oldest
+    grantsCache.set(cacheKey, { at: now, payload });
+    res.json({ ...payload, dataroomId: DATAROOM_ID });
   } catch (e) {
     res.status(502).json({ error: err(e) });
   }

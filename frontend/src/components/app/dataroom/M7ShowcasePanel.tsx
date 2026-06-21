@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Callout } from "@/components/app/dataroom/kit";
-import { AnonymityMeter } from "@/components/app/dataroom/AnonymityMeter";
+import { AnonymityMeter, ANON_FLOOR } from "@/components/app/dataroom/AnonymityMeter";
 import { getEligible, getGrants, type GrantLogEntry } from "@/lib/api";
 import { DEMO_MODELB_SHOWCASE_ROOM } from "zkorage-sdk";
 import { ShieldQuestion, Clock } from "lucide-react";
@@ -27,8 +27,11 @@ export function M7ShowcasePanel() {
     return () => { live = false; };
   }, []);
 
-  // Nothing to show until the chain reads land (keep the Overview clean if the showcase is unreachable).
-  if (memberCount === null && (!grants || grants.length === 0)) return null;
+  // Render only when the showcase is fully provisioned: a real anonymity set AND the on-chain access record.
+  // The meter count comes from the OFF-CHAIN eligible store (only the serving backend has it); if that store
+  // was reset while the grants are still on-chain, memberCount comes back 0. Hiding then is better than showing
+  // a contradictory red "below the floor" meter beside a real access log. Below the floor it is not a showcase.
+  if (memberCount === null || memberCount < ANON_FLOOR || !grants || grants.length === 0) return null;
 
   // The most recent batch: the grants share a flush window, so their timestamps cluster. Report the spread.
   const recent = (grants ?? []).slice(-4);
@@ -51,11 +54,9 @@ export function M7ShowcasePanel() {
         when. This is a real room on testnet you can read without a wallet.
       </p>
 
-      {memberCount !== null && (
-        <div className="mt-4">
-          <AnonymityMeter count={memberCount} />
-        </div>
-      )}
+      <div className="mt-4">
+        <AnonymityMeter count={memberCount} />
+      </div>
 
       {recent.length > 0 && (
         <div className="mt-4">
@@ -88,8 +89,8 @@ export function M7ShowcasePanel() {
           Honest about the limits: how well an access hides depends on how many others land in the same window,
           and over many windows a pattern can still narrow. The on-chain record also notes which membership
           snapshot you proved against, so a stable member list gives everyone the same cover. This hides you from
-          the room owner, not from the people running the prover. The 24 members here are distinct identities set
-          up for the demo, not 24 separate people.
+          the room owner, not from the people running the prover. The {memberCount} members here are distinct
+          identities set up for the demo, not {memberCount} separate people.
         </Callout>
       </div>
     </Card>

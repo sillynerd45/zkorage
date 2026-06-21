@@ -184,3 +184,23 @@ test("M7 showcase: the Overview shows a green meter + a batched on-chain access 
   await expect(panel.getByTestId("m7-showcase-grants").locator("> div")).toHaveCount(4);
   await expect(panel.getByTestId("m7-showcase-spread")).toContainText("within 15 seconds");
 });
+
+// M7 showcase regression (S1): if the serving backend's eligible store is reset (memberCount 0) while the
+// grants are still on-chain, the panel must HIDE rather than render a contradictory red "below the floor"
+// meter next to a real access log. The whole panel is gone, not a half-broken showcase.
+test("M7 showcase: hides cleanly when the meter source is reset (no red showcase)", async ({ page }) => {
+  await page.route("**/dataroom/membership/eligible/**", (r) => r.fulfill({
+    status: 200, contentType: "application/json",
+    body: JSON.stringify({ roomId: "cba6", memberCount: 0, commitments: [], computedRoot: "00".repeat(32), pinnedRoot: "00".repeat(32), inSync: true }),
+  }));
+  await page.route("**/dataroom/membership/grants/**", (r) => r.fulfill({
+    status: 200, contentType: "application/json",
+    body: JSON.stringify({ roomId: "cba6", count: 2, dataroomId: "CID", grants: [
+      { index: 0, accessor: "ab".repeat(32), nullifier: "00".repeat(32), eligibleRoot: "00".repeat(32), ledger: 1, timestamp: 1782061790 },
+      { index: 1, accessor: "cd".repeat(32), nullifier: "00".repeat(32), eligibleRoot: "00".repeat(32), ledger: 1, timestamp: 1782061795 },
+    ] }),
+  }));
+  await page.goto("/app/dataroom");
+  await expect(page.getByTestId("dataroom-overview")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("m7-showcase")).toHaveCount(0); // hidden, not a red meter
+});
