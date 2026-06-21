@@ -74,8 +74,12 @@ use soroban_sdk::{
 const JOURNAL_LEN: u32 = 181;
 const CLAIM_TYPE_TIER: u32 = 13;
 
-/// How many recent accepted `qual_root`s the gate keeps per tier (kills the publish-then-prove race; sound
-/// because the qualifying set only grows within a tier's life, so any older root is a subset of the current).
+/// How many recent accepted `qual_root`s the gate keeps per tier (kills the publish-then-prove race). Why
+/// accepting an OLDER ring root stays sound is the load-bearing invariant spelled out in the module docs
+/// above: a non-revocable, extend-only qualifying lock cannot LEAVE the set while `now < X` (withdraw/claim
+/// need `now >= unlock_time >= X`), and the gate's own `now < X` freshness check covers the boundary. (NOT
+/// the "the set only grows, so an older root is a subset" reason — a withdraw at/after X does shrink the live
+/// set; what saves us is that such a departure requires `now >= X`, which the freshness gate already rejects.)
 const RING_CAP: u32 = 8;
 
 // ~5s ledgers. Keep config + records comfortably alive for the demo window.

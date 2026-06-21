@@ -53,9 +53,11 @@ test("tier: page renders, identity mints, anonymity-set size + state (light + da
   await page.reload();
   await expect(page.getByTestId("bonded-tier")).toBeVisible();
   await expect(page.getByTestId("tier-anonset")).toBeVisible({ timeout: 30_000 });
-  await qualResp; // let the dark-mode qual-set fetch land so the screenshot shows the real set
+  // Re-read the size from the dark-mode fetch so the assertion matches the dark-mode render (the live set
+  // could differ from the light-mode capture if qualifying bonds are landing concurrently).
+  const darkSize = (await (await qualResp).json()).anonSetSize ?? size;
   await expect(page.getByTestId("tier-prove")).toBeVisible();
-  if (size >= 3) await expect(page.getByTestId("tier-anonset-warning")).toHaveCount(0, { timeout: 30_000 });
+  if (darkSize >= 3) await expect(page.getByTestId("tier-anonset-warning")).toHaveCount(0, { timeout: 30_000 });
   await page.screenshot({ path: "tests/bonded-tier-dark.png", fullPage: true });
 
   expect(errs, errs.join("\n")).toHaveLength(0);

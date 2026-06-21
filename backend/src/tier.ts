@@ -212,7 +212,10 @@ export async function buildQualSet(threshold: bigint, unlockAfter: number): Prom
         transient = true;
       }
     });
-    if (transient && !anyFound) throw new Error("could not reach the network while building the qualifying set");
+    // Fail loudly on ANY transient (network/RPC, NOT a LockNotFound contract error) read gap, not only a
+    // fully-failed batch: a silently-dropped qualifying lock would publish an under-complete root, which the
+    // gate's count-blind ring would then accept. Mirrors the SDK recomputeQualRoot audit (kept in lockstep).
+    if (transient) throw new Error("could not reach the network while building the qualifying set");
     if (!anyFound) break;
   }
   qualifying.sort((a, b) => a.id - b.id);

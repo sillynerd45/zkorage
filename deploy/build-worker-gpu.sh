@@ -13,6 +13,9 @@ REL="$HOME/zkorage-r5/prover/target/release"
 REPO="/mnt/d/Project/Stellar/Real-World-ZK/zkorage"
 CTX="$HOME/worker-build-gpu"
 BINS="host host_identity host_compliance host_payroll host_accredited host_dataroom_seal host_membership host_docauth host_solvency host_tier"
+# The worker pulls jobs from the VM gateway with this token; demo defaults, overridable for a real deploy.
+VM_URL="${VM_URL:-https://prover.wazowsky.id}"
+WORKER_TOKEN="${WORKER_TOKEN:-zkw_demo_5070ti}"
 
 echo "=== stage build context: $CTX ==="
 rm -rf "$CTX"; mkdir -p "$CTX"
@@ -31,7 +34,7 @@ echo "=== recreate container ($(date +%T)) ==="
 docker rm -f zkorage-worker-gpu 2>/dev/null || true
 docker run -d --restart unless-stopped --gpus all \
   -v "$HOME/.risc0:/root/.risc0:ro" --dns 1.1.1.1 \
-  -e VM_URL=https://prover.wazowsky.id -e WORKER_TOKEN=zkw_demo_5070ti \
+  -e VM_URL="$VM_URL" -e WORKER_TOKEN="$WORKER_TOKEN" \
   --name zkorage-worker-gpu zkorage-worker-gpu
 
 sleep 3

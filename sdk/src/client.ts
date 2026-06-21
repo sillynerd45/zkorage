@@ -1131,9 +1131,12 @@ export class ZkorageClient {
           found.push({ id: ids[i], commitment });
         }
       });
-      // A transient RPC failure must NOT be read as "past the end" — that would silently drop qualifying
-      // locks and report the gate's HONEST root as dishonest (a false anti-rug negative). Fail loudly instead.
-      if (transient && !anyFound) {
+      // A transient read failure (network/RPC, NOT a LockNotFound contract error) means a lock's record was
+      // unreadable, so the recomputed root could DROP a genuine qualifying lock and falsely report the gate's
+      // HONEST root as un-accepted (a false anti-rug negative). Fail loudly on ANY transient gap in the scan,
+      // not only a batch that failed in full (the earlier `transient && !anyFound` missed a partial-batch gap
+      // where some locks in the batch were read and one blipped).
+      if (transient) {
         throw new Error("could not reach the network while recomputing the qualifying set");
       }
       if (!anyFound) {
