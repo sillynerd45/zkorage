@@ -58,7 +58,16 @@ import { putEscrow, getEscrow } from "./escrow-store.js";
 import { demoDenyTree, DENY_DEPTH } from "./denylist.js";
 import { verifyOnChain, type Bundle } from "./verify.js";
 import { readContract, invokeContract, buildUnsignedXdr, submitSignedXdr, scBytes, scAddress, scOptAddress, scI128, scU32, scU64, scBool, jsonSafe } from "./chain.js";
-import { recordRoom, listRoomsByOwner } from "./rooms-store.js";
+import {
+  recordRoom,
+  listRoomsByOwner,
+  getRoom,
+  setRoomVisibility,
+  listListedRooms,
+  memberBucket,
+  bucketTier,
+  type RoomVisibility,
+} from "./rooms-store.js";
 import { ESCROW_ID, BOND_TOKEN_ID, listLocks, getLock as escrowGetLock, isLocked as escrowIsLocked, bondBalance as escrowBondBalance } from "./escrow.js";
 import {
   SOLVENCY_GATE_ID, SOLVENCY_IMAGE_ID, SOLVENCY_SUPPLY_TOKEN_ID,
@@ -258,6 +267,17 @@ async function maybeXdr(
   const { xdr: x, cost } = await buildUnsignedXdr(contractId, method, args, source);
   res.json({ ok: true, mode: "xdr", xdr: x, cost, source, ...idField });
   return true;
+}
+
+/** Best-effort client IP for rate-limiting. Behind Cloudflare the real client is in CF-Connecting-IP;
+ *  otherwise fall back to the first X-Forwarded-For hop, then the socket. Spoofable when not behind a
+ *  trusted proxy, which is acceptable for a demo griefing throttle (not a security control). */
+function clientIp(req: express.Request): string {
+  const cf = req.headers["cf-connecting-ip"];
+  if (typeof cf === "string" && cf.length > 0) return cf;
+  const xff = req.headers["x-forwarded-for"];
+  if (typeof xff === "string" && xff.length > 0) return xff.split(",")[0].trim();
+  return req.socket?.remoteAddress ?? "unknown";
 }
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
@@ -2024,6 +2044,23 @@ app.post("/dataroom/membership/set-root", async (req, res) => {
   }
 });
 
+// M5 — griefing throttle on the (now publicly discoverable) join-request endpoint. A rolling window per
+// client IP plus a per-room pending-queue cap. Idempotent repeats (same commitment) are already deduped by
+// enroll-store, so this only bounds genuinely-FRESH requests. In-memory (demo); a shared store in production.
+const ENROLL_RL_WINDOW_MS = 10 * 60_000; // 10 minutes
+const ENROLL_RL_MAX = 10; // new requests per IP per window
+const ENROLL_PENDING_CAP = 200; // max pending requests held per room
+const enrollHits = new Map<string, number[]>();
+
+/** Record a hit for `ip` and report whether it is now over the window limit. Prunes the window in place;
+ *  drops the entry when it empties so the map does not grow without bound. */
+function enrollRateLimited(ip: string, nowMs: number): boolean {
+  const hits = (enrollHits.get(ip) ?? []).filter((t) => nowMs - t < ENROLL_RL_WINDOW_MS);
+  hits.push(nowMs);
+  enrollHits.set(ip, hits);
+  return hits.length > ENROLL_RL_MAX;
+}
+
 // ---- M1: request-then-approve enrollment (Model B) ----
 // A would-be member REQUESTS to join (submits only their public id_commitment); the room OWNER approves,
 // which appends the commitment to the eligible set and re-pins the root (owner-signed via the wallet XDR
@@ -2045,8 +2082,19 @@ app.post("/dataroom/enroll/request", (req, res) => {
   const label = typeof req.body?.label === "string" ? req.body.label.slice(0, 200) : undefined;
   const requester = userSource(req) ?? undefined;
   try {
+    // Idempotent reads first (a member polling their own status), NOT counted against the rate limit.
     if (indexOfCommitment(roomIdHex, commitmentHex) >= 0) {
       return res.json({ ok: true, state: "eligible", roomId: roomIdHex, commitment: commitmentHex });
+    }
+    if (hasRequest(roomIdHex, commitmentHex)) {
+      return res.json({ ok: true, state: "pending", added: false, roomId: roomIdHex, commitment: commitmentHex });
+    }
+    // A genuinely NEW request: throttle by IP + cap the per-room queue (blunts directory griefing).
+    if (enrollRateLimited(clientIp(req), Date.now())) {
+      return res.status(429).json({ ok: false, error: "too many join requests; please try again later" });
+    }
+    if (listRequests(roomIdHex).length >= ENROLL_PENDING_CAP) {
+      return res.status(429).json({ ok: false, error: "this room's request queue is full; please try again later" });
     }
     const { added } = addRequest(roomIdHex, { commitment: commitmentHex, label, requester, ts: Date.now() });
     res.json({ ok: true, state: "pending", added, roomId: roomIdHex, commitment: commitmentHex });
@@ -2140,6 +2188,125 @@ app.post("/dataroom/enroll/approve", async (req, res) => {
     res.json({ ok: true, txHash: out.hash, cost: out.cost, ...idField });
   } catch (e) {
     res.json({ ok: false, error: err(e), roomId: roomIdHex });
+  }
+});
+
+// ---- M5: discovery tiers + public directory ----
+// Visibility is an OFF-CHAIN, NON-security discovery flag (rooms-store): anonymity + access control stay
+// enforced by the membership proof + the k=5 floor + the keepers, so a wrong listing can never grant access
+// or deanonymize anyone. Tiers: private (no metadata leak by id) / unlisted (resolvable by EXACT id) /
+// listed (in the public directory, opt-in). Counts are COARSE BUCKETS only — the exact member count never
+// crosses the wire here — and there is NO public access feed (we never expose who/when accessed).
+
+// PUBLIC directory: only rooms the owner opted into ("listed"). Coarse counts, no exact numbers, no access
+// feed. Each listing is re-verified on-chain (drop phantoms whose recorded owner no longer matches).
+app.get("/dataroom/directory", async (_req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  try {
+    const listed = listListedRooms();
+    const resolved = await Promise.all(
+      listed.map(async (r) => {
+        const { value: room } = await readContract(DATAROOM_ID, "get_room", [scBytes(r.roomId)]);
+        const chain = room ? (jsonSafe(room) as { owner?: string }) : null;
+        if (!chain || chain.owner !== r.owner) return null; // chain authoritative; drop stale/unsubmitted
+        const n = getEligible(r.roomId).length;
+        return {
+          roomId: r.roomId,
+          name: r.name ?? null,
+          description: r.description ?? null,
+          memberBucket: memberBucket(n),
+          anonTier: bucketTier(n),
+          listedAt: r.listedAt ?? null,
+        };
+      }),
+    );
+    const rooms = resolved
+      .filter((x): x is NonNullable<typeof x> => x !== null)
+      .sort((a, b) => (b.listedAt ?? 0) - (a.listedAt ?? 0)); // newest listings first
+    res.json({ count: rooms.length, rooms, dataroomId: DATAROOM_ID });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// Resolve ONE room by exact id. private -> reveal nothing (the room is still reachable by anyone the owner
+// hands the id to, via the join flow; we just do not confirm it or leak metadata to a browser). unlisted /
+// listed -> confirm it exists on-chain + return opt-in name/desc + a coarse count.
+app.get("/dataroom/room-meta/:roomId", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  let roomIdHex: string;
+  try {
+    roomIdHex = toBytes32(req.params.roomId);
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const rec = getRoom(roomIdHex);
+    const visibility: RoomVisibility = rec?.visibility ?? "private";
+    if (visibility === "private") {
+      // No metadata, no count, no existence confirmation — a private room is dark to discovery.
+      return res.json({ roomId: roomIdHex, visibility: "private", discoverable: false });
+    }
+    const { value: room } = await readContract(DATAROOM_ID, "get_room", [scBytes(roomIdHex)]);
+    if (!room) return res.json({ roomId: roomIdHex, visibility, discoverable: false, exists: false });
+    const n = getEligible(roomIdHex).length;
+    res.json({
+      roomId: roomIdHex,
+      visibility,
+      discoverable: true,
+      listed: visibility === "listed",
+      name: rec?.name ?? null,
+      description: rec?.description ?? null,
+      memberBucket: memberBucket(n),
+      anonTier: bucketTier(n),
+    });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// Owner: set a room's discovery tier + opt-in public name/description. Off-chain write (no tx). Gated by the
+// on-chain get_room.owner == source check. NOTE (demo): like the other DR enroll endpoints, `source` is an
+// unauthenticated request claim; because visibility is a non-security discovery flag, a forged source can at
+// worst toggle a discovery hint, never grant access or deanonymize. Production would require the owner to
+// sign the change (SEP-53). name/description are sanitized + length-capped in the store.
+app.post("/dataroom/room/visibility", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  if (!ADMIN_ADDRESS) return res.status(503).json({ error: "ADMIN_ADDRESS not configured" });
+  let roomIdHex: string;
+  let visibility: RoomVisibility;
+  try {
+    roomIdHex = toBytes32(req.body?.roomId);
+    const v = String(req.body?.visibility ?? "");
+    if (v !== "private" && v !== "unlisted" && v !== "listed") {
+      throw new Error("visibility must be private, unlisted, or listed");
+    }
+    visibility = v;
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const source = userSource(req);
+    const owner = source ?? ADMIN_ADDRESS;
+    const { value: roomVal } = await readContract(DATAROOM_ID, "get_room", [scBytes(roomIdHex)]);
+    const room = roomVal ? (jsonSafe(roomVal) as { owner?: string }) : null;
+    if (!room) return res.status(404).json({ error: "room not found" });
+    if (room.owner !== owner) return res.status(403).json({ error: "only the room owner may change visibility" });
+    const rec = setRoomVisibility(roomIdHex, owner, {
+      visibility,
+      name: req.body?.name,
+      description: req.body?.description,
+      nowMs: Date.now(),
+    });
+    res.json({
+      ok: true,
+      roomId: roomIdHex,
+      visibility: rec.visibility,
+      name: rec.name ?? null,
+      description: rec.description ?? null,
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: err(e) });
   }
 });
 
