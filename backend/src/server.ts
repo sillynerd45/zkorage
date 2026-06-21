@@ -2166,6 +2166,13 @@ app.post("/dataroom/membership/prove-access", async (req, res) => {
     const memberIndex = indexOfCommitment(roomIdHex, commitmentHex);
     if (memberIndex < 0) return res.status(400).json({ error: "not in the room's eligible set — register first", idCommitment: commitmentHex });
     const commitments = getEligible(roomIdHex).map((h) => fromHex(h));
+    // Model B anonymity floor (k): a caller (the Model B reader) may require a minimum eligible-set size, so a
+    // member cannot record an on-chain access (request_access) in a room too small to be anonymous. Legacy
+    // callers (e.g. the DR2 set-of-2 teaching demo) omit minAnonSet and are unaffected.
+    const minAnonSet = Number(req.body?.minAnonSet);
+    if (Number.isFinite(minAnonSet) && minAnonSet > 0 && commitments.length < minAnonSet) {
+      return res.status(400).json({ error: `anonymity set too small: ${commitments.length} of ${minAnonSet} members`, anonSetSize: commitments.length, minAnonSet });
+    }
     const built = buildMembershipJob({
       idSecret, idTrapdoor, roomId: fromHex(roomIdHex), holderSeed,
       recipientPub: fromHex(recipientPubHex), commitments, memberIndex,
@@ -2551,6 +2558,16 @@ app.post("/dataroom/committee/collect/:roomId/:docId", async (req, res) => {
     accessorHex = toHex(hex32(req.body?.accessor, "accessor"));
   } catch (e) {
     return res.status(400).json({ error: err(e) });
+  }
+  // Model B anonymity floor (k): the Model B reader passes minAnonSet so the key is NOT released in a room
+  // too small to be anonymous, even if the accessor was granted earlier (a room can shrink after a grant).
+  // Legacy callers omit minAnonSet and are unaffected.
+  const minAnonSet = Number(req.body?.minAnonSet);
+  if (Number.isFinite(minAnonSet) && minAnonSet > 0) {
+    const n = getEligible(roomIdHex).length;
+    if (n < minAnonSet) {
+      return res.status(403).json({ error: `anonymity set too small: ${n} of ${minAnonSet} members`, anonSetSize: n, minAnonSet });
+    }
   }
   try {
     const { shares, recipientPub, errors } = await collectSealedShares(roomIdHex, docIdHex, accessorHex);

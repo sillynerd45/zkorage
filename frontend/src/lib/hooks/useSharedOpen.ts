@@ -3,6 +3,7 @@ import {
   getCommitteeInfo,
   getCommitteeDocument,
   getEnrollStatus,
+  getEligible,
   proveAccess,
   requestAccess,
   getProveStatus,
@@ -11,6 +12,7 @@ import {
   type EnrollState,
   type Bundle,
 } from "@/lib/api";
+import { ANON_FLOOR } from "@/components/app/dataroom/AnonymityMeter";
 import {
   DEMO_MODELB_ROOM,
   DEMO_MODELB_DOC,
@@ -43,6 +45,11 @@ export function useSharedOpen() {
   const [committeeDoc, setCommitteeDoc] = useState<CommitteeDoc | null>(null);
   const [room, setRoom] = useState(DEMO_MODELB_ROOM);
   const [doc, setDoc] = useState(DEMO_MODELB_DOC);
+
+  // The room's eligible-set size (the anonymity set). null = unknown (room not resolved). Below ANON_FLOOR,
+  // access is disabled (a set too small to hide in).
+  const [anonCount, setAnonCount] = useState<number | null>(null);
+  const belowFloor = anonCount !== null && anonCount < ANON_FLOOR;
 
   // The reader's wallet-derived identity for the CURRENT room (null until they check). Re-derived per room.
   const [identity, setIdentity] = useState<DataRoomIdentity | null>(null);
@@ -81,6 +88,19 @@ export function useSharedOpen() {
       .catch(() => { if (live) setCommitteeDoc(null); });
     return () => { live = false; };
   }, [room, doc]);
+
+  // The room's anonymity-set size drives the meter + the access floor (read whenever the room is valid hex).
+  useEffect(() => {
+    if (!isHex32(room)) {
+      setAnonCount(null);
+      return;
+    }
+    let live = true;
+    getEligible(room.trim())
+      .then((r) => { if (live) setAnonCount(r.memberCount); })
+      .catch(() => { if (live) setAnonCount(null); });
+    return () => { live = false; };
+  }, [room]);
 
   // Changing the target room/doc invalidates the per-room identity + every result, so the reader re-checks.
   useEffect(() => {
@@ -132,6 +152,10 @@ export function useSharedOpen() {
   // After this, opening any document in the room is instant (no re-proof).
   async function onProve() {
     if (!identity) return;
+    if (belowFloor) {
+      setProveErr(`Access needs at least ${ANON_FLOOR} members in this room. Anonymity needs a crowd to hide in.`);
+      return;
+    }
     setProveErr(null);
     setProveBy(null);
     setProveStep("Proving your membership (sha256-Merkle, nullifier, holder signature) on the self-hosted prover. This runs once for the room and can take a few minutes.");
@@ -144,6 +168,7 @@ export function useSharedOpen() {
         identity.idTrapdoor,
         identity.accessorSeed,
         identity.recipientPub,
+        ANON_FLOOR,
       );
       if (!pa.jobId) throw new Error(pa.error || "could not start the membership proof");
       let bundle: Bundle | null = null;
@@ -183,12 +208,18 @@ export function useSharedOpen() {
       setOpenErr("Check access first so your identity is derived.");
       return;
     }
+    if (belowFloor) {
+      setOpenErr(`Access needs at least ${ANON_FLOOR} members in this room. Anonymity needs a crowd to hide in.`);
+      return;
+    }
     setOpenErr(null);
     setOpened(null);
     setOpening(true);
     try {
       setOpened(
-        await sdk.openCommitteeDocument(room.trim(), doc.trim(), identity.accessor, identity.recipientSecret),
+        await sdk.openCommitteeDocument(room.trim(), doc.trim(), identity.accessor, identity.recipientSecret, {
+          minAnonSet: ANON_FLOOR,
+        }),
       );
     } catch (e) {
       setOpenErr(String((e as Error).message ?? e));
@@ -207,6 +238,9 @@ export function useSharedOpen() {
     // committee + doc
     committee,
     committeeDoc,
+    // anonymity meter + floor
+    anonCount,
+    belowFloor,
     // inputs
     room,
     setRoom,

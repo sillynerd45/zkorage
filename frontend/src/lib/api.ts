@@ -776,9 +776,12 @@ export const proveAccess = (
   idTrapdoor: string,
   holderSeed: string,
   recipientPub?: string,
+  minAnonSet?: number,
 ) =>
   post<ProveAccessResp>("/dataroom/membership/prove-access", {
-    roomId, idSecret, idTrapdoor, holderSeed, ...(recipientPub ? { recipientPub } : {}),
+    roomId, idSecret, idTrapdoor, holderSeed,
+    ...(recipientPub ? { recipientPub } : {}),
+    ...(minAnonSet ? { minAnonSet } : {}),
   });
 
 export const requestAccess = (bundle: Bundle) =>

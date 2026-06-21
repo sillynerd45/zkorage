@@ -7,6 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { DataRow, Verdict } from "@/components/app/blocks";
 import { DecryptedFile } from "@/components/app/DecryptedFile";
+import { AnonymityMeter, ANON_FLOOR } from "@/components/app/dataroom/AnonymityMeter";
+import { Callout } from "@/components/app/dataroom/kit";
+import { ShieldQuestion } from "lucide-react";
 import { short } from "@/lib/format";
 
 // M3: "Open a shared document" with sign-to-derive identity (Model B). The reader proves anonymous membership
@@ -111,6 +114,18 @@ export default function OpenShared() {
             <Input className="font-mono text-xs" value={s.doc} onChange={(e) => s.setDoc(e.target.value)} aria-label="access doc" data-testid="access-doc" />
           </label>
         </div>
+
+        {/* anonymity meter (the room's eligible-set size) + the honest side-channel caveat */}
+        <div className="mt-4 space-y-3">
+          <AnonymityMeter count={s.anonCount} />
+          <Callout icon={ShieldQuestion}>
+            What the room can see: that an approved member opened a document, and when. Not which member. Because
+            joining is by name, an owner who watches the timing of accesses could try to guess, so a bigger group
+            makes that harder. That is why access needs at least {ANON_FLOOR} members. Stronger timing protection
+            is planned, not in place yet.
+          </Callout>
+        </div>
+
         <div className="mt-3">
           <Button onClick={s.onCheck} disabled={s.checking || s.deriving} data-testid="access-check-btn">
             {s.checking || s.deriving ? "Checking…" : "Check access"}
@@ -175,7 +190,7 @@ export default function OpenShared() {
                       the room is instant.
                     </p>
                     <div className="mt-3">
-                      <Button onClick={s.onProve} disabled={proving} data-testid="access-prove-btn">
+                      <Button onClick={s.onProve} disabled={proving || s.belowFloor} data-testid="access-prove-btn">
                         {s.proveStage === "proving"
                           ? "Proving…"
                           : s.proveStage === "requesting"
@@ -183,6 +198,11 @@ export default function OpenShared() {
                             : "Prove membership and unlock"}
                       </Button>
                     </div>
+                    {s.belowFloor && (
+                      <p className="mt-2 text-sm text-destructive" data-testid="access-floor-note">
+                        This room has fewer than {ANON_FLOOR} members, so access is disabled until it grows.
+                      </p>
+                    )}
                     {s.proveStep && (
                       <p className="mt-3 text-sm text-muted-foreground" data-testid="access-prove-step">
                         {s.proveStep}
@@ -234,7 +254,7 @@ export default function OpenShared() {
           browser. No single keeper can open the file; a non-qualifying reader gets no parts.
         </p>
         <div className="mt-4">
-          <Button onClick={s.onOpen} disabled={s.opening || !admitted} data-testid="access-open-btn">
+          <Button onClick={s.onOpen} disabled={s.opening || !admitted || s.belowFloor} data-testid="access-open-btn">
             {s.opening ? "Rebuilding…" : "Get the key and open"}
           </Button>
         </div>
