@@ -108,7 +108,10 @@ services:
       DATAROOM_CONTRACT_ID: "${DATAROOM_CONTRACT_ID:?set DATAROOM_CONTRACT_ID in ./.env}"
       DEAL_TOKEN: "${KEYPER_DEAL_TOKEN:?set KEYPER_DEAL_TOKEN in ./.env}"
       SIM_SOURCE_PUBKEY: "${SIM_SOURCE_PUBKEY:?set SIM_SOURCE_PUBKEY in ./.env}"
-      STELLAR_RPC_URL: "https://soroban-testnet.stellar.org"
+      # 3rd INDEPENDENT RPC provider so no single provider serves the 2-of-3 threshold (keyper1=SDF,
+      # keyper2=Gateway.fm, keyper3=this). The keyed URL lives in the VM's ./.env (KEYPER3_RPC_URL), never
+      # committed; falls back to keyless SDF testnet if unset.
+      STELLAR_RPC_URL: "${KEYPER3_RPC_URL:-https://soroban-testnet.stellar.org}"
       SHARE_STORE_PATH: "/app/keyper/data/keyper-3.json"
       SHARE_RATE_PER_MIN: "120"
       KEYPER_ALLOWED_ORIGINS: "https://zkorage.wazowsky.id"
