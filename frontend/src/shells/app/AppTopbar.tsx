@@ -13,6 +13,7 @@ function pageTitle(path: string): string {
     const t = dataroomTab(segs[1]);
     return t ? `Data Room · ${t.label}` : "Data Room";
   }
+  if (segs[0] === "contracts") return "Contracts";
   const cap = CAPABILITIES.find((c) => c.to === `/app/${segs[0]}`);
   return cap?.title ?? "zkorage";
 }

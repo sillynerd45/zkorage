@@ -52,7 +52,7 @@ test("docs side-rail navigates to developers + glossary", async ({ page }) => {
 test("landing → docs and verify CTAs work", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByTestId("hero-open-app")).toBeVisible();
-  await expect(page.getByText("What you can prove")).toBeVisible();
+  await expect(page.getByText("What you can do")).toBeVisible();
   await expect(page.getByText("Don't trust. Verify.")).toBeVisible();
   await page.getByRole("link", { name: "Verify a proof" }).click();
   await expect(page).toHaveURL(/\/verify$/);

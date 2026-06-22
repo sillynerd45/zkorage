@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { Check, X, FileSignature, Cpu, BadgeCheck, ArrowRight } from "lucide-react";
-import { CAPABILITIES, DATAROOM_TABS } from "@/lib/content";
+import { DATAROOM_TABS, BONDED_TABS } from "@/lib/content";
+import { M7ShowcasePanel } from "@/components/app/dataroom/M7ShowcasePanel";
 import { GLOSSARY } from "@/lib/glossary";
 import { useDeveloperDemo, DEV_CHECKS } from "@/lib/hooks/useDeveloperDemo";
 import { CopyButton } from "@/components/Disclosure";
@@ -64,33 +65,10 @@ export function DocsOverview() {
 
 // ── Capabilities (concise) ────────────────────────────────────────────────────
 export function DocsCapabilities() {
-  const prove = CAPABILITIES.filter((c) => c.group === "prove");
   const dataroom = DATAROOM_TABS.filter((t) => t.slug && t.slug !== "demo");
+  const bonded = BONDED_TABS.filter((t) => t.slug);
   return (
     <div className="space-y-5">
-      <SectionCard label="Proofs">
-        <ul className="divide-y divide-border/70">
-          {prove.map((c) => (
-            <li key={c.key} className="flex items-start gap-3 py-3 first:pt-0 last:pb-0">
-              <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-brand/10 text-brand">
-                <c.icon className="size-5" />
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Link to={c.to} className="font-semibold tracking-tight hover:text-brand">
-                    {c.title}
-                  </Link>
-                  <span className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
-                    {c.proves}
-                  </span>
-                </div>
-                <p className="mt-0.5 text-sm leading-relaxed text-muted-foreground">{c.blurb}</p>
-              </div>
-            </li>
-          ))}
-        </ul>
-      </SectionCard>
-
       <SectionCard
         label="Data Room"
         aside={
@@ -112,6 +90,35 @@ export function DocsCapabilities() {
                 </Link>
                 {t.star && <span aria-hidden="true">⭐</span>}
               </div>
+              <p className="text-sm leading-relaxed text-muted-foreground">{t.blurb}</p>
+            </li>
+          ))}
+        </ul>
+      </SectionCard>
+
+      {/* Anonymous access, with the timing hidden: a live, wallet-free demo of the Data Room timing defense.
+          Moved here from the Data Room Overview. It reads a real testnet showcase room and hides itself if
+          that room is not provisioned. */}
+      <M7ShowcasePanel />
+
+      <SectionCard
+        label="Bonded Proofs"
+        aside={
+          <Link to="/app/bonded" className="inline-flex items-center gap-1 text-sm text-brand hover:underline">
+            Open <ArrowRight className="size-3.5" />
+          </Link>
+        }
+      >
+        <p className="mb-3 text-sm leading-relaxed text-muted-foreground">
+          A time-locked escrow on Stellar, plus the proofs built on it. You lock tokens until a time you
+          choose, then prove a fact that stays valid only while the bond stays locked.
+        </p>
+        <ul className="divide-y divide-border/70">
+          {bonded.map((t) => (
+            <li key={t.slug} className="py-2.5 first:pt-0 last:pb-0">
+              <Link to={`/app/bonded/${t.slug}`} className="text-sm font-medium hover:text-brand">
+                {t.label}
+              </Link>
               <p className="text-sm leading-relaxed text-muted-foreground">{t.blurb}</p>
             </li>
           ))}

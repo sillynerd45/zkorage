@@ -1,17 +1,12 @@
-import { ExternalLink, Files, Lock, Users, type LucideIcon } from "lucide-react";
+import { Compass, Files, FolderOpen, Lock, UserPlus, type LucideIcon } from "lucide-react";
 import { Link } from "react-router-dom";
-import { GlossaryTip } from "@/components/GlossaryTip";
-import { Disclosure } from "@/components/Disclosure";
-import { DataRow } from "@/components/app/blocks";
 import { TaskCard, GroupLabel, type DRCategory } from "@/components/app/dataroom/kit";
-import { M7ShowcasePanel } from "@/components/app/dataroom/M7ShowcasePanel";
-import { useDataroomInfo } from "@/lib/hooks/useDataroomInfo";
-import { short, explorer } from "@/lib/format";
 
-// Task-oriented landing: one featured "Store a document" card, then an even grid of the remaining six
-// tasks. Each card carries a category chip (Documents / Access / Share / Authenticity) instead of a
-// fragmented section header, so the grid stays a clean 3 rows of 2. The header (title + one-line lead +
-// committee pill) lives in the layout, so this page no longer repeats the description.
+// Task-oriented landing: one featured "Store a document" card, then a grid of the remaining tasks. Each card
+// maps to a real place in the Data Room nav (Documents > Open / Store / My files, plus Membership and
+// Discover), so "All tasks" mirrors the actual menu. The header (title + one-line lead + committee pill)
+// lives in the layout, so this page does not repeat the description. The concept explainer and the on-chain
+// contract list moved off this page (to Documentation and to the Contracts reference page).
 interface Task {
   to: string;
   label: string;
@@ -19,18 +14,25 @@ interface Task {
   testid: string;
   icon: LucideIcon;
   category?: DRCategory;
-  star?: boolean;
 }
 
 const HERO: Task = {
   to: "/app/dataroom/documents#store",
   label: "Store a document",
-  blurb: "Encrypt a file and post only a tamper-evident fingerprint. The contents never leave the prover you run.",
+  blurb: "Encrypt a file in your browser and post only a tamper-evident fingerprint. The file and its key never reach our server.",
   testid: "task-store",
   icon: Lock,
 };
 
 const TASKS: Task[] = [
+  {
+    to: "/app/dataroom/documents#open",
+    label: "Open a document",
+    blurb: "Open files from a room you have been approved for. They are decrypted in your browser.",
+    testid: "task-access",
+    icon: FolderOpen,
+    category: "Access",
+  },
   {
     to: "/app/dataroom/documents#mine",
     label: "My files",
@@ -40,33 +42,22 @@ const TASKS: Task[] = [
     category: "Documents",
   },
   {
-    to: "/app/dataroom/documents#open",
-    label: "Open a document",
-    blurb: "Open files from rooms you have access to, decrypted in your browser.",
-    testid: "task-access",
-    icon: Users,
-    category: "Access",
+    to: "/app/dataroom/membership",
+    label: "Membership",
+    blurb: "Request to join a room, or approve people who asked to join a room you own.",
+    testid: "task-membership",
+    icon: UserPlus,
+  },
+  {
+    to: "/app/dataroom/discover",
+    label: "Discover",
+    blurb: "Browse rooms that listed themselves publicly, or look one up by its id.",
+    testid: "task-discover",
+    icon: Compass,
   },
 ];
-// Note: the "Get in anonymously", "Share a masked copy", and "Prove a signed fact" cards were retired here
-// alongside their nav tabs (see DATAROOM_TABS in content.ts). The core anonymous-access idea is still shown by
-// the real Documents > Open flow above and the read-only M7 showcase below.
-
-function ExLink({ id }: { id: string }) {
-  return (
-    <a
-      href={explorer("contract", id)}
-      target="_blank"
-      rel="noreferrer"
-      className="inline-flex items-center gap-1 text-brand hover:underline"
-    >
-      {short(id, 8)} <ExternalLink className="size-3" />
-    </a>
-  );
-}
 
 export default function DataRoomOverview() {
-  const info = useDataroomInfo();
   return (
     <div data-testid="dataroom-overview" className="space-y-6">
       {/* The primary action, full width. */}
@@ -90,77 +81,9 @@ export default function DataRoomOverview() {
               title={t.label}
               blurb={t.blurb}
               category={t.category}
-              star={t.star}
               testid={t.testid}
             />
           ))}
-        </div>
-      </div>
-
-      {/* M7 — a wallet-free, read-only demonstration of the timing defense on a live showcase room (green meter
-          + the on-chain grant log showing batched, shuffled accesses). Hides itself if the room is unreachable. */}
-      <M7ShowcasePanel />
-
-      {/* The concept + the on-chain trust anchor, demoted: there when you want them, not blocking the tasks.
-          Wrapped in one calm card so they read as a "learn more" footer, matching the task cards above. */}
-      <div className="space-y-3">
-        <GroupLabel>Learn more</GroupLabel>
-        <div className="divide-y divide-border/70 rounded-xl border bg-card px-4 shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
-          <Disclosure
-            toggleTestId="overview-what-is"
-            summary={
-              <>
-                New here? <b className="text-foreground">What is a confidential data room?</b>
-              </>
-            }
-          >
-            <p className="text-sm leading-relaxed text-muted-foreground">
-              It's a shared room of <b className="text-foreground">encrypted</b> documents. The files themselves
-              never go on the public record. Only a tamper-evident <b className="text-foreground">fingerprint</b>
-              <GlossaryTip term="fingerprint" /> of each does, so anyone can confirm a document wasn't swapped
-              out while the contents stay private.
-            </p>
-            <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-              The hard part is <b className="text-foreground">who gets in</b>. Here you prove you're allowed to
-              enter <b className="text-foreground">without revealing who you are</b>, and each pass works once.
-              That is the one thing a normal login can't give you, and it's what this room is built around.
-            </p>
-          </Disclosure>
-
-          <Disclosure
-            toggleTestId="overview-onchain"
-            summary={
-              <>
-                Check it on-chain: <b className="text-foreground">the contracts behind this room</b>
-              </>
-            }
-          >
-            <p className="mb-2 text-sm leading-relaxed text-muted-foreground">
-              These are the live contracts this room runs on. Look them up on the public ledger to re-check any
-              result here yourself.
-            </p>
-            <DataRow k="Network">testnet</DataRow>
-            {info?.dataroomId && (
-              <DataRow k="DataRoom contract">
-                <ExLink id={info.dataroomId} />
-              </DataRow>
-            )}
-            {info?.config?.verifier && (
-              <DataRow k="Proof verifier">
-                <ExLink id={info.config.verifier} />
-              </DataRow>
-            )}
-            {info && (
-              <DataRow k="Document storage" mono={false} testId="storage">
-                {info.storage === "r2" ? "Cloudflare R2" : "local stand-in"}
-              </DataRow>
-            )}
-            {info && (
-              <DataRow k="Rooms" testId="room-count">
-                {info.roomCount}
-              </DataRow>
-            )}
-          </Disclosure>
         </div>
       </div>
 
