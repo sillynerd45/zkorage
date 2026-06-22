@@ -1,4 +1,5 @@
-import { Link } from "react-router-dom";
+import { useEffect } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { useSharedOpen } from "@/lib/hooks/useSharedOpen";
 import { Disclosure, Hex } from "@/components/Disclosure";
 import { GlossaryTip } from "@/components/GlossaryTip";
@@ -8,9 +9,10 @@ import { Card } from "@/components/ui/card";
 import { DataRow, Verdict } from "@/components/app/blocks";
 import { DecryptedFile } from "@/components/app/DecryptedFile";
 import { AnonymityMeter, ANON_FLOOR } from "@/components/app/dataroom/AnonymityMeter";
-import { Callout } from "@/components/app/dataroom/kit";
-import { ShieldQuestion } from "lucide-react";
+import { Callout, SectionLabel } from "@/components/app/dataroom/kit";
+import { FileText, ShieldQuestion } from "lucide-react";
 import { short } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 // M3: "Open a shared document" with sign-to-derive identity (Model B). The reader proves anonymous membership
 // once with their wallet-derived identity, the 2-of-3 keepers release the key to that member's wallet-derived
@@ -19,6 +21,23 @@ import { short } from "@/lib/format";
 export default function OpenShared() {
   const s = useSharedOpen();
   const leg = (v: boolean | null | undefined) => (v === null || v === undefined ? "(not required)" : v ? "✓" : "✗");
+
+  // Prefill the room (and optionally the doc) when arriving from a deep link, e.g. "Open documents" in
+  // Membership > Your requests or the Discover directory: /app/dataroom/access?room=<id>[&doc=<id>].
+  const [params] = useSearchParams();
+  const paramRoom = params.get("room");
+  const paramDoc = params.get("doc");
+  useEffect(() => {
+    if (paramRoom) {
+      s.setRoom(paramRoom);
+      // A room-only deep link must not leave the demo doc id bound to a DIFFERENT room: clear it so the
+      // "Documents in this room" picker drives the selection. (Empty doc no-ops every guard until a pick.)
+      s.setDoc(paramDoc ?? "");
+    } else if (paramDoc) {
+      s.setDoc(paramDoc);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paramRoom, paramDoc]);
 
   if (!s.connected) {
     return (
@@ -114,6 +133,52 @@ export default function OpenShared() {
             <Input className="font-mono text-xs" value={s.doc} onChange={(e) => s.setDoc(e.target.value)} aria-label="access doc" data-testid="access-doc" />
           </label>
         </div>
+
+        {/* The room's documents, so a member can SEE and pick one instead of pasting a doc id. Public on-chain
+            fingerprints only (content hash), never the contents; committee docs only (the kind openable here). */}
+        {(s.roomDocs.length > 0 || s.docsLoading) && (
+          <div className="mt-4 space-y-2" data-testid="access-doc-list">
+            <SectionLabel withRule>
+              <span className="inline-flex items-center gap-1.5">
+                <FileText className="size-4" aria-hidden="true" />
+                Documents in this room
+              </span>
+            </SectionLabel>
+            {s.docsLoading && s.roomDocs.length === 0 ? (
+              <p className="text-sm text-muted-foreground" data-testid="access-docs-loading">Loading documents…</p>
+            ) : (
+              <div className="divide-y divide-border/70 rounded-xl border">
+                {s.roomDocs.map((d) => {
+                  const selected = d.doc_id.toLowerCase() === s.doc.trim().toLowerCase();
+                  return (
+                    <button
+                      key={d.doc_id}
+                      type="button"
+                      onClick={() => s.setDoc(d.doc_id)}
+                      aria-pressed={selected}
+                      data-testid="access-doc-row"
+                      className={cn(
+                        "flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-accent/40",
+                        selected && "bg-accent/50",
+                      )}
+                    >
+                      <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate font-mono text-xs">{short(d.doc_id, 8)}</div>
+                        <div className="truncate text-[11px] text-muted-foreground">fingerprint {short(d.content_hash, 6)}</div>
+                      </div>
+                      {selected && <span className="shrink-0 text-[11px] uppercase tracking-wide text-brand">selected</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              The room's documents on the public record, shown as fingerprints only, never the contents. Pick
+              one, then Check access.
+            </p>
+          </div>
+        )}
 
         {/* anonymity meter (the room's eligible-set size) + the honest side-channel caveat */}
         <div className="mt-4 space-y-3">

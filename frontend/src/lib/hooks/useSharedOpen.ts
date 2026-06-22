@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   getCommitteeInfo,
   getCommitteeDocument,
+  getDataroomDocuments,
   getEnrollStatus,
   getEligible,
   proveAccess,
@@ -10,6 +11,7 @@ import {
   getProveStatus,
   type CommitteeInfoResp,
   type CommitteeDoc,
+  type DataroomDoc,
   type EnrollState,
   type Bundle,
 } from "@/lib/api";
@@ -116,6 +118,26 @@ export function useSharedOpen() {
     getEligible(room.trim())
       .then((r) => { if (live) setAnonCount(r.memberCount); })
       .catch(() => { if (live) setAnonCount(null); });
+    return () => { live = false; };
+  }, [room]);
+
+  // The room's document list, so an approved member can SEE and pick a document instead of pasting a doc id.
+  // These are public on-chain fingerprints (content hash + key commitment), never the contents. Committee docs
+  // only (the anonymous Model B kind the keepers release); legacy DR1 single-recipient seals are not openable
+  // here. Read whenever the room is valid hex.
+  const [roomDocs, setRoomDocs] = useState<DataroomDoc[]>([]);
+  const [docsLoading, setDocsLoading] = useState(false);
+  useEffect(() => {
+    if (!isHex32(room)) {
+      setRoomDocs([]);
+      return;
+    }
+    let live = true;
+    setDocsLoading(true);
+    getDataroomDocuments(room.trim())
+      .then((r) => { if (live) setRoomDocs(r.documents.filter((d) => d.kind === "committee")); })
+      .catch(() => { if (live) setRoomDocs([]); })
+      .finally(() => { if (live) setDocsLoading(false); });
     return () => { live = false; };
   }, [room]);
 
@@ -305,6 +327,9 @@ export function useSharedOpen() {
     setRoom,
     doc,
     setDoc,
+    // the room's document list (pick instead of pasting a doc id)
+    roomDocs,
+    docsLoading,
     // check
     identity,
     access,
