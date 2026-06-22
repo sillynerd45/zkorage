@@ -22,6 +22,7 @@ import { useWallet } from "@/lib/wallet/WalletContext";
 import { useDataRoomIdentity } from "@/lib/hooks/useDataRoomIdentity";
 import { readJoinRequests, writeJoinRequests } from "@/lib/dataroom/requests";
 import { exportRoomsBackup, importRoomsBackup, mergeJoinRequests } from "@/lib/dataroom/roomsBackup";
+import { pullVault, pushVault, forgetVault, isVaultSyncOn, setVaultSyncOn } from "@/lib/dataroom/vault";
 import { writeOpenTicket, clearOpenTicket, findOpenTicket } from "@/lib/dataroom/openTicket";
 import { isHex32 } from "@/lib/format";
 
@@ -53,6 +54,14 @@ export type OpenPhase =
   | "opened" // done (the file is in `opened`)
   | "error";
 
+// Cross-device sync status for the encrypted rooms vault.
+export type SyncState =
+  | "off" // sync turned off (or no wallet)
+  | "locked" // sync on, but the wallet has not signed this session -> show a one-tap unlock
+  | "syncing"
+  | "synced"
+  | "error";
+
 export function useSharedOpen() {
   const { address, connected, connect, status: walletStatus } = useWallet();
   const ident = useDataRoomIdentity();
@@ -76,6 +85,13 @@ export function useSharedOpen() {
     );
   }, []);
   useEffect(() => { reloadOpenable(connected ? address : null); }, [connected, address, reloadOpenable]);
+
+  // Automatic cross-device sync via the encrypted vault. Default ON. "locked" = sync is on but the wallet has
+  // not signed this session yet, so we wait for a one-tap unlock rather than pop the wallet on page load.
+  const [syncOn, setSyncOn] = useState(true);
+  const [syncState, setSyncState] = useState<SyncState>("off");
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
+  useEffect(() => { setSyncOn(isVaultSyncOn(connected ? address : null)); }, [connected, address]);
 
   // Public directory names/descriptions (listed rooms only) so an approved room shows a human name like the
   // Discover tab, not just an id. One public read; a private/unlisted room falls back to your own label.
@@ -109,6 +125,10 @@ export function useSharedOpen() {
       }
       writeJoinRequests(address, updated);
       reloadOpenable(address);
+      // best-effort push the refreshed list to the vault (silent: refresh already signed, so no extra prompt)
+      if (isVaultSyncOn(address) && ident.hasSignature(address)) {
+        try { await pushVault(address, await ident.getSignature()); setSyncState("synced"); } catch { /* keep local */ }
+      }
     } finally {
       setRefreshing(false);
     }
@@ -166,6 +186,10 @@ export function useSharedOpen() {
         const merged = mergeJoinRequests(readJoinRequests(address), incoming);
         writeJoinRequests(address, merged);
         reloadOpenable(address);
+        // best-effort push the merged list to the vault (silent: import already signed, so no extra prompt)
+        if (isVaultSyncOn(address) && ident.hasSignature(address)) {
+          try { await pushVault(address, await ident.getSignature()); setSyncState("synced"); } catch { /* keep local */ }
+        }
         setBackupMsg(`Imported ${incoming.length} room(s). Press Refresh to update their status.`);
       } catch (e) {
         setBackupMsg(String((e as Error).message ?? e));
@@ -174,6 +198,83 @@ export function useSharedOpen() {
       }
     },
     [address, ident, reloadOpenable],
+  );
+
+  // Pull-on-connect (silent only if the wallet already signed this session) + propagate the merged union back.
+  // A new object is returned by useDataRoomIdentity each render, so a once-guard keyed by address prevents the
+  // unstable deps from re-pulling every render.
+  const syncedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!connected || !address) { setSyncState("off"); return; }
+    if (!syncOn) { setSyncState("off"); return; }
+    if (!ident.hasSignature(address)) { setSyncState("locked"); return; } // wait for a one-tap unlock
+    if (syncedFor.current === address) return;
+    syncedFor.current = address;
+    let live = true;
+    (async () => {
+      try {
+        setSyncState("syncing");
+        const sig = await ident.getSignature();
+        await pullVault(address, sig);
+        if (!live) return;
+        reloadOpenable(address);
+        await pushVault(address, sig);
+        if (live) setSyncState("synced");
+      } catch {
+        if (live) setSyncState("error");
+      }
+    })();
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected, address, syncOn]);
+  useEffect(() => { syncedFor.current = null; }, [address]);
+
+  // One-tap unlock: sign once, pull the vault, merge, push the union back.
+  const unlockSync = useCallback(async () => {
+    if (!address) return;
+    setSyncMsg(null);
+    setSyncState("syncing");
+    try {
+      const sig = await ident.getSignature();
+      await pullVault(address, sig);
+      reloadOpenable(address);
+      await pushVault(address, sig);
+      syncedFor.current = address;
+      setSyncState("synced");
+    } catch (e) {
+      setSyncState("error");
+      setSyncMsg(String((e as Error).message ?? e));
+    }
+  }, [address, ident, reloadOpenable]);
+
+  // Turn sync on (sync now if already signed, else show the unlock) or off (delete the server copy).
+  const setSync = useCallback(
+    async (on: boolean) => {
+      if (!address) return;
+      setVaultSyncOn(address, on);
+      setSyncOn(on);
+      setSyncMsg(null);
+      if (on) {
+        if (ident.hasSignature(address)) await unlockSync();
+        else setSyncState("locked");
+      } else {
+        setSyncState("off");
+        syncedFor.current = null;
+        // Only delete the server copy if the wallet already signed this session: turning a setting OFF should
+        // not pop the wallet. If not signed, say so honestly (a signature is needed to locate the copy).
+        if (ident.hasSignature(address)) {
+          try {
+            await forgetVault(await ident.getSignature());
+            setSyncMsg("Sync off. Your saved copy was deleted.");
+          } catch {
+            setSyncMsg("Sync off. The saved copy was not deleted.");
+          }
+        } else {
+          setSyncMsg("Sync off on this device. Sign in once to also delete the saved copy.");
+        }
+      }
+    },
+    [address, ident, unlockSync],
   );
 
   // The open flow for ONE document at a time.
@@ -441,6 +542,12 @@ export function useSharedOpen() {
     importRooms,
     backupBusy,
     backupMsg,
+    // cross-device sync (encrypted vault)
+    syncOn,
+    syncState,
+    syncMsg,
+    unlockSync,
+    setSync,
     room,
     selectRoom,
     roomDocs,
