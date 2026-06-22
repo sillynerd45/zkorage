@@ -17,7 +17,6 @@ import { useAnchor } from "@/lib/hooks/useAnchor";
 import { short, explorer } from "@/lib/format";
 import { humanError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
-import { Disclosure, Hex } from "@/components/Disclosure";
 import { ProofStatusBadge, ProveWait } from "@/components/StatusBadge";
 import { ConfirmModal } from "@/components/ConfirmModal";
 import { Button } from "@/components/ui/button";
@@ -68,36 +67,32 @@ export default function Anchor() {
   return (
     <div className="space-y-5">
       {/* The section tabs (Overview / Documents / …) live in the layout directly above this. The Documents
-          sub-tabs sit right under them, with one calm line below (the submenu pill is w-fit so it hugs its
-          three items). */}
-      <div className="space-y-2">
-        <div
-          className="flex w-fit max-w-full gap-1 overflow-x-auto rounded-2xl border bg-card p-1.5"
-          role="tablist"
-          aria-label="Documents"
-        >
-          {SUBTABS.map((t) => (
-            <button
-              key={t.key}
-              role="tab"
-              aria-selected={tab === t.key}
-              onClick={() => setTab(t.key)}
-              data-testid={`doc-subtab-${t.key}`}
-              className={cn(
-                "rounded-xl px-3.5 py-2 text-[13px] font-medium transition-colors",
-                tab === t.key
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:bg-accent hover:text-foreground",
-              )}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-        <p className="text-sm text-muted-foreground">Store, open, or browse this room's files.</p>
+          sub-tabs sit right under them (the submenu pill is w-fit so it hugs its three items). */}
+      <div
+        className="flex w-fit max-w-full gap-1 overflow-x-auto rounded-2xl border bg-card p-1.5"
+        role="tablist"
+        aria-label="Documents"
+      >
+        {SUBTABS.map((t) => (
+          <button
+            key={t.key}
+            role="tab"
+            aria-selected={tab === t.key}
+            onClick={() => setTab(t.key)}
+            data-testid={`doc-subtab-${t.key}`}
+            className={cn(
+              "rounded-xl px-3.5 py-2 text-[13px] font-medium transition-colors",
+              tab === t.key
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:bg-accent hover:text-foreground",
+            )}
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
 
-      {/* ── STORE: upload / encrypt / anchor ── */}
+      {/* ── STORE: encrypt + split (browser dealer) + anchor ── */}
       {tab === "store" && (
         <>
           <Card id="store" className="rounded-2xl p-6">
@@ -105,67 +100,23 @@ export default function Anchor() {
               <h2 className="text-base font-semibold tracking-tight">Store a document</h2>
               <ProofStatusBadge state={a.state} />
             </div>
-            {/* Access mode: SHARED = anonymous policy-gated committee doc (browser dealer); DIRECT = a seal to
-                one named recipient (not anonymous). The two have different trust stories, so they sit side by
-                side and the copy below is honest about each. */}
-            <div
-              role="radiogroup"
-              aria-label="Who can open it"
-              className="mt-1 flex w-fit max-w-full gap-1 rounded-2xl border bg-card p-1.5"
-            >
-              {([
-                ["shared", "Shared (anonymous)"],
-                ["direct", "Direct (1:1)"],
-              ] as const).map(([m, label]) => (
-                <button
-                  key={m}
-                  role="radio"
-                  aria-checked={a.accessMode === m}
-                  onClick={() => a.setAccessMode(m)}
-                  data-testid={`access-mode-${m}`}
-                  className={cn(
-                    "rounded-xl px-3.5 py-2 text-[13px] font-medium transition-colors",
-                    a.accessMode === m
-                      ? "bg-primary text-primary-foreground"
-                      : "text-muted-foreground hover:bg-accent hover:text-foreground",
-                  )}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-
-            {a.accessMode === "shared" ? (
-              <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-                The file is encrypted in your browser and its key is split across the{" "}
-                <b className="text-foreground">keepers</b>. Anyone who proves they are a{" "}
-                <b className="text-foreground">member of this room</b> can open it, without revealing which
-                member. The file and its key never reach our server. A copy of the key is sealed to your wallet
-                so you can reopen it on any device.
-              </p>
-            ) : (
-              <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-                The file is sealed to <b className="text-foreground">one recipient's key</b>. This is a direct
-                share, <b className="text-foreground">not anonymous</b>. Encryption happens on the server you
-                run, which briefly holds the key. Use this only when you are sending a file to one named person.
-              </p>
-            )}
+            {/* The Data Room stores a document one way: an anonymous, policy-gated committee document. The
+                file is encrypted and its key split in this browser, and any room member can open it later. */}
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              The file is encrypted in your browser and its key is split across the{" "}
+              <b className="text-foreground">keepers</b>. Anyone who proves they are a{" "}
+              <b className="text-foreground">member of this room</b> can open it, without revealing which
+              member. The file and its key never reach our server. A copy of the key is sealed to your wallet
+              so you can reopen it on any device.
+            </p>
 
             <div className="mt-4">
               <StepStrip
-                steps={
-                  a.accessMode === "shared"
-                    ? [
-                        { icon: Lock, label: "Encrypt in your browser" },
-                        { icon: Users, label: "Split key to keepers" },
-                        { icon: Fingerprint, label: "Anchor fingerprint" },
-                      ]
-                    : [
-                        { icon: Lock, label: "Encrypt on your server" },
-                        { icon: KeyRound, label: "Seal to recipient" },
-                        { icon: Fingerprint, label: "Anchor fingerprint" },
-                      ]
-                }
+                steps={[
+                  { icon: Lock, label: "Encrypt in your browser" },
+                  { icon: Users, label: "Split key to keepers" },
+                  { icon: Fingerprint, label: "Anchor fingerprint" },
+                ]}
               />
             </div>
 
@@ -315,106 +266,51 @@ export default function Anchor() {
                   onChange={(e) => a.setContent(e.target.value)}
                   aria-label="document content"
                   data-testid="doc-content"
-                  placeholder="Paste the document text…"
+                  placeholder="Confidential term sheet. Series A, $4M at $20M pre."
                 />
               )}
             </div>
 
-            {/* Who can open it: SHARED = anyone who proves room membership (no key field); DIRECT = one named
-                recipient's x25519 public key. */}
+            {/* Who can open it: anyone who proves they are a member of this room (no key field). */}
             <div className="mt-7 space-y-3">
               <SectionLabel withRule>Who can open it</SectionLabel>
-              {a.accessMode === "shared" ? (
-                <p className="text-[13px] leading-relaxed text-muted-foreground" data-testid="shared-access-note">
-                  Anyone who proves they are a <b className="text-foreground">member of this room</b> can open
-                  it, anonymously. Approve members in the <b className="text-foreground">Membership</b> tab. A
-                  copy of the key is sealed to your wallet, so you can always reopen it.
-                </p>
-              ) : (
-                <label className="flex flex-col gap-1.5 text-[13px] text-muted-foreground">
-                  Recipient's public key (hex)
-                  <Input
-                    className="font-mono text-xs"
-                    value={a.recipientPub}
-                    onChange={(e) => a.setRecipientPub(e.target.value)}
-                    aria-label="recipient pub"
-                    data-testid="recipient-input"
-                  />
-                </label>
-              )}
+              <p className="text-[13px] leading-relaxed text-muted-foreground" data-testid="shared-access-note">
+                Anyone who proves they are a <b className="text-foreground">member of this room</b> can open
+                it, anonymously. Approve members in the <b className="text-foreground">Membership</b> tab. A
+                copy of the key is sealed to your wallet, so you can always reopen it.
+              </p>
             </div>
 
             <div className="mt-4">
-              {a.accessMode === "shared" ? (
-                <Callout icon={ShieldCheck}>
-                  The file is encrypted and its key split in this browser. Only ciphertext and sealed shares
-                  leave it; the server never sees the key or the contents.
-                </Callout>
-              ) : (
-                <Callout icon={ShieldCheck}>
-                  A direct share is not anonymous: it is sealed to one recipient, and the server you run holds
-                  the key while it encrypts. Only a fingerprint goes on-chain.
-                </Callout>
-              )}
+              <Callout icon={ShieldCheck}>
+                The file is encrypted and its key split in this browser. Only ciphertext and sealed shares
+                leave it; the server never sees the key or the contents.
+              </Callout>
             </div>
-
-            {/* DR1 engine rows (the sealing program + demo recipient key) apply only to the direct seal;
-                demoted behind a "Verify details" expander. */}
-            {a.accessMode === "direct" && (
-              <Disclosure
-                toggleTestId="anchor-engine-details"
-                summary={
-                  <>
-                    The cryptographic engine: the <b>pinned sealing program</b> and the <b>demo recipient key</b>.
-                    Expand to check them.
-                  </>
-                }
-              >
-                {a.info?.dataroomImageId && (
-                  <div data-testid="seal-image">
-                    <Hex label="Sealing program (pinned)" value={a.info.dataroomImageId} chars={8} />
-                  </div>
-                )}
-                {a.info?.recipientPub && (
-                  <div data-testid="recipient-pub">
-                    <Hex label="Demo recipient (x25519)" value={a.info.recipientPub} chars={8} />
-                  </div>
-                )}
-              </Disclosure>
-            )}
 
             <div className="mt-4">
               <Button onClick={() => a.setConfirmAnchor(true)} disabled={a.busy} data-testid="upload">
                 <Lock aria-hidden="true" />
-                {a.busy ? "Working…" : a.accessMode === "shared" ? "Store shared document" : "Store direct share"}
+                {a.busy ? "Working…" : "Store shared document"}
               </Button>
             </div>
 
             <ConfirmModal
               open={a.confirmAnchor}
-              title={a.accessMode === "shared" ? "Encrypt, split & post this document?" : "Encrypt, seal & post this document?"}
+              title="Encrypt, split & post this document?"
               tone="cost"
               confirmLabel="Yes, post it"
               onCancel={() => a.setConfirmAnchor(false)}
               onConfirm={() => {
                 a.setConfirmAnchor(false);
-                if (a.accessMode === "shared") a.onStoreShared();
-                else a.onUpload();
+                a.onStoreShared();
               }}
             >
-              {a.accessMode === "shared" ? (
-                <p>
-                  The file is encrypted and its key split across the keepers in this browser. Only ciphertext
-                  and sealed shares are sent; the server never sees the key or the contents. Your wallet then
-                  signs the on-chain record. Only a tamper-evident fingerprint is posted.
-                </p>
-              ) : (
-                <p>
-                  The document is encrypted and the key sealed to the recipient on the server you run (which
-                  briefly holds the key). Only an encrypted file and a tamper-evident fingerprint are posted.
-                  The contents are never posted. This share is not anonymous.
-                </p>
-              )}
+              <p>
+                The file is encrypted and its key split across the keepers in this browser. Only ciphertext
+                and sealed shares are sent; the server never sees the key or the contents. Your wallet then
+                signs the on-chain record. Only a tamper-evident fingerprint is posted.
+              </p>
             </ConfirmModal>
 
             {a.busy && a.step && (
@@ -424,40 +320,8 @@ export default function Anchor() {
             )}
             <ProveWait
               state={a.state}
-              proveBy={a.proveBy}
-              privacy="The document plaintext stays on the self-hosted prover. Only an encrypted blob and a tamper-evident commitment go on-chain."
+              privacy="The file is encrypted and its key split in your browser. Only an encrypted blob and a tamper-evident commitment go on-chain."
             />
-
-            {a.journal && (
-              <div className="mt-4">
-                <Disclosure
-                  toggleTestId="anchor-journal-details"
-                  detailsLabel="Inspect the public journal"
-                  summary={
-                    <>
-                      Posted. Note that <b>the document key is absent</b>. Only a fingerprint of the file and the
-                      sealed key go on the public record, never the contents or the key in the clear.
-                    </>
-                  }
-                >
-                  <DataRow k="kind" mono={false}>
-                    {a.journal.claimType === 8 ? "Data-room seal" : `type ${a.journal.claimType}`}
-                  </DataRow>
-                  <DataRow k="room">{short(a.journal.roomId, 8)}</DataRow>
-                  <DataRow k="doc">{short(a.journal.docId, 8)}</DataRow>
-                  <DataRow k="file fingerprint" testId="journal-content-hash">
-                    <Hex value={a.journal.contentHash} chars={8} />
-                  </DataRow>
-                  <DataRow k="recipient">x25519 {short(a.journal.recipientPub, 8)}</DataRow>
-                  <DataRow k="sealed key (encrypted)">
-                    <Hex value={a.journal.ct} label="ct" chars={8} />
-                  </DataRow>
-                  <DataRow k="document key" variant="private" testId="k-private">
-                    private (sealed to the recipient; never on the public record in the clear)
-                  </DataRow>
-                </Disclosure>
-              </div>
-            )}
           </Card>
 
           {/* anchor verdict */}
@@ -466,9 +330,8 @@ export default function Anchor() {
               {a.resp.ok ? (
                 <>
                   <Verdict ok>
-                    {a.sharedResult
-                      ? "Stored as a shared document. Anyone who proves they're a member of this room can open it, anonymously."
-                      : "Document posted to the public record (encrypted and sealed to the recipient)"}
+                    Stored as a shared document. Anyone who proves they're a member of this room can open it,
+                    anonymously.
                   </Verdict>
                   <div className="mt-3">
                     {a.resp.txHash && (
@@ -482,9 +345,6 @@ export default function Anchor() {
                           {short(a.resp.txHash, 8)} ↗
                         </a>
                       </DataRow>
-                    )}
-                    {a.resp.result && (
-                      <DataRow k="file fingerprint">{short(a.resp.result.content_hash, 8)}</DataRow>
                     )}
                     {a.resp.blobPointer && (
                       <DataRow k="stored file">

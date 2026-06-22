@@ -42,10 +42,12 @@ test("committee store: the browser deals; the relay gets only ciphertext + seale
   await page.route("**/tx/submit", (r) => r.fulfill(json({ ok: true, txHash: "deadbeefcafe" })));
 
   await page.goto("/app/dataroom/documents#store");
-  // shared is the default access mode
-  await expect(page.getByTestId("access-mode-shared")).toHaveAttribute("aria-checked", "true");
+  // the Data Room stores a document one way now (an anonymous committee doc): no access-mode toggle and no
+  // recipient field, just the shared-membership note.
+  await expect(page.getByRole("heading", { name: "Store a document" })).toBeVisible();
+  await expect(page.getByTestId("access-mode-shared")).toHaveCount(0);
   await expect(page.getByTestId("shared-access-note")).toBeVisible();
-  await expect(page.getByTestId("recipient-input")).toHaveCount(0); // no recipient field in shared mode
+  await expect(page.getByTestId("recipient-input")).toHaveCount(0); // no recipient field anymore
 
   await page.getByTestId("room-label").fill("acme-board-docs");
   await page.getByTestId("store-mode-text").click();

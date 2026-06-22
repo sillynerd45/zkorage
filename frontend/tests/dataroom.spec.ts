@@ -29,21 +29,23 @@ test("dataroom: recipient opens the sealed doc in-browser (faithful); wrong key 
 
   await page.goto("/app/dataroom/documents");
 
-  // STORE sub-tab is the default. The DR1 direct-seal engine rows (seal guest + demo recipient) live under
-  // the "Direct (1:1)" access mode, demoted behind a "Verify details" expander.
+  // STORE sub-tab is the default. The Data Room stores a document one way now: an anonymous, policy-gated
+  // committee document. The old "Shared / Direct" access toggle is gone (Direct was dropped), so there is no
+  // access-mode switch and no recipient-key field, just the shared-membership note.
   await expect(page.getByTestId("room-label")).toBeVisible({ timeout: 30_000 });
-  await page.getByTestId("access-mode-direct").click();
-  await page.getByTestId("anchor-engine-details").click();
-  await expect(page.getByTestId("recipient-pub")).toContainText("x25519");
-  await expect(page.getByTestId("seal-image")).toBeVisible();
+  await expect(page.getByTestId("access-mode-shared")).toHaveCount(0);
+  await expect(page.getByTestId("access-mode-direct")).toHaveCount(0);
+  await expect(page.getByTestId("recipient-input")).toHaveCount(0);
+  await expect(page.getByTestId("shared-access-note")).toBeVisible();
   // the File/Text switcher picks ONE input at a time. File is the default: the drop zone shows, the
   // textarea is not rendered. (We do NOT trigger the ~minutes-long proof in a UI test.)
   await expect(page.getByTestId("store-mode-file")).toHaveAttribute("aria-checked", "true");
   await expect(page.getByTestId("doc-file")).toBeVisible();
   await expect(page.getByTestId("doc-content")).toHaveCount(0);
-  // switching to Text reveals the textarea and hides the drop zone
+  // switching to Text reveals the textarea (placeholder-guided, no prefilled default) and hides the drop zone
   await page.getByTestId("store-mode-text").click();
   await expect(page.getByTestId("doc-content")).toBeVisible();
+  await expect(page.getByTestId("doc-content")).toHaveValue("");
   await expect(page.getByTestId("doc-file")).toHaveCount(0);
   await page.getByTestId("store-mode-file").click(); // back to the default for the rest of the test
   await expect(page.getByTestId("upload")).toBeVisible();
