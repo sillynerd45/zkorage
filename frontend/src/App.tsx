@@ -13,6 +13,7 @@ import Identity from "./pages/app/Identity";
 import Compliance from "./pages/app/Compliance";
 import Payroll from "./pages/app/Payroll";
 import Fundraise from "./pages/app/Fundraise";
+import Contracts from "./pages/app/Contracts";
 import DataRoomLayout from "./pages/app/dataroom/Layout";
 import DataRoomOverview from "./pages/app/dataroom/Overview";
 import Eligibility from "./pages/app/dataroom/Eligibility";
@@ -61,6 +62,7 @@ export default function App() {
         <Route path="compliance" element={<Compliance />} />
         <Route path="payroll" element={<Payroll />} />
         <Route path="fundraise" element={<Fundraise />} />
+        <Route path="contracts" element={<Contracts />} />
         <Route path="dataroom" element={<DataRoomLayout />}>
           <Route index element={<DataRoomOverview />} />
           <Route path="demo" element={<DataroomDemo />} />

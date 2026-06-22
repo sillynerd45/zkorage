@@ -1,20 +1,16 @@
 import { Link } from "react-router-dom";
 import { ArrowRight } from "lucide-react";
 import { GROUPS, byGroup } from "@/lib/content";
-import { useHomeStats } from "@/lib/hooks/useHomeStats";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { NavCard, StatTile } from "@/components/app/blocks";
+import { NavCard } from "@/components/app/blocks";
 
 // The app Home. The "How it works" and "Don't trust, verify" asides moved to the Landing page and Docs.
-// Here we keep the greeting, quick actions, lightweight live stats, and the grouped capability cards
-// (Data Room first, then the proofs). Verify/Explorer/Developer are public surfaces, reached from the footer.
-const APP_GROUPS = ["dataroom", "prove"].map((key) => GROUPS.find((g) => g.key === key)!);
+// Here we keep the greeting, quick actions, and the grouped capability cards (Data Room first, then
+// Bonded Proofs). Verify/Explorer/Developer are public surfaces, reached from the footer.
+const APP_GROUPS = ["dataroom", "bonded"].map((key) => GROUPS.find((g) => g.key === key)!);
 
 export default function Home() {
-  const stats = useHomeStats();
-  const num = (n: number | null) => (n == null ? "–" : n.toLocaleString());
-
   return (
     <div data-testid="dashboard">
       {/* greeting */}
@@ -33,13 +29,6 @@ export default function Home() {
             Verify a proof
           </Link>
         </div>
-      </div>
-
-      {/* live stats */}
-      <div className="mb-8 grid gap-3 sm:grid-cols-3" data-testid="home-stats">
-        <StatTile label="Verified records" value={num(stats.verifiedRecords)} hint="Proof-of-Reserves on-chain" />
-        <StatTile label="Data rooms" value={num(stats.rooms)} hint="created on this engine" />
-        <StatTile label="Capabilities" value="6" hint="5 proofs + the Data Room" />
       </div>
 
       {/* grouped capability cards */}

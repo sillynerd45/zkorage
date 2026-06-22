@@ -1,9 +1,8 @@
 import { Link } from "react-router-dom";
 import { ArrowRight, FileSignature, Cpu, BadgeCheck, Compass, Terminal } from "lucide-react";
-import { byGroup, capability } from "@/lib/content";
+import { capability, type Capability } from "@/lib/content";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { FeatureCard } from "@/components/marketing/blocks";
 
 const STEPS = [
   { icon: FileSignature, t: "Attest", d: "A trusted source signs the private data (custodian, KYC provider, bank)." },
@@ -11,8 +10,30 @@ const STEPS = [
   { icon: BadgeCheck, t: "Verify", d: "Anyone re-checks the proof on Stellar and gets the same answer. No account needed." },
 ];
 
+// A featured pillar card (the two products zkorage leads with: the Data Room and Bonded Proofs). One big
+// click target that opens the pillar in the app.
+function Pillar({ cap, eyebrow }: { cap: Capability; eyebrow: string }) {
+  return (
+    <Link to={cap.to} className="group block focus-visible:outline-none">
+      <div className="overflow-hidden rounded-2xl border bg-card shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-md group-focus-visible:ring-2 group-focus-visible:ring-ring">
+        <div className="grid gap-6 p-7 sm:grid-cols-[1fr_auto] sm:items-center">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand">{eyebrow}</p>
+            <h3 className="mt-1.5 text-2xl font-bold tracking-tight">{cap.title}</h3>
+            <p className="mt-2 max-w-xl text-[15px] leading-relaxed text-muted-foreground">{cap.blurb}</p>
+          </div>
+          <span className={cn(buttonVariants({ size: "lg" }), "pointer-events-none w-full sm:w-auto")}>
+            Open in app <ArrowRight className="size-4" />
+          </span>
+        </div>
+      </div>
+    </Link>
+  );
+}
+
 export default function Landing() {
   const dataroom = capability("dataroom");
+  const bonded = capability("bonded");
   return (
     <div data-testid="overview">
       {/* hero */}
@@ -24,8 +45,9 @@ export default function Landing() {
           Prove a private fact. <span className="text-muted-foreground">Verify it on-chain.</span>
         </h1>
         <p className="mt-4 max-w-2xl text-base leading-relaxed text-muted-foreground">
-          zkorage proves a fact about private, attested data such as reserves, identity, income, or eligibility.
-          Anyone can re-check it on the public ledger, without ever revealing the data behind it.
+          zkorage seals sensitive documents in a private room and proves facts about attested data, so a
+          verifier learns one fact and nothing else. Anyone can re-check the result on the public ledger,
+          without ever revealing the data behind it.
         </p>
         <div className="mt-6 flex flex-wrap items-center gap-3">
           <Link to="/app" className={cn(buttonVariants({ size: "lg" }))} data-testid="hero-open-app">
@@ -56,40 +78,17 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* marquee data room */}
-      {dataroom && (
-        <section className="mb-11">
-          <Link to={dataroom.to} className="group block focus-visible:outline-none">
-            <div className="overflow-hidden rounded-2xl border bg-card shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-md group-focus-visible:ring-2 group-focus-visible:ring-ring">
-              <div className="grid gap-6 p-7 sm:grid-cols-[1fr_auto] sm:items-center">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand">Featured</p>
-                  <h2 className="mt-1.5 text-2xl font-bold tracking-tight">{dataroom.title}</h2>
-                  <p className="mt-2 max-w-xl text-[15px] leading-relaxed text-muted-foreground">
-                    {dataroom.blurb}
-                  </p>
-                </div>
-                <span className={cn(buttonVariants({ size: "lg" }), "pointer-events-none w-full sm:w-auto")}>
-                  Open in app <ArrowRight className="size-4" />
-                </span>
-              </div>
-            </div>
-          </Link>
-        </section>
-      )}
-
-      {/* what you can prove */}
+      {/* the two pillars: Data Room (the headliner) + Bonded Proofs */}
       <section className="mb-12">
         <div className="mb-4">
-          <h2 className="text-lg font-semibold tracking-tight">What you can prove</h2>
+          <h2 className="text-lg font-semibold tracking-tight">What you can do</h2>
           <p className="text-sm text-muted-foreground">
-            Each is a self-contained proof. Open one in the app to run it against the live testnet.
+            Two products on the engine. Open either in the app to run it against the live testnet.
           </p>
         </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          {byGroup("prove").map((c) => (
-            <FeatureCard key={c.key} to={c.to} icon={c.icon} title={c.title} blurb={c.blurb} proves={c.proves} />
-          ))}
+        <div className="space-y-4">
+          {dataroom && <Pillar cap={dataroom} eyebrow="Featured" />}
+          {bonded && <Pillar cap={bonded} eyebrow="Also on zkorage" />}
         </div>
       </section>
 

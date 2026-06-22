@@ -27,7 +27,7 @@ export interface GroupMeta {
 export const GROUPS: GroupMeta[] = [
   { key: "prove", label: "Prove a fact", blurb: "Prove something true about private data without revealing the data." },
   { key: "dataroom", label: "Data Room", blurb: "Share sealed documents and control who can open them, anonymously." },
-  { key: "bonded", label: "Bonded Proofs", blurb: "Lock tokens until a chosen time. The escrow behind upcoming time-bound proofs." },
+  { key: "bonded", label: "Bonded Proofs", blurb: "Lock tokens until a chosen time, and prove facts that hold only while the bond stays locked." },
   { key: "verify", label: "Verify & explore", blurb: "Re-check any proof yourself, or browse every record on the public ledger." },
   { key: "developer", label: "Developer", blurb: "Use zkorage from your own code. There is an SDK, an MCP server, and a REST API." },
 ];
@@ -100,7 +100,7 @@ export const CAPABILITIES: Capability[] = [
     to: "/app/dataroom",
     group: "dataroom",
     icon: FolderLock,
-    blurb: "Upload sealed documents, admit members anonymously, release keys by committee, verify authenticity.",
+    blurb: "Share sealed documents and admit members anonymously. Files stay encrypted, and only a tamper-evident fingerprint goes on the public record.",
     proves: "anonymous eligibility + key release",
     cta: "Open the Data Room",
   },
@@ -110,7 +110,7 @@ export const CAPABILITIES: Capability[] = [
     to: "/app/bonded",
     group: "bonded",
     icon: Lock,
-    blurb: "Lock tokens until a chosen time and manage your locks. The bond behind upcoming time-bound proofs.",
+    blurb: "Lock tokens until a chosen time, then prove a fact that holds only while the bond stays locked.",
     proves: "time-locked bond",
     cta: "Open Bonded Proofs",
   },
