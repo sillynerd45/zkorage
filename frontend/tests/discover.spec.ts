@@ -43,6 +43,8 @@ test("discover: browse the directory (coarse buckets, no exact counts) + resolve
   await expect(page.getByTestId("bucket-badge").first()).toHaveAttribute("data-tier", "ok");
   await expect(page.getByText("Unnamed room")).toBeVisible(); // LISTED2 opted out of a name
 
+  // switch to the "Find by id" sub-tab for the resolve-by-id flow (the directory is the default sub-tab).
+  await page.getByTestId("discover-subtab-find").click();
   // resolve an UNLISTED room by exact id -> discoverable with a bucket, marked unlisted.
   await page.getByTestId("discover-lookup-input").fill(UNLISTED);
   await page.getByTestId("discover-lookup-btn").click();
