@@ -175,22 +175,9 @@ export const DATAROOM_TABS: DataroomTab[] = [
     label: "Discover",
     blurb: "Browse rooms that opted into the public directory, or look one up by its id, then ask to join.",
   },
-  {
-    slug: "eligibility",
-    label: "Get in anonymously",
-    blurb: "Prove you're allowed in without revealing who you are. Each pass works once.",
-    star: true,
-  },
-  {
-    slug: "disclosure",
-    label: "Share a masked copy",
-    blurb: "Prove a fact about a sealed document, then share a masked copy with an auditor that's provably the real file.",
-  },
-  {
-    slug: "authenticity",
-    label: "Prove a signed fact",
-    blurb: 'Prove a fact a bank signed for you (e.g. "balance ≥ X") without showing the statement or value.',
-  },
+  // "Get in anonymously" (eligibility), "Share a masked copy" (disclosure), and "Prove a signed fact"
+  // (authenticity) are retired from the nav to keep the focus on the room flow + Bonded Proofs. The routes,
+  // pages, and their specs stay (deep-linkable), so this is reversible: add the entries back to show them.
 ];
 
 export const dataroomTab = (slug: string) => DATAROOM_TABS.find((t) => t.slug === slug);
