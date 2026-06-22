@@ -34,14 +34,15 @@ import OpenShared from "./OpenShared";
 //   Open            = open a room you are approved for (the member flow; the headline, and the default).
 //   Store           = encrypt + store a document for a room you own.
 //   My files        = browse the rooms your wallet owns and open your own files (no membership proof).
-//   Open with a key = the legacy recipient-private-key open for single-recipient docs (advanced, last).
-// Deep links select the matching sub-tab (#open / #store / #mine / #bykey); a legacy #browse maps to My files.
+// "Open with a key" (the legacy recipient-private-key open for single-recipient DR1 docs) is RETIRED from the
+// submenu (no current scenario): the pill is gone, but the view still exists and is reachable via the My-files
+// hand-off for a legacy doc, or a direct #bykey link, so it is reversible (re-add it to SUBTABS to show it).
+// Deep links select the matching sub-tab (#open / #store / #mine, plus the unlisted #bykey); legacy #browse maps to My files.
 type DocTab = "open" | "store" | "mine" | "bykey";
 const SUBTABS: { key: DocTab; label: string }[] = [
   { key: "open", label: "Open" },
   { key: "store", label: "Store" },
   { key: "mine", label: "My files" },
-  { key: "bykey", label: "Open with a key" },
 ];
 const tabFromHash = (h: string): DocTab => {
   const id = h.replace("#", "");

@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  getCommitteeInfo,
-  getCommitteeDocument,
   getDataroomDocuments,
   getDirectory,
   getEnrollStatus,
@@ -10,8 +8,6 @@ import {
   queueAccess,
   getQueueStatus,
   getProveStatus,
-  type CommitteeInfoResp,
-  type CommitteeDoc,
   type DataroomDoc,
   type Bundle,
 } from "@/lib/api";
@@ -21,7 +17,6 @@ import { sdk } from "@/lib/sdk";
 import { useWallet } from "@/lib/wallet/WalletContext";
 import { useDataRoomIdentity } from "@/lib/hooks/useDataRoomIdentity";
 import { readJoinRequests, writeJoinRequests } from "@/lib/dataroom/requests";
-import { exportRoomsBackup, importRoomsBackup, mergeJoinRequests } from "@/lib/dataroom/roomsBackup";
 import { pullVault, pushVault, forgetVault, isVaultSyncOn, setVaultSyncOn } from "@/lib/dataroom/vault";
 import { writeOpenTicket, clearOpenTicket, findOpenTicket } from "@/lib/dataroom/openTicket";
 import { isHex32 } from "@/lib/format";
@@ -65,8 +60,6 @@ export type SyncState =
 export function useSharedOpen() {
   const { address, connected, connect, status: walletStatus } = useWallet();
   const ident = useDataRoomIdentity();
-
-  const [committee, setCommittee] = useState<CommitteeInfoResp | null>(null);
 
   // The selected room ("" = none; show the room list). Selecting a room loads its docs + anonymity meter.
   const [room, setRoom] = useState("");
@@ -133,72 +126,6 @@ export function useSharedOpen() {
       setRefreshing(false);
     }
   }, [address, ident, reloadOpenable]);
-
-  // Move your rooms to another device. The list is not a secret (room ids + your labels + status), but we
-  // encrypt the file under a key HKDF'd from your wallet signature, so only the same wallet can read it and our
-  // server never holds the wallet->rooms mapping. On the new device you connect the same wallet, import, and
-  // re-derive access per room (Refresh confirms the live status). This is the self-custody alternative to
-  // server-side sync, which would re-create the cross-room correlation Model B is built to avoid.
-  const [backupBusy, setBackupBusy] = useState(false);
-  const [backupMsg, setBackupMsg] = useState<string | null>(null);
-  const exportRooms = useCallback(async () => {
-    if (!address) return;
-    setBackupBusy(true);
-    setBackupMsg(null);
-    try {
-      const rooms = readJoinRequests(address);
-      if (rooms.length === 0) {
-        setBackupMsg("No rooms to export yet. Request to join a room first.");
-        return;
-      }
-      const sig = await ident.getSignature();
-      const file = await exportRoomsBackup(sig, rooms);
-      const blob = new Blob([JSON.stringify(file, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "zkorage-rooms-backup.json";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-      setBackupMsg(`Exported your room list (${rooms.length}), encrypted to your wallet.`);
-    } catch (e) {
-      setBackupMsg(String((e as Error).message ?? e));
-    } finally {
-      setBackupBusy(false);
-    }
-  }, [address, ident]);
-  const importRooms = useCallback(
-    async (file: File) => {
-      if (!address) return;
-      setBackupBusy(true);
-      setBackupMsg(null);
-      try {
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(await file.text());
-        } catch {
-          throw new Error("That file is not a valid backup.");
-        }
-        const sig = await ident.getSignature();
-        const incoming = await importRoomsBackup(sig, parsed);
-        const merged = mergeJoinRequests(readJoinRequests(address), incoming);
-        writeJoinRequests(address, merged);
-        reloadOpenable(address);
-        // best-effort push the merged list to the vault (silent: import already signed, so no extra prompt)
-        if (isVaultSyncOn(address) && ident.hasSignature(address)) {
-          try { await pushVault(address, await ident.getSignature()); setSyncState("synced"); } catch { /* keep local */ }
-        }
-        setBackupMsg(`Imported ${incoming.length} room(s). Press Refresh to update their status.`);
-      } catch (e) {
-        setBackupMsg(String((e as Error).message ?? e));
-      } finally {
-        setBackupBusy(false);
-      }
-    },
-    [address, ident, reloadOpenable],
-  );
 
   // Pull-on-connect (silent only if the wallet already signed this session) + propagate the merged union back.
   // A new object is returned by useDataRoomIdentity each render, so a once-guard keyed by address prevents the
@@ -282,7 +209,6 @@ export function useSharedOpen() {
   const [phase, setPhase] = useState<OpenPhase>("idle");
   const [identity, setIdentity] = useState<DataRoomIdentity | null>(null);
   const [access, setAccess] = useState<RoomAccess | null>(null);
-  const [committeeDoc, setCommitteeDoc] = useState<CommitteeDoc | null>(null);
   const [proveStep, setProveStep] = useState("");
   const [proveBy, setProveBy] = useState<string | null>(null);
   const [flushAt, setFlushAt] = useState<number | null>(null);
@@ -299,8 +225,6 @@ export function useSharedOpen() {
   // identity is now different. open() / setupAccess() / the resume effect each re-arm cancelled=false when they
   // start, so this only kills work that is mid-flight when the account changes.
   useEffect(() => { cancelled.current = true; }, [address]);
-
-  useEffect(() => { getCommitteeInfo().then(setCommittee).catch(() => {}); }, []);
 
   // Load the selected room's document list (public on-chain fingerprints, committee kind only) + member count.
   useEffect(() => {
@@ -322,7 +246,6 @@ export function useSharedOpen() {
     setOpenDocId(null);
     setPhase("idle");
     setAccess(null);
-    setCommitteeDoc(null);
     setOpened(null);
     setFlowErr(null);
     setProveStep("");
@@ -456,10 +379,6 @@ export function useSharedOpen() {
       setFlowErr(null);
       setProveStep("");
       setPhase("checking");
-      // load the doc's public fingerprints for the verify panel (display only; ignore if the room changed)
-      getCommitteeDocument(room.trim(), docId.trim())
-        .then((r) => { if (!cancelled.current) setCommitteeDoc(r.document); })
-        .catch(() => { if (!cancelled.current) setCommitteeDoc(null); });
       try {
         const id = await ident.derive(room.trim());
         if (!id) { setFlowErr(ident.error ?? "Could not derive your identity from the wallet."); setPhase("error"); return; }
@@ -532,16 +451,11 @@ export function useSharedOpen() {
     walletStatus,
     deriving: ident.busy,
     drift: ident.drift,
-    committee,
     // rooms + docs
     openableRooms,
     directory,
     refreshRooms,
     refreshing,
-    exportRooms,
-    importRooms,
-    backupBusy,
-    backupMsg,
     // cross-device sync (encrypted vault)
     syncOn,
     syncState,
@@ -560,7 +474,6 @@ export function useSharedOpen() {
     phase,
     identity,
     access,
-    committeeDoc,
     proveStep,
     proveBy,
     flushAt,

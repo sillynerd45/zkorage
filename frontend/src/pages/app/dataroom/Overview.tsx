@@ -1,4 +1,4 @@
-import { ExternalLink, Files, KeyRound, Lock, Users, type LucideIcon } from "lucide-react";
+import { ExternalLink, Files, Lock, Users, type LucideIcon } from "lucide-react";
 import { Link } from "react-router-dom";
 import { GlossaryTip } from "@/components/GlossaryTip";
 import { Disclosure } from "@/components/Disclosure";
@@ -31,14 +31,6 @@ const HERO: Task = {
 };
 
 const TASKS: Task[] = [
-  {
-    to: "/app/dataroom/documents#bykey",
-    label: "Open with a key",
-    blurb: "Decrypt a file in your browser with the recipient's key. Your key never leaves the page.",
-    testid: "task-open",
-    icon: KeyRound,
-    category: "Documents",
-  },
   {
     to: "/app/dataroom/documents#mine",
     label: "My files",
