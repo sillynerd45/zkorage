@@ -169,7 +169,7 @@ test("membership: an approved request offers Open documents; a pending one has n
   // only the approved row has an action: "Open documents" deep-linking to the access tab with the room prefilled.
   const openLink = page.getByTestId("request-open");
   await expect(openLink).toHaveCount(1);
-  await expect(openLink).toHaveAttribute("href", `/app/dataroom/access?room=${JOIN_ROOM}`);
+  await expect(openLink).toHaveAttribute("href", `/app/dataroom/documents?room=${JOIN_ROOM}#open`);
 });
 
 test("membership: renders dark + requires a wallet", async ({ page }) => {

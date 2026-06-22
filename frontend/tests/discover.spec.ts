@@ -96,7 +96,7 @@ test("discover: reflects your local request status on the directory buttons", as
   // approved -> "Open" deep-links to the access tab; pending -> "Requested"; neither says "Request to join".
   const openLink = page.getByTestId("discover-open");
   await expect(openLink).toBeVisible();
-  await expect(openLink).toHaveAttribute("href", `/app/dataroom/access?room=${LISTED1}`);
+  await expect(openLink).toHaveAttribute("href", `/app/dataroom/documents?room=${LISTED1}#open`);
   await expect(page.getByTestId("discover-requested")).toBeVisible();
   await expect(page.getByTestId("discover-join")).toHaveCount(0);
 });

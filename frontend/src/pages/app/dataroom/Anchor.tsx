@@ -28,20 +28,27 @@ import { Card } from "@/components/ui/card";
 import { DataRow, Verdict } from "@/components/app/blocks";
 import { DecryptedFile } from "@/components/app/DecryptedFile";
 import { Callout, CopyIconButton, GroupLabel, SectionLabel, StepStrip } from "@/components/app/dataroom/kit";
+import OpenShared from "./OpenShared";
 
-// The Documents page is a small submenu (Store / Open / Browse) instead of one long scroll. The Overview's
-// deep links (#store / #open / #browse) select the matching sub-tab, so the entry points still work. One
-// sub-tab shows at a time. The tab/submenu styling is unchanged in this pass; only the body of each sub-tab
-// was reworked (calmer copy, step strips, grouped fields, callouts, a drop zone, and a document list).
-type DocTab = "store" | "open" | "browse";
+// The Documents page collects every document action under one tab as a submenu, so there is ONE place to open.
+//   Open            = open a room you are approved for (the member flow; the headline, and the default).
+//   Store           = encrypt + store a document for a room you own.
+//   My files        = browse the rooms your wallet owns and open your own files (no membership proof).
+//   Open with a key = the legacy recipient-private-key open for single-recipient docs (advanced, last).
+// Deep links select the matching sub-tab (#open / #store / #mine / #bykey); a legacy #browse maps to My files.
+type DocTab = "open" | "store" | "mine" | "bykey";
 const SUBTABS: { key: DocTab; label: string }[] = [
-  { key: "store", label: "Store" },
   { key: "open", label: "Open" },
-  { key: "browse", label: "Browse" },
+  { key: "store", label: "Store" },
+  { key: "mine", label: "My files" },
+  { key: "bykey", label: "Open with a key" },
 ];
 const tabFromHash = (h: string): DocTab => {
   const id = h.replace("#", "");
-  return id === "open" || id === "browse" ? id : "store";
+  if (id === "store") return "store";
+  if (id === "mine" || id === "browse") return "mine"; // legacy #browse -> My files
+  if (id === "bykey") return "bykey";
+  return "open"; // the member open is the default + the headline
 };
 
 // The store flow's four phases. Three of them prompt the wallet (a Soroban tx for the room + the anchor, a
@@ -142,12 +149,12 @@ export default function Anchor() {
     setTab(tabFromHash(hash));
   }, [hash]);
 
-  // Browse → Open hand-off for a legacy DR1 (single-recipient) doc: prefill the room/doc and switch to the
-  // Open sub-tab, where the reader supplies the private key (Browse can't know the recipient's key).
+  // My files → "Open with a key" hand-off for a legacy DR1 (single-recipient) doc: prefill the room/doc and
+  // switch to the by-key sub-tab, where the reader supplies the private key (the list can't know it).
   const openFromBrowse = (docId: string) => {
     a.setOpenRoom(a.browseRoom);
     a.setOpenDoc(docId);
-    setTab("open");
+    setTab("bykey");
   };
 
   // Open a doc from the Browse list. A committee doc (the kind the Store form makes) the owner reopens INLINE
@@ -188,6 +195,10 @@ export default function Anchor() {
           </button>
         ))}
       </div>
+
+      {/* ── OPEN: the member open (room you're approved for → prove once → keepers release the key). The whole
+          flow lives in OpenShared; embedding it here makes Documents the single place to open. ── */}
+      {tab === "open" && <OpenShared />}
 
       {/* ── STORE: encrypt + split (browser dealer) + anchor ── */}
       {tab === "store" && (
@@ -503,9 +514,9 @@ export default function Anchor() {
         </>
       )}
 
-      {/* ── OPEN: recipient open (key-free, client-side) ── */}
-      {tab === "open" && (
-        <Card id="open" className="rounded-2xl p-6">
+      {/* ── OPEN WITH A KEY: legacy recipient open (paste a private key; key-free, client-side) ── */}
+      {tab === "bykey" && (
+        <Card id="bykey" className="rounded-2xl p-6">
           <h2 className="text-base font-semibold tracking-tight">Open with a key</h2>
           <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
             The recipient opens it with their private key. It's fetched, fingerprint-checked, and decrypted
@@ -625,12 +636,12 @@ export default function Anchor() {
         </Card>
       )}
 
-      {/* ── BROWSE: your documents (rooms your wallet owns on-chain) ── */}
-      {tab === "browse" && (
-        <Card id="browse" className="rounded-2xl p-6">
+      {/* ── MY FILES: your documents (rooms your wallet owns on-chain) ── */}
+      {tab === "mine" && (
+        <Card id="mine" className="rounded-2xl p-6">
           <div className="mb-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-base font-semibold tracking-tight">Browse documents</h2>
+              <h2 className="text-base font-semibold tracking-tight">My files</h2>
               {a.connected && (
                 <div className="relative">
                   <Search

@@ -1,4 +1,4 @@
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import MarketingShell from "./shells/MarketingShell";
 import AppShell from "./shells/AppShell";
 // public (marketing top-bar)
@@ -24,7 +24,11 @@ import DataroomAnchor from "./pages/app/dataroom/Anchor";
 import DataroomMembership from "./pages/app/dataroom/Membership";
 import DataroomDiscover from "./pages/app/dataroom/Discover";
 import DataroomAuthenticity from "./pages/app/dataroom/Authenticity";
-import DataroomOpenShared from "./pages/app/dataroom/OpenShared";
+// The member open now lives under Documents (#open). The old /access route redirects there, preserving ?room=.
+function DataroomAccessRedirect() {
+  const { search } = useLocation();
+  return <Navigate to={`/app/dataroom/documents${search}#open`} replace />;
+}
 import BondedLayout from "./pages/app/bonded/Layout";
 import BondedOverview from "./pages/app/bonded/Overview";
 import BondedBalances from "./pages/app/bonded/Balances";
@@ -61,9 +65,9 @@ export default function App() {
           <Route index element={<DataRoomOverview />} />
           <Route path="demo" element={<DataroomDemo />} />
           <Route path="eligibility" element={<Eligibility />} />
-          <Route path="access" element={<DataroomOpenShared />} />
-          {/* "release" + "policy" are folded into "access" (Open a shared document) in the tab bar, but the
-              routes stay so the DR3/DR6 deep-dive pages (and their specs) remain reachable by direct URL. */}
+          <Route path="access" element={<DataroomAccessRedirect />} />
+          {/* "release" + "policy" are folded into the member open in the tab bar, but the routes stay so the
+              DR3/DR6 deep-dive pages (and their specs) remain reachable by direct URL. */}
           <Route path="release" element={<DataroomRelease />} />
           <Route path="disclosure" element={<DataroomDisclosure />} />
           <Route path="policy" element={<DataroomPolicy />} />

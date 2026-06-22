@@ -3,6 +3,7 @@ import {
   getCommitteeInfo,
   getCommitteeDocument,
   getDataroomDocuments,
+  getDirectory,
   getEnrollStatus,
   getEligible,
   proveAccess,
@@ -19,7 +20,7 @@ import { signDataRoomAccess, type DataRoomIdentity, type OpenedCommitteeDocument
 import { sdk } from "@/lib/sdk";
 import { useWallet } from "@/lib/wallet/WalletContext";
 import { useDataRoomIdentity } from "@/lib/hooks/useDataRoomIdentity";
-import { readJoinRequests } from "@/lib/dataroom/requests";
+import { readJoinRequests, writeJoinRequests } from "@/lib/dataroom/requests";
 import { writeOpenTicket, clearOpenTicket, findOpenTicket } from "@/lib/dataroom/openTicket";
 import { isHex32 } from "@/lib/format";
 
@@ -66,14 +67,51 @@ export function useSharedOpen() {
 
   // The rooms this wallet is approved for, from the local request history (this browser). "eligible" = approved.
   const [openableRooms, setOpenableRooms] = useState<{ roomId: string; label?: string }[]>([]);
-  useEffect(() => {
-    if (!connected || !address) { setOpenableRooms([]); return; }
+  const reloadOpenable = useCallback((addr: string | null) => {
     setOpenableRooms(
-      readJoinRequests(address)
-        .filter((r) => r.state === "eligible")
-        .map((r) => ({ roomId: r.roomId, label: r.label })),
+      addr
+        ? readJoinRequests(addr).filter((r) => r.state === "eligible").map((r) => ({ roomId: r.roomId, label: r.label }))
+        : [],
     );
-  }, [connected, address]);
+  }, []);
+  useEffect(() => { reloadOpenable(connected ? address : null); }, [connected, address, reloadOpenable]);
+
+  // Public directory names/descriptions (listed rooms only) so an approved room shows a human name like the
+  // Discover tab, not just an id. One public read; a private/unlisted room falls back to your own label.
+  const [directory, setDirectory] = useState<Record<string, { name: string | null; description: string | null }>>({});
+  useEffect(() => {
+    getDirectory()
+      .then((r) => {
+        const m: Record<string, { name: string | null; description: string | null }> = {};
+        for (const room of r.rooms) m[room.roomId.toLowerCase()] = { name: room.name, description: room.description };
+        setDirectory(m);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Re-check the live status of every room in the local history (one cached wallet signature), persist it, and
+  // recompute the approved list. This promotes a room into "Rooms you can open" right after the owner approves
+  // it, with no re-request. Leak-neutral: it only re-reads enroll status for rooms you already requested.
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshRooms = useCallback(async () => {
+    if (!address) return;
+    setRefreshing(true);
+    try {
+      const list = readJoinRequests(address);
+      const updated = [];
+      for (const r of list) {
+        try {
+          const id = await ident.derive(r.roomId);
+          const s = id ? await getEnrollStatus(r.roomId, id.idCommitment).catch(() => null) : null;
+          updated.push(s ? { ...r, state: s.state } : r);
+        } catch { updated.push(r); }
+      }
+      writeJoinRequests(address, updated);
+      reloadOpenable(address);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [address, ident, reloadOpenable]);
 
   // The open flow for ONE document at a time.
   const [openDocId, setOpenDocId] = useState<string | null>(null);
@@ -333,6 +371,9 @@ export function useSharedOpen() {
     committee,
     // rooms + docs
     openableRooms,
+    directory,
+    refreshRooms,
+    refreshing,
     room,
     selectRoom,
     roomDocs,

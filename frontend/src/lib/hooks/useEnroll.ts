@@ -117,11 +117,15 @@ export function useEnroll() {
   // the wallet once; the rest reuse the cached signature) and read its current state. Sequential to avoid a
   // signature race on the shared cache.
   const refreshRequests = useCallback(async () => {
-    if (!address || myRequests.length === 0) return;
+    if (!address) return;
+    // Re-read from disk (not the stale `myRequests` snapshot) so a request the Open tab's Refresh wrote in the
+    // meantime is not clobbered. Both refreshers do read-modify-write on the same per-wallet key.
+    const list = readJoinRequests(address);
+    if (list.length === 0) return;
     setRequestsBusy(true);
     try {
       const updated: JoinRequest[] = [];
-      for (const r of myRequests) {
+      for (const r of list) {
         try {
           const ident = await id.derive(r.roomId);
           const s = ident ? await getEnrollStatus(r.roomId, ident.idCommitment).catch(() => null) : null;
@@ -132,7 +136,7 @@ export function useEnroll() {
     } finally {
       setRequestsBusy(false);
     }
-  }, [address, myRequests, id, persistRequests]);
+  }, [address, id, persistRequests]);
 
   // --- owner: approve members of a room you own ---
   const [myRooms, setMyRooms] = useState<MyRoom[]>([]);

@@ -27,11 +27,11 @@ test("dataroom: recipient opens the sealed doc in-browser (faithful); wrong key 
   const consoleErrors: string[] = [];
   page.on("console", (m) => { if (m.type() === "error") consoleErrors.push(m.text()); });
 
-  await page.goto("/app/dataroom/documents");
-
-  // STORE sub-tab is the default. The Data Room stores a document one way now: an anonymous, policy-gated
-  // committee document. The old "Shared / Direct" access toggle is gone (Direct was dropped), so there is no
-  // access-mode switch and no recipient-key field, just the shared-membership note.
+  // The Documents default sub-tab is now the member Open; deep-link to Store for the store assertions. The
+  // Data Room stores a document one way now: an anonymous, policy-gated committee document. The old "Shared /
+  // Direct" access toggle is gone (Direct was dropped), so there is no access-mode switch and no recipient-key
+  // field, just the shared-membership note.
+  await page.goto("/app/dataroom/documents#store");
   await expect(page.getByTestId("room-label")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("access-mode-shared")).toHaveCount(0);
   await expect(page.getByTestId("access-mode-direct")).toHaveCount(0);
@@ -50,15 +50,15 @@ test("dataroom: recipient opens the sealed doc in-browser (faithful); wrong key 
   await page.getByTestId("store-mode-file").click(); // back to the default for the rest of the test
   await expect(page.getByTestId("upload")).toBeVisible();
 
-  // BROWSE sub-tab: with no wallet, it asks you to connect — Browse shows the rooms YOU own, so a fresh
-  // visitor sees nothing they didn't store (no auto-loaded seeded room). There is no "contents" column
-  // either: every document is encrypted by default (the subtitle says so).
-  await page.getByTestId("doc-subtab-browse").click();
+  // MY FILES sub-tab: with no wallet, it asks you to connect — it shows the rooms YOU own, so a fresh visitor
+  // sees nothing they didn't store (no auto-loaded seeded room). There is no "contents" column either: every
+  // document is encrypted by default (the subtitle says so).
+  await page.getByTestId("doc-subtab-mine").click();
   await expect(page.getByTestId("browse-connect-prompt")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("Contents stay encrypted")).toBeVisible();
 
-  // OPEN sub-tab — RECIPIENT OPEN (prefilled demo doc + demo recipient secret) → faithful + decrypted plaintext
-  await page.getByTestId("doc-subtab-open").click();
+  // OPEN WITH A KEY sub-tab — RECIPIENT OPEN (prefilled demo doc + demo recipient secret) → faithful plaintext
+  await page.getByTestId("doc-subtab-bykey").click();
   await page.getByTestId("open-btn").click();
   const result = page.getByTestId("open-result");
   await expect(result).toBeVisible({ timeout: 60_000 });
@@ -115,8 +115,7 @@ test("dataroom store: the File/Text switcher shows one input at a time and prese
 test("dataroom Browse: a fresh connected wallet sees only its own rooms (empty), not a seeded doc", async ({ page }) => {
   // THE original complaint: a brand-new connected address should NOT see a document it never stored.
   await page.addInitScript(freighterMock());
-  await page.goto("/app/dataroom/documents");
-  await page.getByTestId("doc-subtab-browse").click();
+  await page.goto("/app/dataroom/documents#mine");
   // Connected, but this address owns no rooms on-chain → the empty state (no auto-loaded seeded room).
   await expect(page.getByTestId("browse-empty")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("dataroom-docs")).toHaveCount(0);
@@ -149,7 +148,7 @@ test("dataroom Browse: lists a committee doc and wires the owner-open", async ({
     ] }),
   }));
 
-  await page.goto("/app/dataroom/documents#browse");
+  await page.goto("/app/dataroom/documents#mine");
   await page.getByTestId("my-room").first().click({ timeout: 30_000 });
   // the committee doc renders (tagged kind=committee, anonymous keeper-released subtitle, not a recipient seal)
   const row = page.getByTestId("doc-row").first();
@@ -191,15 +190,19 @@ test("dataroom overview: task-oriented cards route to the right place; guided-de
   await expect(page.getByText("DataRoom contract")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("storage")).toContainText(/Cloudflare R2|local/);
 
-  // "Open with a key" deep-links straight into the Documents page's Open sub-tab (the recipient-key open)
+  // the headline member-open card points to Documents > Open (assert the link before navigating away)
+  await expect(page.getByTestId("task-access")).toHaveAttribute("href", /\/dataroom\/documents#open$/);
+
+  // "Open with a key" (the recipient-key card) deep-links to the by-key sub-tab
   await page.getByTestId("task-open").click();
-  await expect(page).toHaveURL(/\/dataroom\/documents#open$/);
+  await expect(page).toHaveURL(/\/dataroom\/documents#bykey$/);
   await expect(page.getByRole("heading", { name: "Open with a key" })).toBeVisible();
 
-  // and that one page exposes Store / Open / Browse as a submenu
-  await expect(page.getByTestId("doc-subtab-store")).toBeVisible();
+  // and the Documents page now exposes the consolidated submenu: Open / Store / My files / Open with a key
   await expect(page.getByTestId("doc-subtab-open")).toBeVisible();
-  await expect(page.getByTestId("doc-subtab-browse")).toBeVisible();
+  await expect(page.getByTestId("doc-subtab-store")).toBeVisible();
+  await expect(page.getByTestId("doc-subtab-mine")).toBeVisible();
+  await expect(page.getByTestId("doc-subtab-bykey")).toBeVisible();
 });
 
 // M7 — the read-only showcase panel on the Overview: a wallet-free demonstration of the timing defense (a
