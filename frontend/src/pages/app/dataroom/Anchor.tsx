@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useLocation } from "react-router-dom";
 import {
   Download,
   FileText,
   Fingerprint,
   KeyRound,
+  Loader2,
   Lock,
   LockKeyholeOpen,
   Plus,
@@ -18,7 +20,7 @@ import { useAnchor, type StoreStage } from "@/lib/hooks/useAnchor";
 import { short, explorer } from "@/lib/format";
 import { humanError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
-import { ProofStatusBadge, ProveWait } from "@/components/StatusBadge";
+import { ProofStatusBadge } from "@/components/StatusBadge";
 import { ConfirmModal } from "@/components/ConfirmModal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -53,46 +55,79 @@ const STORE_STEPS: { key: Exclude<StoreStage, "idle" | "done">; label: string; s
   { key: "anchor", label: "Anchor the document on-chain", signs: true },
 ];
 
-function StoreStepper({ stage }: { stage: StoreStage }) {
-  if (stage === "idle") return null;
+// A blocking progress DIALOG shown while a store is in flight, so the (multi-prompt) flow is obvious instead
+// of a quiet line under the button. It is not dismissable (you can't cancel a wallet flow mid-signature); it
+// closes when the store finishes (success → verdict card, failure → error). Animation: a determinate bar that
+// grows per completed phase + a spinner on the active step, so it visibly "works" even while waiting on the
+// wallet. The Freighter popup appears in its own window, on top of this.
+function StoreProgressDialog({ open, stage, step }: { open: boolean; stage: StoreStage; step: string }) {
+  if (!open) return null;
   const order = STORE_STEPS.map((s) => s.key) as StoreStage[];
-  const activeIdx = stage === "done" ? STORE_STEPS.length : order.indexOf(stage);
-  return (
-    <ol className="mt-4 space-y-2 rounded-xl border bg-muted/30 p-3" data-testid="store-stepper" aria-label="Storing the document">
-      {STORE_STEPS.map((s, i) => {
-        const status = i < activeIdx ? "done" : i === activeIdx ? "active" : "pending";
-        return (
-          <li
-            key={s.key}
-            data-testid={`store-step-${s.key}`}
-            data-status={status}
-            className="flex items-center gap-2.5 text-[13px]"
-          >
-            <span
-              className={cn(
-                "grid size-5 shrink-0 place-items-center rounded-full border text-[11px] font-medium",
-                status === "done"
-                  ? "border-success/50 bg-success/10 text-success"
-                  : status === "active"
-                    ? "border-brand/50 bg-brand/10 text-brand"
-                    : "border-input text-muted-foreground",
-              )}
-            >
-              {status === "done" ? "✓" : i + 1}
-            </span>
-            <span className={cn(status === "pending" ? "text-muted-foreground" : "text-foreground", status === "active" && "font-medium")}>
-              {s.label}
-            </span>
-            {s.signs && (
-              <span className="rounded-full border px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                wallet
-              </span>
-            )}
-            {status === "active" && <span className="size-1.5 animate-pulse-dot rounded-full bg-brand" aria-hidden="true" />}
-          </li>
-        );
-      })}
-    </ol>
+  const activeIdx = stage === "done" ? STORE_STEPS.length : Math.max(0, order.indexOf(stage));
+  const pct = Math.round((activeIdx / STORE_STEPS.length) * 100);
+  return createPortal(
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-5 backdrop-blur-sm" data-testid="store-progress-backdrop">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-busy="true"
+        aria-label="Storing your document"
+        data-testid="store-progress"
+        className="w-full max-w-[460px] animate-fade-in rounded-xl border bg-card p-6 text-card-foreground shadow-xl"
+      >
+        <div className="flex items-center gap-2.5">
+          <Loader2 className="size-4 animate-spin text-brand" aria-hidden="true" />
+          <h2 className="text-base font-semibold tracking-tight">Storing your document</h2>
+        </div>
+        <div
+          className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted"
+          role="progressbar"
+          aria-valuenow={pct}
+          aria-valuemin={0}
+          aria-valuemax={100}
+        >
+          <div className="h-full rounded-full bg-brand transition-[width] duration-500 ease-out" style={{ width: `${Math.max(8, pct)}%` }} />
+        </div>
+        <ol className="mt-4 space-y-2" data-testid="store-stepper" aria-label="Storing the document">
+          {STORE_STEPS.map((s, i) => {
+            const status = i < activeIdx ? "done" : i === activeIdx ? "active" : "pending";
+            return (
+              <li
+                key={s.key}
+                data-testid={`store-step-${s.key}`}
+                data-status={status}
+                className="flex items-center gap-2.5 text-[13px]"
+              >
+                <span
+                  className={cn(
+                    "grid size-5 shrink-0 place-items-center rounded-full border text-[11px] font-medium",
+                    status === "done"
+                      ? "border-success/50 bg-success/10 text-success"
+                      : status === "active"
+                        ? "border-brand/50 bg-brand/10 text-brand"
+                        : "border-input text-muted-foreground",
+                  )}
+                >
+                  {status === "done" ? "✓" : status === "active" ? <Loader2 className="size-3 animate-spin" aria-hidden="true" /> : i + 1}
+                </span>
+                <span className={cn(status === "pending" ? "text-muted-foreground" : "text-foreground", status === "active" && "font-medium")}>
+                  {s.label}
+                </span>
+                {s.signs && (
+                  <span className="rounded-full border px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                    wallet
+                  </span>
+                )}
+              </li>
+            );
+          })}
+        </ol>
+        <p className="mt-3 text-xs leading-relaxed text-muted-foreground" role="status" aria-live="polite" data-testid="store-progress-step">
+          {step || "Working…"}
+        </p>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -350,8 +385,8 @@ export default function Anchor() {
               </Callout>
             </div>
 
-            {/* The store needs THREE wallet prompts on a new room (create-room tx, a SEP-53 key sign, the
-                anchor tx). The stepper labels each so they aren't unexplained pop-ups. After a successful
+            {/* Storing validates the room + the active input FIRST (inline error here), then opens the confirm
+                dialog, then shows the blocking progress dialog through its wallet prompts. After a successful
                 store the button resets the inputs so you can file another document without the old one lingering. */}
             <div className="mt-4">
               {a.resp?.ok ? (
@@ -360,10 +395,15 @@ export default function Anchor() {
                   Store another document
                 </Button>
               ) : (
-                <Button onClick={() => a.setConfirmAnchor(true)} disabled={a.busy} data-testid="upload">
+                <Button onClick={a.requestStore} disabled={a.busy} data-testid="upload">
                   <Lock aria-hidden="true" />
-                  {a.busy ? "Working…" : "Store shared document"}
+                  {a.busy ? "Working…" : "Store document"}
                 </Button>
+              )}
+              {a.storeErr && (
+                <p className="mt-2 text-sm text-destructive" data-testid="store-validation-error">
+                  {a.storeErr}
+                </p>
               )}
             </div>
 
@@ -407,16 +447,9 @@ export default function Anchor() {
               </ul>
             </ConfirmModal>
 
-            {a.busy && <StoreStepper stage={a.storeStage} />}
-            {a.busy && a.step && (
-              <p className="mt-2 text-xs text-muted-foreground" data-testid="upload-step">
-                {a.step}
-              </p>
-            )}
-            <ProveWait
-              state={a.state}
-              privacy="The file is encrypted and its key split in your browser. Only an encrypted blob and a tamper-evident commitment go on-chain."
-            />
+            {/* While storing, a blocking progress dialog (the stepper + a progress bar + spinner) shows what
+                each wallet prompt is for. It closes when the store finishes. */}
+            <StoreProgressDialog open={a.busy} stage={a.storeStage} step={a.step} />
           </Card>
 
           {/* anchor verdict */}
