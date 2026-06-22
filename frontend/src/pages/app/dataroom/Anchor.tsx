@@ -20,7 +20,6 @@ import { useAnchor, type StoreStage } from "@/lib/hooks/useAnchor";
 import { short, explorer } from "@/lib/format";
 import { humanError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
-import { ProofStatusBadge } from "@/components/StatusBadge";
 import { ConfirmModal } from "@/components/ConfirmModal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -205,10 +204,7 @@ export default function Anchor() {
       {tab === "store" && (
         <>
           <Card id="store" className="rounded-2xl p-6">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <h2 className="text-base font-semibold tracking-tight">Store a document</h2>
-              <ProofStatusBadge state={a.state} />
-            </div>
+            <h2 className="mb-3 text-base font-semibold tracking-tight">Store a document</h2>
             {/* The Data Room stores a document one way: an anonymous, policy-gated committee document. The
                 file is encrypted and its key split in this browser, and any room member can open it later. */}
             <p className="text-sm leading-relaxed text-muted-foreground">

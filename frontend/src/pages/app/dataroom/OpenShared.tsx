@@ -171,7 +171,7 @@ export default function OpenShared() {
 
       {/* Two ways in: the rooms you are already approved for, or a room id someone shared. Both open inline below.
           A LIGHT segmented control (muted track, raised active) so it reads below the filled-pill Documents submenu. */}
-      <div className="flex w-fit gap-1 rounded-xl bg-muted/60 p-1" role="tablist" aria-label="Open">
+      <div className="inline-flex w-fit gap-1 rounded-xl bg-muted p-1" role="tablist" aria-label="Open">
         {([
           { key: "rooms", label: "Rooms you can open" },
           { key: "search", label: "Search room by ID" },
@@ -184,9 +184,10 @@ export default function OpenShared() {
             data-testid={`access-subtab-${t.key}`}
             className={cn(
               "whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 focus-visible:ring-offset-muted",
               openTab === t.key
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground",
+                ? "border border-border bg-card text-foreground shadow-sm"
+                : "border border-transparent text-muted-foreground hover:bg-card/40 hover:text-foreground",
             )}
           >
             {t.label}
@@ -355,13 +356,14 @@ function SyncToggle({ checked, onChange }: { checked: boolean; onChange: (on: bo
       onClick={() => onChange(!checked)}
       data-testid="access-sync-toggle"
       className={cn(
-        "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors",
-        checked ? "bg-primary" : "bg-muted-foreground/30",
+        "relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+        checked ? "bg-brand" : "bg-muted-foreground/40",
       )}
     >
       <span
         className={cn(
-          "inline-block size-4 rounded-full bg-white shadow transition-transform",
+          "pointer-events-none inline-block size-4 rounded-full bg-white shadow-sm ring-1 ring-black/5 transition-transform",
           checked ? "translate-x-4" : "translate-x-0.5",
         )}
       />
