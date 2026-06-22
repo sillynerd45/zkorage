@@ -44,15 +44,22 @@ test("membership: member derives + requests; owner approves (light)", async ({ p
   await stubs(page);
   await page.goto("/app/dataroom/membership");
 
-  // member: derive the per-room membership id from the wallet, then request to join.
+  // member: ONE button derives the per-room id (signMessage) AND files the request (Join is the default sub-tab).
   await expect(page.getByTestId("enroll-card")).toBeVisible();
+  await expect(page.getByTestId("enroll-join-room")).toBeVisible(); // Join sub-tab is the default
   await page.getByTestId("enroll-join-room").fill(JOIN_ROOM);
-  await page.getByTestId("enroll-derive").click();
-  await expect(page.getByTestId("enroll-commitment")).toBeVisible({ timeout: 15_000 });
+  await page.getByTestId("enroll-label").fill("Alice from Acme");
   await page.getByTestId("enroll-request").click();
-  await expect(page.getByTestId("enroll-state")).toHaveAttribute("data-state", "pending");
+  await expect(page.getByTestId("enroll-state")).toHaveAttribute("data-state", "pending", { timeout: 15_000 });
+  await expect(page.getByTestId("enroll-commitment")).toBeVisible(); // derived id shown for transparency
 
-  // owner: pick a room I own -> see the pending request -> approve -> it clears.
+  // "Your requests" history now lists this room with a Pending pill (kept locally, per wallet).
+  const reqRow = page.getByTestId("request-row").first();
+  await expect(reqRow).toBeVisible();
+  await expect(reqRow.getByTestId("request-state-pill")).toHaveAttribute("data-state", "pending");
+
+  // owner: switch to the Approve sub-tab, pick a room I own -> see the pending request -> approve -> it clears.
+  await page.getByTestId("member-subtab-approve").click();
   await expect(page.getByTestId("enroll-my-rooms")).toBeVisible();
   await page.getByTestId("enroll-owner-room").first().click();
   // the selected room exposes its exact id with a copy button (to share with people to invite).
@@ -60,6 +67,10 @@ test("membership: member derives + requests; owner approves (light)", async ({ p
   await expect(roomIdRow).toBeVisible();
   await expect(roomIdRow.getByRole("button", { name: /copy room id/i })).toBeVisible();
   await expect(page.getByTestId("enroll-pending-row")).toHaveCount(1);
+  // Privacy (choice A): the pending row shows the self-chosen label, NEVER the requester's wallet address.
+  const pendingRow = page.getByTestId("enroll-pending-row").first();
+  await expect(pendingRow).toContainText("Alice");
+  await expect(pendingRow).not.toContainText(ADDR.slice(0, 6)); // no wallet-address fragment
   await page.getByTestId("enroll-approve").click();
   await expect(page.getByTestId("enroll-no-pending")).toBeVisible({ timeout: 15_000 });
 
@@ -80,6 +91,8 @@ test("membership: prefills the join room from a directory ?room= link", async ({
   await stubs(page);
   await page.goto(`/app/dataroom/membership?room=${JOIN_ROOM}`);
   await expect(page.getByTestId("enroll-card")).toBeVisible();
+  // Arriving from a directory link lands on the Join sub-tab with the room prefilled.
+  await expect(page.getByTestId("member-subtab-join")).toHaveAttribute("aria-selected", "true");
   await expect(page.getByTestId("enroll-join-room")).toHaveValue(JOIN_ROOM);
 });
 

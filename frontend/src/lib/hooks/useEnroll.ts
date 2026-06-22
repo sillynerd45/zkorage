@@ -17,28 +17,52 @@ import {
 import { isHex32 } from "@/lib/format";
 
 // M1 — request-then-approve enrollment. Member side: derive your per-room id_commitment from your wallet
-// (sign-to-derive, M0), then request to join. Owner side: see pending requests for a room you own and approve
-// them (your wallet signs set_eligible_root). Joining is identified; the membership PROOF (a later step) is
-// what keeps the actual access anonymous.
+// (sign-to-derive, M0), then request to join in ONE step. Owner side: see pending requests for a room you own
+// and approve them (your wallet signs set_eligible_root). The request carries only your public commitment + an
+// OPTIONAL self-chosen label — never your wallet address (privacy choice A). The membership PROOF (a later
+// step) is what keeps the actual access anonymous.
+
+// A local "your requests" history entry (per wallet, this browser only). It records which rooms you asked to
+// join + the last-known status, so you can see your pending requests at a glance without re-typing a room id.
+export type JoinRequest = { roomId: string; label?: string; state: EnrollState; ts: number };
+const requestsKey = (addr: string) => `zkorage.dr.requests.${addr}`;
+
 export function useEnroll() {
   const { address, connected } = useWallet();
   const signer = useTxSigner();
   const id = useDataRoomIdentity();
 
-  // --- member: request to join ---
+  // --- member: request to join (single action: derive + request) ---
   const [joinRoom, setJoinRoom] = useState("");
+  const [joinLabel, setJoinLabel] = useState("");
   const [commitment, setCommitment] = useState<string | null>(null);
   const [accessor, setAccessor] = useState<string | null>(null);
   const [memberState, setMemberState] = useState<EnrollState | null>(null);
   const [memberBusy, setMemberBusy] = useState(false);
   const [memberErr, setMemberErr] = useState<string | null>(null);
 
-  // Derive the member's per-room commitment from the wallet (one signMessage), then read its current state.
-  const deriveCommitment = useCallback(async () => {
+  // --- member: local "your requests" history (per wallet, this browser) ---
+  const [myRequests, setMyRequests] = useState<JoinRequest[]>([]);
+  const [requestsBusy, setRequestsBusy] = useState(false);
+
+  const loadRequests = useCallback((addr: string | null) => {
+    if (!addr || typeof localStorage === "undefined") { setMyRequests([]); return; }
+    try {
+      const raw = localStorage.getItem(requestsKey(addr));
+      setMyRequests(raw ? (JSON.parse(raw) as JoinRequest[]) : []);
+    } catch { setMyRequests([]); }
+  }, []);
+
+  const persistRequests = useCallback((addr: string, list: JoinRequest[]) => {
+    setMyRequests(list);
+    try { localStorage.setItem(requestsKey(addr), JSON.stringify(list)); } catch { /* ignore quota */ }
+  }, []);
+
+  // ONE action: derive the per-room id (a single wallet signature, cached for the session), then file the
+  // request. The backend is idempotent (already-eligible → eligible, already-pending → pending). We send only
+  // the public commitment + an OPTIONAL self-chosen label, never the wallet address.
+  const requestToJoin = useCallback(async () => {
     setMemberErr(null);
-    setMemberState(null);
-    setCommitment(null);
-    setAccessor(null);
     if (!isHex32(joinRoom)) {
       setMemberErr("Room must be 32-byte hex (64 hex chars).");
       return;
@@ -52,30 +76,47 @@ export function useEnroll() {
       }
       setCommitment(ident.idCommitment);
       setAccessor(ident.accessor);
-      const s = await getEnrollStatus(joinRoom.trim(), ident.idCommitment).catch(() => null);
-      if (s) setMemberState(s.state);
-    } finally {
-      setMemberBusy(false);
-    }
-  }, [joinRoom, id]);
-
-  const requestJoin = useCallback(async () => {
-    if (!commitment) return;
-    setMemberBusy(true);
-    setMemberErr(null);
-    try {
-      const r = await enrollRequest(joinRoom.trim(), commitment, { source: address ?? undefined });
+      const label = joinLabel.trim() || undefined;
+      const r = await enrollRequest(joinRoom.trim(), ident.idCommitment, { label });
       if (!r.ok) {
         setMemberErr(r.error ?? "Request failed.");
         return;
       }
       setMemberState(r.state);
+      if (address) {
+        const next = [
+          { roomId: joinRoom.trim().toLowerCase(), label, state: r.state, ts: Date.now() },
+          ...myRequests.filter((x) => x.roomId !== joinRoom.trim().toLowerCase()),
+        ];
+        persistRequests(address, next);
+      }
     } catch (e) {
       setMemberErr(String((e as Error).message ?? e));
     } finally {
       setMemberBusy(false);
     }
-  }, [commitment, joinRoom, address]);
+  }, [joinRoom, joinLabel, id, address, myRequests, persistRequests]);
+
+  // Refresh the live status of every tracked request: derive each room's commitment (the FIRST derive prompts
+  // the wallet once; the rest reuse the cached signature) and read its current state. Sequential to avoid a
+  // signature race on the shared cache.
+  const refreshRequests = useCallback(async () => {
+    if (!address || myRequests.length === 0) return;
+    setRequestsBusy(true);
+    try {
+      const updated: JoinRequest[] = [];
+      for (const r of myRequests) {
+        try {
+          const ident = await id.derive(r.roomId);
+          const s = ident ? await getEnrollStatus(r.roomId, ident.idCommitment).catch(() => null) : null;
+          updated.push(s ? { ...r, state: s.state } : r);
+        } catch { updated.push(r); }
+      }
+      persistRequests(address, updated);
+    } finally {
+      setRequestsBusy(false);
+    }
+  }, [address, myRequests, id, persistRequests]);
 
   // --- owner: approve members of a room you own ---
   const [myRooms, setMyRooms] = useState<MyRoom[]>([]);
@@ -93,6 +134,9 @@ export function useEnroll() {
     }
     getMyRooms(address).then((r) => setMyRooms(r.rooms)).catch(() => setMyRooms([]));
   }, [connected, address]);
+
+  // Load the local "your requests" history for the connected wallet (last-known statuses; no prompt).
+  useEffect(() => { loadRequests(connected ? address : null); }, [connected, address, loadRequests]);
 
   const loadPending = useCallback(async (room: string) => {
     if (!isHex32(room)) {
@@ -206,14 +250,19 @@ export function useEnroll() {
     // member
     joinRoom,
     setJoinRoom,
+    joinLabel,
+    setJoinLabel,
     commitment,
     accessor,
     memberState,
     memberBusy,
     memberErr,
     drift: id.drift,
-    deriveCommitment,
-    requestJoin,
+    requestToJoin,
+    // member: your-requests history
+    myRequests,
+    requestsBusy,
+    refreshRequests,
     // owner
     myRooms,
     ownerRoom,
