@@ -21,6 +21,7 @@ import { sdk } from "@/lib/sdk";
 import { useWallet } from "@/lib/wallet/WalletContext";
 import { useDataRoomIdentity } from "@/lib/hooks/useDataRoomIdentity";
 import { readJoinRequests, writeJoinRequests } from "@/lib/dataroom/requests";
+import { exportRoomsBackup, importRoomsBackup, mergeJoinRequests } from "@/lib/dataroom/roomsBackup";
 import { writeOpenTicket, clearOpenTicket, findOpenTicket } from "@/lib/dataroom/openTicket";
 import { isHex32 } from "@/lib/format";
 
@@ -112,6 +113,68 @@ export function useSharedOpen() {
       setRefreshing(false);
     }
   }, [address, ident, reloadOpenable]);
+
+  // Move your rooms to another device. The list is not a secret (room ids + your labels + status), but we
+  // encrypt the file under a key HKDF'd from your wallet signature, so only the same wallet can read it and our
+  // server never holds the wallet->rooms mapping. On the new device you connect the same wallet, import, and
+  // re-derive access per room (Refresh confirms the live status). This is the self-custody alternative to
+  // server-side sync, which would re-create the cross-room correlation Model B is built to avoid.
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupMsg, setBackupMsg] = useState<string | null>(null);
+  const exportRooms = useCallback(async () => {
+    if (!address) return;
+    setBackupBusy(true);
+    setBackupMsg(null);
+    try {
+      const rooms = readJoinRequests(address);
+      if (rooms.length === 0) {
+        setBackupMsg("No rooms to export yet. Request to join a room first.");
+        return;
+      }
+      const sig = await ident.getSignature();
+      const file = await exportRoomsBackup(sig, rooms);
+      const blob = new Blob([JSON.stringify(file, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "zkorage-rooms-backup.json";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setBackupMsg(`Exported your room list (${rooms.length}), encrypted to your wallet.`);
+    } catch (e) {
+      setBackupMsg(String((e as Error).message ?? e));
+    } finally {
+      setBackupBusy(false);
+    }
+  }, [address, ident]);
+  const importRooms = useCallback(
+    async (file: File) => {
+      if (!address) return;
+      setBackupBusy(true);
+      setBackupMsg(null);
+      try {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(await file.text());
+        } catch {
+          throw new Error("That file is not a valid backup.");
+        }
+        const sig = await ident.getSignature();
+        const incoming = await importRoomsBackup(sig, parsed);
+        const merged = mergeJoinRequests(readJoinRequests(address), incoming);
+        writeJoinRequests(address, merged);
+        reloadOpenable(address);
+        setBackupMsg(`Imported ${incoming.length} room(s). Press Refresh to update their status.`);
+      } catch (e) {
+        setBackupMsg(String((e as Error).message ?? e));
+      } finally {
+        setBackupBusy(false);
+      }
+    },
+    [address, ident, reloadOpenable],
+  );
 
   // The open flow for ONE document at a time.
   const [openDocId, setOpenDocId] = useState<string | null>(null);
@@ -374,6 +437,10 @@ export function useSharedOpen() {
     directory,
     refreshRooms,
     refreshing,
+    exportRooms,
+    importRooms,
+    backupBusy,
+    backupMsg,
     room,
     selectRoom,
     roomDocs,

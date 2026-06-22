@@ -1,4 +1,4 @@
-import { ExternalLink, BadgeCheck, EyeOff, Files, KeyRound, Lock, Users, UserCheck, type LucideIcon } from "lucide-react";
+import { ExternalLink, Files, KeyRound, Lock, Users, type LucideIcon } from "lucide-react";
 import { Link } from "react-router-dom";
 import { GlossaryTip } from "@/components/GlossaryTip";
 import { Disclosure } from "@/components/Disclosure";
@@ -48,15 +48,6 @@ const TASKS: Task[] = [
     category: "Documents",
   },
   {
-    to: "/app/dataroom/eligibility",
-    label: "Get in anonymously",
-    blurb: "Prove you're on the approved list without revealing who you are. Each pass works once.",
-    testid: "task-eligibility",
-    icon: UserCheck,
-    category: "Access",
-    star: true,
-  },
-  {
     to: "/app/dataroom/documents#open",
     label: "Open a document",
     blurb: "Open files from rooms you have access to, decrypted in your browser.",
@@ -64,23 +55,10 @@ const TASKS: Task[] = [
     icon: Users,
     category: "Access",
   },
-  {
-    to: "/app/dataroom/disclosure",
-    label: "Share a masked copy",
-    blurb: "Prove a fact about a sealed file, then share a redacted copy that's provably the real document.",
-    testid: "task-disclosure",
-    icon: EyeOff,
-    category: "Share",
-  },
-  {
-    to: "/app/dataroom/authenticity",
-    label: "Prove a signed fact",
-    blurb: 'Prove a fact a third party signed for you (for example "balance ≥ X") without showing the statement.',
-    testid: "task-authenticity",
-    icon: BadgeCheck,
-    category: "Authenticity",
-  },
 ];
+// Note: the "Get in anonymously", "Share a masked copy", and "Prove a signed fact" cards were retired here
+// alongside their nav tabs (see DATAROOM_TABS in content.ts). The core anonymous-access idea is still shown by
+// the real Documents > Open flow above and the read-only M7 showcase below.
 
 function ExLink({ id }: { id: string }) {
   return (

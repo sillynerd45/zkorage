@@ -174,7 +174,9 @@ test("dataroom overview: task-oriented cards route to the right place; guided-de
   await expect(page.getByTestId("task-store")).toBeVisible();
   await expect(page.getByTestId("task-open")).toBeVisible();
   await expect(page.getByTestId("task-browse")).toBeVisible();
-  await expect(page.getByTestId("task-eligibility")).toBeVisible();
+  // the "Get in anonymously" card was retired alongside its nav tab; the real member flow is task-access
+  await expect(page.getByTestId("task-eligibility")).toHaveCount(0);
+  await expect(page.getByTestId("task-access")).toBeVisible();
 
   // the live key-release readiness pill is shown so a visitor sees the keepers are up before they try the
   // "Open a shared document" path (count is environment-dependent; assert the format, not a fixed number)
