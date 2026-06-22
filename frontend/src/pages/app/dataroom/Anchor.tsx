@@ -369,22 +369,42 @@ export default function Anchor() {
 
             <ConfirmModal
               open={a.confirmAnchor}
-              title="Encrypt, split & post this document?"
-              tone="cost"
-              confirmLabel="Yes, post it"
+              title="Encrypt and store this document?"
+              tone="outward"
+              confirmLabel="Encrypt and store"
               onCancel={() => a.setConfirmAnchor(false)}
               onConfirm={() => {
                 a.setConfirmAnchor(false);
                 a.onStoreShared();
               }}
             >
-              <p>
-                The file is encrypted and its key split across the keepers in this browser. Only ciphertext
-                and sealed shares are sent; the server never sees the key or the contents. Your wallet then
-                signs the on-chain record. Only a tamper-evident fingerprint is posted. Storing a document in a
-                new room asks your wallet three times: to create the room, derive your room key, and anchor the
-                document. The stepper below shows each one.
+              <p className="font-medium text-foreground">
+                Your file is encrypted in this browser. The public ledger only gets a fingerprint of it, never
+                the file or its key.
               </p>
+              <ul className="mt-3 space-y-2.5">
+                <li className="flex gap-2.5">
+                  <Lock className="mt-0.5 size-4 shrink-0 text-brand" aria-hidden="true" />
+                  <span>
+                    <b className="text-foreground">Encrypted before it leaves.</b> The server only ever handles
+                    the encrypted file, never the plaintext.
+                  </span>
+                </li>
+                <li className="flex gap-2.5">
+                  <Users className="mt-0.5 size-4 shrink-0 text-brand" aria-hidden="true" />
+                  <span>
+                    <b className="text-foreground">The key is split across the keepers.</b> No single party can
+                    open it, us included. A copy is sealed to your wallet so you can reopen it later.
+                  </span>
+                </li>
+                <li className="flex gap-2.5">
+                  <KeyRound className="mt-0.5 size-4 shrink-0 text-brand" aria-hidden="true" />
+                  <span>
+                    <b className="text-foreground">You sign each step.</b> A new room asks your wallet up to 3
+                    times: create the room, derive your room key, then anchor the document.
+                  </span>
+                </li>
+              </ul>
             </ConfirmModal>
 
             {a.busy && <StoreStepper stage={a.storeStage} />}

@@ -57,7 +57,7 @@ test("committee store: the browser deals; the relay gets only ciphertext + seale
   await page.getByTestId("store-mode-text").click();
   await page.getByTestId("doc-content").fill(PLAINTEXT);
   await page.getByTestId("upload").click(); // "Store shared document"
-  await page.getByRole("button", { name: "Yes, post it" }).click();
+  await page.getByTestId("confirm-go").click(); // "Encrypt and store"
 
   // #3a — the store stepper is shown while the flow runs (held at deal-sealed → the "encrypt" phase is active).
   await expect(page.getByTestId("store-stepper")).toBeVisible({ timeout: 20_000 });
