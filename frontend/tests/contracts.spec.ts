@@ -33,8 +33,10 @@ test("contracts page lists the Data Room + Bonded Proofs contracts with explorer
   await stubInfo(page);
   await page.goto("/app/contracts");
 
-  await expect(page.getByTestId("contracts-page")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Contracts", exact: true })).toBeVisible();
+  const root = page.getByTestId("contracts-page");
+  await expect(root).toBeVisible();
+  // scope to the page body: the app top bar also renders a "Contracts" heading for this route
+  await expect(root.getByRole("heading", { name: "Contracts", exact: true })).toBeVisible();
 
   const dr = page.getByTestId("contracts-dataroom");
   await expect(dr).toContainText("DataRoom contract");
