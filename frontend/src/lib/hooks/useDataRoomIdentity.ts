@@ -58,5 +58,8 @@ export function useDataRoomIdentity() {
     return sig;
   }, [address, signMessage]);
 
-  return { derive, getSignature, busy, drift, error };
+  // True if this address already signed this session (so a caller can sync silently without popping the wallet).
+  const hasSignature = useCallback((addr?: string | null) => sigCache.has(addr ?? address ?? ""), [address]);
+
+  return { derive, getSignature, hasSignature, busy, drift, error };
 }

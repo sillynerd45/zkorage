@@ -1,7 +1,7 @@
 // Offline selftest for the encrypted rooms backup (no browser, no wallet). Run with the SDK's tsx:
 //   ../sdk/node_modules/.bin/tsx src/lib/dataroom/roomsBackup.selftest.ts
 // Uses globalThis.crypto.subtle (Node 22), the same Web Crypto API the browser uses.
-import { exportRoomsBackup, importRoomsBackup, mergeJoinRequests } from "./roomsBackup";
+import { exportRoomsBackup, importRoomsBackup, mergeJoinRequests, deriveVaultHandle } from "./roomsBackup";
 import type { JoinRequest } from "./requests";
 
 let pass = 0;
@@ -86,6 +86,14 @@ const labelFallback = mergeJoinRequests(
   [{ roomId: "dd".repeat(32), state: "eligible", ts: 2 }],
 );
 ok(labelFallback[0].label === "kept", "label falls back to the older entry when the newer has none");
+
+// 6) vault handle: deterministic per signature, different across signatures, 32-byte hex, != the room id
+const h1 = await deriveVaultHandle(sigA);
+const h2 = await deriveVaultHandle(sigA);
+const h3 = await deriveVaultHandle(sigB);
+ok(/^[0-9a-f]{64}$/.test(h1), "vault handle is 32-byte hex");
+ok(h1 === h2, "vault handle is deterministic for the same signature");
+ok(h1 !== h3, "vault handle differs across signatures");
 
 console.log(`roomsBackup selftest: ${pass}/${pass + fail} passed`);
 if (fail > 0) process.exit(1);

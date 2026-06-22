@@ -74,6 +74,25 @@ async function deriveBackupKey(sig: Uint8Array): Promise<CryptoKey> {
   );
 }
 
+/** A stable, wallet-derived PSEUDONYM that indexes the encrypted vault on the backend. HKDF from the same
+ *  signature as the identity + enc key, but a distinct salt+info, so the backend cannot link this handle to
+ *  the wallet address or to any per-room id. 32 bytes, hex. */
+export async function deriveVaultHandle(sig: Uint8Array): Promise<string> {
+  if (!sig || sig.length === 0) throw new Error("Missing wallet signature.");
+  const ikm = await crypto.subtle.importKey("raw", toArrayBuffer(sig), "HKDF", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: "HKDF",
+      hash: "SHA-256",
+      salt: toArrayBuffer(te.encode("zkorage-rooms-vault-id-salt-v1")),
+      info: toArrayBuffer(te.encode("zkorage:rooms-vault-id:v1")),
+    },
+    ikm,
+    256,
+  );
+  return [...new Uint8Array(bits)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 /** Encrypt a wallet's room list into a portable file. The file carries no plaintext room ids. */
 export async function exportRoomsBackup(sig: Uint8Array, rooms: JoinRequest[]): Promise<RoomsBackupFile> {
   const key = await deriveBackupKey(sig);

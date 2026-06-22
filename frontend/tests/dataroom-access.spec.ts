@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { readFileSync } from "node:fs";
+import { exportRoomsBackup } from "../src/lib/dataroom/roomsBackup";
 
 // "Open a document" (redesigned). The member lands on the rooms they are approved for, picks a document, and
 // clicks one "Open" button that orchestrates everything. These tests mock Freighter (connected + signMessage)
@@ -51,6 +52,10 @@ async function stubReads(
   // The member open is now embedded in the Documents page, so Anchor (getMyRooms) + the directory load too.
   await page.route("**/dataroom/rooms?owner=**", (r) => r.fulfill(json({ owner: ADDR, count: 0, rooms: [], dataroomId: "" })));
   await page.route("**/dataroom/directory", (r) => r.fulfill(json({ count: 0, rooms: [], dataroomId: "" })));
+  // rooms vault (encrypted, opaque): default to "no saved vault" + accept writes; the sync test overrides GET.
+  await page.route("**/dataroom/rooms-vault/**", (r) =>
+    r.fulfill(json(r.request().method() === "GET" ? { found: false, blob: null } : { ok: true })),
+  );
 }
 
 test("Open: an approved member is invited to set up access, not told they don't qualify", async ({ page }) => {
@@ -261,4 +266,26 @@ test("Open: rooms export to an encrypted file and re-import on another device", 
   await expect(page.getByTestId("access-room-row").first()).toContainText("Acme term sheet");
 
   expect(errs, errs.join("\n")).toHaveLength(0);
+});
+
+test("Open: cross-device sync pulls your rooms from the encrypted vault after a one-tap unlock", async ({ page }) => {
+  await page.addInitScript(mock);
+  await stubReads(page, "eligible", 8);
+  // the vault holds a room this fresh browser does not have, encrypted under the wallet's signature (SIG_B64)
+  const blob = await exportRoomsBackup(new Uint8Array(64).fill(0x07), [
+    { roomId: ROOM, label: "Synced room", state: "eligible", ts: 1 },
+  ]);
+  await page.route("**/dataroom/rooms-vault/**", (r) =>
+    r.fulfill(json(r.request().method() === "GET" ? { found: true, blob } : { ok: true })),
+  );
+
+  await page.goto("/app/dataroom/documents#open");
+  // fresh browser: no local rooms, sync is on but locked (we never pop the wallet just to load the page)
+  await expect(page.getByTestId("access-rooms-empty")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("access-sync-unlock")).toBeVisible();
+
+  // one tap -> sign -> pull the vault -> the room appears + state reads Synced
+  await page.getByTestId("access-sync-unlock").click();
+  await expect(page.getByTestId("access-room-row").first()).toContainText("Synced room", { timeout: 30_000 });
+  await expect(page.getByTestId("access-sync-state")).toContainText("Synced");
 });

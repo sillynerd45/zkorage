@@ -215,18 +215,57 @@ export default function OpenShared() {
           </div>
         )}
 
-        {/* Move your rooms to another device. The list is re-derived access, not a credential, so the file holds
-            no secret; we still encrypt it to your wallet so it does not reveal which rooms you are in. */}
-        <div className="mt-4 border-t pt-3">
+        {/* Cross-device: your room list is encrypted with your wallet and synced so it follows you to other
+            devices. The server keeps a copy it cannot read; the room owner never sees it. A manual file export
+            stays as a no-server-copy fallback. */}
+        <div className="mt-4 space-y-2 border-t pt-3">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-muted-foreground">Use on another device:</span>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={s.exportRooms}
-              disabled={s.backupBusy}
-              data-testid="access-export"
-            >
+            <span className="text-xs font-medium">Sync across devices</span>
+            {s.syncState === "syncing" && (
+              <span className="inline-flex items-center gap-1 text-xs text-muted-foreground" data-testid="access-sync-state">
+                <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> Syncing…
+              </span>
+            )}
+            {s.syncState === "synced" && (
+              <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400" data-testid="access-sync-state">
+                <CheckCircle2 className="size-3.5" aria-hidden="true" /> Synced
+              </span>
+            )}
+            {s.syncState === "locked" && (
+              <Button variant="outline" size="sm" onClick={s.unlockSync} data-testid="access-sync-unlock">
+                <RefreshCw className="size-3.5" aria-hidden="true" /> Sync my rooms
+              </Button>
+            )}
+            {s.syncState === "error" && (
+              <span className="inline-flex items-center gap-2 text-xs text-destructive" data-testid="access-sync-state">
+                Couldn't sync
+                <Button variant="outline" size="sm" onClick={s.unlockSync} data-testid="access-sync-retry">Retry</Button>
+              </span>
+            )}
+            {s.syncOn ? (
+              <Button variant="ghost" size="sm" onClick={() => s.setSync(false)} data-testid="access-sync-toggle">
+                Turn off
+              </Button>
+            ) : (
+              <Button variant="outline" size="sm" onClick={() => s.setSync(true)} data-testid="access-sync-toggle">
+                Turn on
+              </Button>
+            )}
+          </div>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            Your room list is encrypted with your wallet and saved so it follows you to other devices. The server
+            keeps a copy it cannot read, and the room owner never sees it.
+          </p>
+          {s.syncMsg && (
+            <p className="text-xs text-muted-foreground" data-testid="access-sync-msg">
+              {s.syncMsg}
+            </p>
+          )}
+
+          {/* Manual file fallback (keeps nothing on the server). */}
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <span className="text-xs text-muted-foreground">Or use a file:</span>
+            <Button variant="outline" size="sm" onClick={s.exportRooms} disabled={s.backupBusy} data-testid="access-export">
               <Download className="size-3.5" aria-hidden="true" />
               Export
             </Button>
@@ -253,12 +292,8 @@ export default function OpenShared() {
               }}
             />
           </div>
-          <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-            The file is encrypted with your wallet, so only the same wallet can read it. Connect that wallet on
-            the other device and import it, then press Refresh.
-          </p>
           {s.backupMsg && (
-            <p className="mt-1 text-xs text-muted-foreground" data-testid="access-backup-msg">
+            <p className="text-xs text-muted-foreground" data-testid="access-backup-msg">
               {s.backupMsg}
             </p>
           )}

@@ -55,6 +55,7 @@ import { buildDocauthJob, bankIssuer } from "./docauth.js";
 import { getEligible, addEligible, addEligibleBatch, indexOfCommitment } from "./eligible-store.js";
 import { addRequest, listRequests, removeRequest, hasRequest } from "./enroll-store.js";
 import { putEscrow, getEscrow } from "./escrow-store.js";
+import { getVault, putVault, deleteVault, type VaultBlob } from "./vault-store.js";
 import {
   enqueue as enqueueBatch, getByTicket as getBatchTicket, listQueued as listBatchQueued,
   flush as flushBatch, nextFlushAt, queuedCount as batchQueuedCount, purgeTerminal as purgeBatchTerminal,
@@ -2214,6 +2215,97 @@ app.get("/dataroom/enroll/status/:roomId/:commitment", (req, res) => {
   if (idx >= 0) return res.json({ state: "eligible", memberIndex: idx });
   if (hasRequest(roomIdHex, commitmentHex)) return res.json({ state: "pending" });
   res.json({ state: "none" });
+});
+
+// ── Encrypted rooms vault (off-chain, opaque) ────────────────────────────────────────────────────────────
+// Portable "rooms you can open" sync. The BROWSER encrypts the list under a wallet-derived key and stores the
+// ciphertext here under a wallet-derived pseudonym handle (see vault-store.ts + frontend roomsBackup.ts). The
+// backend stores a blob it cannot decrypt; it learns neither the rooms nor the wallet address. Writes are
+// rate-limited + size-capped (unauthenticated demo endpoints; the handle is unguessable without the wallet
+// signature, and AES-GCM makes any tamper a decrypt failure the client falls back from). 4xx (not 5xx) on bad
+// client input so Cloudflare does not mask the response.
+const VAULT_RL_WINDOW_MS = 10 * 60_000;
+const VAULT_RL_MAX = numEnv(process.env.DR_VAULT_RL_MAX, 60, 1); // writes/deletes per IP per window
+const VAULT_RL_MAX_IPS = 10_000;
+const vaultHits = new Map<string, number[]>();
+function vaultRateLimited(ip: string, nowMs: number): boolean {
+  if (vaultHits.size > VAULT_RL_MAX_IPS) {
+    for (const [k, ts] of vaultHits) {
+      const live = ts.filter((t) => nowMs - t < VAULT_RL_WINDOW_MS);
+      if (live.length === 0) vaultHits.delete(k);
+      else vaultHits.set(k, live);
+    }
+    if (vaultHits.size > VAULT_RL_MAX_IPS) {
+      let toEvict = vaultHits.size - VAULT_RL_MAX_IPS;
+      for (const k of vaultHits.keys()) {
+        if (toEvict-- <= 0) break;
+        vaultHits.delete(k);
+      }
+    }
+  }
+  const hits = (vaultHits.get(ip) ?? []).filter((t) => nowMs - t < VAULT_RL_WINDOW_MS);
+  hits.push(nowMs);
+  vaultHits.set(ip, hits);
+  return hits.length > VAULT_RL_MAX;
+}
+const isVaultHandle = (h: unknown): h is string => typeof h === "string" && /^[0-9a-f]{64}$/i.test(h);
+const VAULT_MAX_BYTES = 256 * 1024; // an encrypted room list is a few KB; this is a generous backstop
+function validVaultBlob(b: unknown): b is VaultBlob {
+  if (!b || typeof b !== "object") return false;
+  const v = b as VaultBlob;
+  return (
+    typeof v.magic === "string" && typeof v.version === "number" && typeof v.alg === "string" &&
+    typeof v.iv === "string" && typeof v.ct === "string"
+  );
+}
+
+// Anyone with the (unguessable) handle: fetch the opaque blob to decrypt locally. Reading ciphertext is safe.
+// Rate-limited too, so a harvested handle can't be polled as a cheap existence / update-cadence oracle.
+app.get("/dataroom/rooms-vault/:handle", (req, res) => {
+  if (!isVaultHandle(req.params.handle)) return res.status(400).json({ error: "handle must be 32-byte hex" });
+  if (vaultRateLimited(clientIp(req), Date.now())) {
+    return res.status(429).json({ error: "too many vault reads; please try again later" });
+  }
+  try {
+    const blob = getVault(req.params.handle);
+    res.json({ found: blob !== null, blob });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// Store/replace the opaque blob at a handle. Validates shape + size; rate-limited per IP. NOTE: the handle is a
+// BEARER write-capability (no per-write signature): anyone who learns it can overwrite/delete, but cannot forge
+// a different DECRYPTABLE list (lacks the wallet-derived key), so the worst case is detectable denial that the
+// owner's next push self-heals.
+app.put("/dataroom/rooms-vault/:handle", (req, res) => {
+  if (!isVaultHandle(req.params.handle)) return res.status(400).json({ error: "handle must be 32-byte hex" });
+  if (vaultRateLimited(clientIp(req), Date.now())) {
+    return res.status(429).json({ error: "too many vault writes; please try again later" });
+  }
+  const blob = req.body?.blob;
+  if (!validVaultBlob(blob)) return res.status(400).json({ error: "invalid vault blob" });
+  if (Buffer.byteLength(JSON.stringify(blob)) > VAULT_MAX_BYTES) return res.status(400).json({ error: "vault blob too large" });
+  try {
+    putVault(req.params.handle, blob, Date.now());
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+// Forget a vault (turning sync off deletes the server copy).
+app.delete("/dataroom/rooms-vault/:handle", (req, res) => {
+  if (!isVaultHandle(req.params.handle)) return res.status(400).json({ error: "handle must be 32-byte hex" });
+  if (vaultRateLimited(clientIp(req), Date.now())) {
+    return res.status(429).json({ error: "too many vault writes; please try again later" });
+  }
+  try {
+    const removed = deleteVault(req.params.handle);
+    res.json({ ok: true, removed });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
 });
 
 // Owner: reject (drop) a pending request without admitting it.

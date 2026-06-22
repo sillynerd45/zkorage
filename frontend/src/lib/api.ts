@@ -763,6 +763,25 @@ export const getDataroomDocument = (roomId: string, docId: string) =>
     j<{ roomId: string; docId: string; document: DataroomDoc | null; dataroomId: string }>,
   );
 
+// ── Encrypted rooms vault (opaque ciphertext, indexed by a wallet-derived pseudonym handle) ──
+export interface RoomsVaultBlob {
+  magic: string;
+  version: number;
+  alg: string;
+  iv: string;
+  ct: string;
+}
+export const getRoomsVault = (handle: string) =>
+  fetch(`${BASE}/dataroom/rooms-vault/${handle}`).then(j<{ found: boolean; blob: RoomsVaultBlob | null }>);
+export const putRoomsVault = (handle: string, blob: RoomsVaultBlob) =>
+  fetch(`${BASE}/dataroom/rooms-vault/${handle}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ blob }),
+  }).then(j<{ ok: boolean }>);
+export const deleteRoomsVault = (handle: string) =>
+  fetch(`${BASE}/dataroom/rooms-vault/${handle}`, { method: "DELETE" }).then(j<{ ok: boolean; removed: boolean }>);
+
 // ── DR2: anonymous eligibility (membership + nullifier) ──
 
 export interface MembershipInfoResp {
