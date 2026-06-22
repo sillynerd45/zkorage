@@ -52,6 +52,9 @@ test("membership: member derives + requests; owner approves (light)", async ({ p
   await page.getByTestId("enroll-request").click();
   await expect(page.getByTestId("enroll-state")).toHaveAttribute("data-state", "pending", { timeout: 15_000 });
   await expect(page.getByTestId("enroll-commitment")).toBeVisible(); // derived id shown for transparency
+  // the button now reflects the result (disabled + "Request sent") so it's clear the request landed.
+  await expect(page.getByTestId("enroll-request")).toBeDisabled();
+  await expect(page.getByTestId("enroll-request")).toContainText("Request sent");
 
   // "Your requests" history now lists this room with a Pending pill (kept locally, per wallet).
   const reqRow = page.getByTestId("request-row").first();
@@ -76,11 +79,16 @@ test("membership: member derives + requests; owner approves (light)", async ({ p
 
   // M5: set the room's discovery tier to listed + a public name, then save.
   await expect(page.getByTestId("enroll-visibility")).toBeVisible();
+  // Save starts disabled: the room is Private and the selected tier is also Private (nothing changed).
+  await expect(page.getByTestId("vis-save")).toBeDisabled();
   await page.getByTestId("vis-listed").click();
   await expect(page.getByTestId("vis-name")).toBeVisible(); // name input appears once not private
   await page.getByTestId("vis-name").fill("Acme board");
+  await expect(page.getByTestId("vis-save")).toBeEnabled(); // changing the tier makes the form dirty
   await page.getByTestId("vis-save").click();
   await expect(page.getByTestId("vis-saved")).toBeVisible({ timeout: 15_000 });
+  // after saving, the snapshot matches the form again -> Save goes back to disabled.
+  await expect(page.getByTestId("vis-save")).toBeDisabled();
 
   await page.screenshot({ path: "tests/membership.png", fullPage: true });
   expect(errs, errs.join("\n")).toHaveLength(0);
@@ -94,6 +102,27 @@ test("membership: prefills the join room from a directory ?room= link", async ({
   // Arriving from a directory link lands on the Join sub-tab with the room prefilled.
   await expect(page.getByTestId("member-subtab-join")).toHaveAttribute("aria-selected", "true");
   await expect(page.getByTestId("enroll-join-room")).toHaveValue(JOIN_ROOM);
+});
+
+test("membership: the request button reflects state and resets when the room id changes", async ({ page }) => {
+  await page.addInitScript(mock(ADDR));
+  await stubs(page);
+  await page.goto("/app/dataroom/membership");
+  const reqBtn = page.getByTestId("enroll-request");
+  await expect(reqBtn).toBeEnabled();
+  await expect(reqBtn).toContainText("Request to join");
+
+  await page.getByTestId("enroll-join-room").fill(JOIN_ROOM);
+  await reqBtn.click();
+  await expect(page.getByTestId("enroll-state")).toHaveAttribute("data-state", "pending", { timeout: 15_000 });
+  await expect(reqBtn).toBeDisabled();
+  await expect(reqBtn).toContainText("Request sent");
+
+  // editing the room id clears the per-room result so the button is usable again for the NEW room.
+  await page.getByTestId("enroll-join-room").fill("d".repeat(64));
+  await expect(reqBtn).toBeEnabled();
+  await expect(reqBtn).toContainText("Request to join");
+  await expect(page.getByTestId("enroll-state")).toHaveCount(0);
 });
 
 test("membership: renders dark + requires a wallet", async ({ page }) => {

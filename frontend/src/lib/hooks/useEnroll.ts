@@ -40,6 +40,9 @@ export function useEnroll() {
   const [memberState, setMemberState] = useState<EnrollState | null>(null);
   const [memberBusy, setMemberBusy] = useState(false);
   const [memberErr, setMemberErr] = useState<string | null>(null);
+  // The room id (normalized) the current memberState/commitment belong to. Lets the UI keep the "Request sent"
+  // result tied to the room that was actually requested, and reset when the member edits the room id.
+  const [requestedRoom, setRequestedRoom] = useState<string | null>(null);
 
   // --- member: local "your requests" history (per wallet, this browser) ---
   const [myRequests, setMyRequests] = useState<JoinRequest[]>([]);
@@ -83,6 +86,7 @@ export function useEnroll() {
         return;
       }
       setMemberState(r.state);
+      setRequestedRoom(joinRoom.trim().toLowerCase());
       if (address) {
         const next = [
           { roomId: joinRoom.trim().toLowerCase(), label, state: r.state, ts: Date.now() },
@@ -96,6 +100,22 @@ export function useEnroll() {
       setMemberBusy(false);
     }
   }, [joinRoom, joinLabel, id, address, myRequests, persistRequests]);
+
+  // If the member edits the room id after filing a request, reset the per-room result so the button and the
+  // status reflect the NEW room, not the one already requested.
+  useEffect(() => {
+    if (requestedRoom && joinRoom.trim().toLowerCase() !== requestedRoom) {
+      setMemberState(null);
+      setCommitment(null);
+      setAccessor(null);
+      setMemberErr(null);
+      setRequestedRoom(null);
+    }
+  }, [joinRoom, requestedRoom]);
+
+  // True once the current room has been requested in this session (state pins to the requested room via the
+  // reset effect above). Drives the "Request sent" / "Already approved" disabled button.
+  const joinDone = memberState === "pending" || memberState === "eligible";
 
   // Refresh the live status of every tracked request: derive each room's commitment (the FIRST derive prompts
   // the wallet once; the rest reuse the cached signature) and read its current state. Sequential to avoid a
@@ -164,15 +184,27 @@ export function useEnroll() {
   const [visBusy, setVisBusy] = useState(false);
   const [visErr, setVisErr] = useState<string | null>(null);
   const [visSaved, setVisSaved] = useState(false);
+  // The last-saved snapshot, so the UI can disable Save when nothing changed (e.g. Private -> Private). Names
+  // are compared trimmed, with null/undefined treated as "" so a stored-null and an empty input read as equal.
+  const [savedVis, setSavedVis] = useState<RoomVisibility>("private");
+  const [savedName, setSavedName] = useState("");
+  const [savedDescription, setSavedDescription] = useState("");
 
   const selectOwnerRoom = useCallback(
     (room: string) => {
       setOwnerRoom(room);
-      // Prefill the visibility control from the owner's own room record (the /dataroom/rooms read).
+      // Prefill the visibility control from the owner's own room record (the /dataroom/rooms read), and seed
+      // the saved snapshot from the same record so Save starts disabled until something actually changes.
       const rec = myRooms.find((r) => r.roomId === room);
-      setVis((rec?.visibility as RoomVisibility) ?? "private");
-      setVisName(rec?.name ?? "");
-      setVisDescription(rec?.description ?? "");
+      const v = (rec?.visibility as RoomVisibility) ?? "private";
+      const n = (rec?.name ?? "").trim();
+      const dsc = (rec?.description ?? "").trim();
+      setVis(v);
+      setVisName(n);
+      setVisDescription(dsc);
+      setSavedVis(v);
+      setSavedName(n);
+      setSavedDescription(dsc);
       setVisErr(null);
       setVisSaved(false);
       loadPending(room);
@@ -197,9 +229,16 @@ export function useEnroll() {
         return;
       }
       setVisSaved(true);
-      // Reflect the sanitized stored values + refresh the owner room list for the next select.
-      setVisName(r.name ?? "");
-      setVisDescription(r.description ?? "");
+      // Reflect the sanitized stored values + reset the saved snapshot to them (so Save goes disabled again
+      // and "Saved." shows until the next real edit). Refresh the owner room list for the next select.
+      const n = (r.name ?? "").trim();
+      const dsc = (r.description ?? "").trim();
+      setVis(r.visibility);
+      setVisName(n);
+      setVisDescription(dsc);
+      setSavedVis(r.visibility);
+      setSavedName(n);
+      setSavedDescription(dsc);
       if (address) getMyRooms(address).then((x) => setMyRooms(x.rooms)).catch(() => {});
     } catch (e) {
       setVisErr(String((e as Error).message ?? e));
@@ -207,6 +246,12 @@ export function useEnroll() {
       setVisBusy(false);
     }
   }, [ownerRoom, vis, visName, visDescription, address]);
+
+  // Has the visibility form changed from the last-saved snapshot? Disables Save when nothing changed (the
+  // Private -> Private case the owner asked about, plus any unchanged name/description). Trim-compared so
+  // trailing whitespace alone is not a change, matching how the values are stored.
+  const visDirty =
+    vis !== savedVis || visName.trim() !== savedName || visDescription.trim() !== savedDescription;
 
   const approve = useCallback(
     async (c: string) => {
@@ -257,6 +302,7 @@ export function useEnroll() {
     memberState,
     memberBusy,
     memberErr,
+    joinDone,
     drift: id.drift,
     requestToJoin,
     // member: your-requests history
@@ -284,6 +330,7 @@ export function useEnroll() {
     visBusy,
     visErr,
     visSaved,
+    visDirty,
     saveVisibility,
   };
 }

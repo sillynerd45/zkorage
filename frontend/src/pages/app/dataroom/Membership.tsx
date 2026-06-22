@@ -145,14 +145,24 @@ export default function Membership() {
                   A name the owner sees to recognize your request. Leave it blank to stay just an ID.
                 </span>
               </label>
-              <Button onClick={e.requestToJoin} disabled={e.memberBusy} data-testid="enroll-request">
+              <Button
+                onClick={e.requestToJoin}
+                disabled={e.memberBusy || e.joinDone}
+                data-testid="enroll-request"
+              >
                 <UserPlus aria-hidden="true" />
-                {e.memberBusy ? "Working…" : "Request to join"}
+                {e.memberBusy
+                  ? "Working…"
+                  : e.memberState === "eligible"
+                    ? "Already approved"
+                    : e.joinDone
+                      ? "Request sent"
+                      : "Request to join"}
               </Button>
             </div>
 
             {e.memberState && (
-              <div className="mt-4" data-testid="enroll-state" data-state={e.memberState}>
+              <div className="mt-4" data-testid="enroll-state" data-state={e.memberState} aria-live="polite">
                 {e.memberState === "eligible" ? (
                   <Verdict ok>Approved: you are on this room's list. You can now prove your way in.</Verdict>
                 ) : e.memberState === "pending" ? (
@@ -290,67 +300,79 @@ export default function Membership() {
               </div>
 
               {e.ownerRoom && (
-                <div className="space-y-3">
-                  <div className="flex items-center gap-2 text-[13px] text-muted-foreground" data-testid="enroll-member-count">
-                    <Users className="size-4" aria-hidden="true" />
-                    {e.memberCount} approved member{e.memberCount === 1 ? "" : "s"}
-                  </div>
-                  {/* The exact room id, to copy and share with people you want to invite (they paste it into
-                      "Request to join", or you send them a Discover link). */}
-                  <div
-                    className="flex flex-wrap items-center gap-2 text-[13px] text-muted-foreground"
-                    data-testid="enroll-room-id"
-                  >
-                    <span>Room id</span>
-                    <code className="font-mono text-xs text-foreground" title={e.ownerRoom}>{short(e.ownerRoom, 10)}</code>
-                    <CopyIconButton value={e.ownerRoom} label="room id" />
-                  </div>
-                  {e.ownerBusy ? (
-                    <p className="text-sm text-muted-foreground">Loading requests…</p>
-                  ) : e.pending.length === 0 ? (
-                    <p className="text-sm text-muted-foreground" data-testid="enroll-no-pending">
-                      No pending requests for this room.
-                    </p>
-                  ) : (
-                    <div className="divide-y divide-border/70 rounded-xl border" data-testid="enroll-pending">
-                      {e.pending.map((p) => (
-                        <div
-                          key={p.commitment}
-                          data-testid="enroll-pending-row"
-                          className="flex flex-wrap items-center gap-3 px-3 py-2.5"
-                        >
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-[13px] font-medium">
-                              {p.label || "Unnamed member"}
-                            </div>
-                            <div className="truncate font-mono text-xs text-muted-foreground" title={p.commitment}>
-                              {short(p.commitment, 8)}
-                            </div>
-                          </div>
-                          <Button
-                            size="sm"
-                            onClick={() => e.approve(p.commitment)}
-                            disabled={e.acting === p.commitment}
-                            data-testid="enroll-approve"
-                          >
-                            {e.acting === p.commitment ? "Working…" : "Approve"}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => e.reject(p.commitment)}
-                            disabled={e.acting === p.commitment}
-                            data-testid="enroll-reject"
-                          >
-                            Reject
-                          </Button>
-                        </div>
-                      ))}
+                <div className="space-y-5">
+                  {/* The selected room's facts: approved-member count + the exact id to copy and share with
+                      people you want to invite (they paste it into "Request to join", or you send a Discover link). */}
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2 text-[13px] text-muted-foreground" data-testid="enroll-member-count">
+                      <Users className="size-4" aria-hidden="true" />
+                      {e.memberCount} approved member{e.memberCount === 1 ? "" : "s"}
                     </div>
-                  )}
+                    <div
+                      className="flex flex-wrap items-center gap-2 text-[13px] text-muted-foreground"
+                      data-testid="enroll-room-id"
+                    >
+                      <span>Room id</span>
+                      <code className="font-mono text-xs text-foreground" title={e.ownerRoom}>{short(e.ownerRoom, 10)}</code>
+                      <CopyIconButton value={e.ownerRoom} label="room id" />
+                    </div>
+                  </div>
 
-                  {/* ── Discovery: who can find this room ── */}
-                  <div className="space-y-3 pt-1" data-testid="enroll-visibility">
+                  {/* ── Pending requests ── (its own labeled section, parallel to the visibility one below) */}
+                  <div className="space-y-3" data-testid="enroll-requests-section">
+                    <SectionLabel withRule>
+                      <span className="inline-flex items-center gap-1.5">
+                        <UserPlus className="size-4" aria-hidden="true" />
+                        Pending requests
+                      </span>
+                    </SectionLabel>
+                    {e.ownerBusy ? (
+                      <p className="text-sm text-muted-foreground">Loading requests…</p>
+                    ) : e.pending.length === 0 ? (
+                      <p className="text-sm text-muted-foreground" data-testid="enroll-no-pending">
+                        No pending requests for this room.
+                      </p>
+                    ) : (
+                      <div className="divide-y divide-border/70 rounded-xl border" data-testid="enroll-pending">
+                        {e.pending.map((p) => (
+                          <div
+                            key={p.commitment}
+                            data-testid="enroll-pending-row"
+                            className="flex flex-wrap items-center gap-3 px-3 py-2.5"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-[13px] font-medium">
+                                {p.label || "Unnamed member"}
+                              </div>
+                              <div className="truncate font-mono text-xs text-muted-foreground" title={p.commitment}>
+                                {short(p.commitment, 8)}
+                              </div>
+                            </div>
+                            <Button
+                              size="sm"
+                              onClick={() => e.approve(p.commitment)}
+                              disabled={e.acting === p.commitment}
+                              data-testid="enroll-approve"
+                            >
+                              {e.acting === p.commitment ? "Working…" : "Approve"}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => e.reject(p.commitment)}
+                              disabled={e.acting === p.commitment}
+                              data-testid="enroll-reject"
+                            >
+                              Reject
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* ── Who can find this room (discovery visibility) ── */}
+                  <div className="space-y-3" data-testid="enroll-visibility">
                     <SectionLabel withRule>
                       <span className="inline-flex items-center gap-1.5">
                         <Compass className="size-4" aria-hidden="true" />
@@ -413,10 +435,14 @@ export default function Membership() {
                     )}
 
                     <div className="flex flex-wrap items-center gap-3">
-                      <Button onClick={e.saveVisibility} disabled={e.visBusy} data-testid="vis-save">
+                      <Button
+                        onClick={e.saveVisibility}
+                        disabled={e.visBusy || !e.visDirty}
+                        data-testid="vis-save"
+                      >
                         {e.visBusy ? "Saving…" : "Save visibility"}
                       </Button>
-                      {e.visSaved && (
+                      {e.visSaved && !e.visDirty && (
                         <span className="text-sm text-emerald-600 dark:text-emerald-500" data-testid="vis-saved">
                           Saved.
                         </span>
