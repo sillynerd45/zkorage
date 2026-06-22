@@ -171,13 +171,15 @@ test("dataroom overview: task-oriented cards route to the right place; guided-de
   await expect(page.getByText("Start here")).toBeVisible();
   await expect(page.getByText("All tasks")).toBeVisible();
 
-  // the document tasks that used to be buried under "Store a document" are now first-class + discoverable
+  // "All tasks" now mirrors the real menu: Store (hero) + Open / My files (Documents) + Membership + Discover
   await expect(page.getByTestId("task-store")).toBeVisible();
   await expect(page.getByTestId("task-browse")).toBeVisible();
+  await expect(page.getByTestId("task-access")).toBeVisible();
+  await expect(page.getByTestId("task-membership")).toBeVisible();
+  await expect(page.getByTestId("task-discover")).toBeVisible();
   // the "Get in anonymously" + "Open with a key" cards were retired; the real member flow is task-access
   await expect(page.getByTestId("task-eligibility")).toHaveCount(0);
   await expect(page.getByTestId("task-open")).toHaveCount(0);
-  await expect(page.getByTestId("task-access")).toBeVisible();
 
   // the live key-release readiness pill is shown so a visitor sees the keepers are up before they try the
   // "Open a shared document" path (count is environment-dependent; assert the format, not a fixed number)
@@ -188,10 +190,11 @@ test("dataroom overview: task-oriented cards route to the right place; guided-de
   // the passive "Guided demo" is no longer a dataroom tab
   await expect(page.getByRole("link", { name: "Guided demo" })).toHaveCount(0);
 
-  // the on-chain trust anchor lives here once (explained, collapsed), not unexplained on every tab
-  await page.getByTestId("overview-onchain").click();
-  await expect(page.getByText("DataRoom contract")).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByTestId("storage")).toContainText(/Cloudflare R2|local/);
+  // the concept explainer, the timing demo, and the on-chain contract list all moved OFF the Overview
+  // (to Documentation + the Contracts reference page), so the Overview stays task-focused
+  await expect(page.getByTestId("overview-what-is")).toHaveCount(0);
+  await expect(page.getByTestId("overview-onchain")).toHaveCount(0);
+  await expect(page.getByTestId("m7-showcase")).toHaveCount(0);
 
   // the headline member-open card points to Documents > Open (assert the link, then navigate into it)
   await expect(page.getByTestId("task-access")).toHaveAttribute("href", /\/dataroom\/documents#open$/);
@@ -205,10 +208,11 @@ test("dataroom overview: task-oriented cards route to the right place; guided-de
   await expect(page.getByTestId("doc-subtab-bykey")).toHaveCount(0);
 });
 
-// M7 — the read-only showcase panel on the Overview: a wallet-free demonstration of the timing defense (a
-// green anonymity meter for a real testnet room + its on-chain grant log showing a clustered, shuffled batch
-// of accesses). Mocks the two chain-reads the panel makes; no wallet, so it proves the panel is public.
-test("M7 showcase: the Overview shows a green meter + a batched on-chain access record (no wallet)", async ({ page }) => {
+// M7 — the read-only showcase panel, now on the public Docs > Capabilities page: a wallet-free demonstration
+// of the timing defense (a green anonymity meter for a real testnet room + its on-chain grant log showing a
+// clustered, shuffled batch of accesses). Mocks the two chain-reads the panel makes; no wallet, so it proves
+// the panel is public.
+test("M7 showcase: Docs Capabilities shows a green meter + a batched on-chain access record (no wallet)", async ({ page }) => {
   const now = Math.floor(Date.now() / 1000);
   const grant = (index: number, acc: string, dt: number) => ({
     index, accessor: acc.repeat(32), nullifier: "00".repeat(32), eligibleRoot: "00".repeat(32), ledger: 1, timestamp: now + dt,
@@ -222,7 +226,7 @@ test("M7 showcase: the Overview shows a green meter + a batched on-chain access 
     body: JSON.stringify({ roomId: "cba6", count: 4, dataroomId: "CID", grants: [grant(0, "ab", 0), grant(1, "cd", 5), grant(2, "ef", 10), grant(3, "12", 15)] }),
   }));
 
-  await page.goto("/app/dataroom");
+  await page.goto("/docs/capabilities");
   const panel = page.getByTestId("m7-showcase");
   await expect(panel).toBeVisible({ timeout: 30_000 });
   await expect(panel.getByTestId("anon-meter")).toHaveAttribute("data-tier", "green");
@@ -246,7 +250,7 @@ test("M7 showcase: hides cleanly when the meter source is reset (no red showcase
       { index: 1, accessor: "cd".repeat(32), nullifier: "00".repeat(32), eligibleRoot: "00".repeat(32), ledger: 1, timestamp: 1782061795 },
     ] }),
   }));
-  await page.goto("/app/dataroom");
-  await expect(page.getByTestId("dataroom-overview")).toBeVisible({ timeout: 30_000 });
+  await page.goto("/docs/capabilities");
+  await expect(page.getByText("A sealed room for sensitive documents.")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("m7-showcase")).toHaveCount(0); // hidden, not a red meter
 });
