@@ -56,11 +56,12 @@ test("committee store: the browser deals; the relay gets only ciphertext + seale
   await page.getByTestId("room-label").fill("acme-board-docs");
   await page.getByTestId("store-mode-text").click();
   await page.getByTestId("doc-content").fill(PLAINTEXT);
-  await page.getByTestId("upload").click(); // "Store shared document"
+  await page.getByTestId("upload").click(); // "Store document" → validates, then opens the confirm dialog
+  await expect(page.getByTestId("confirm-modal")).toBeVisible();
   await page.getByTestId("confirm-go").click(); // "Encrypt and store"
 
-  // #3a — the store stepper is shown while the flow runs (held at deal-sealed → the "encrypt" phase is active).
-  await expect(page.getByTestId("store-stepper")).toBeVisible({ timeout: 20_000 });
+  // #3a — the store progress DIALOG is shown while the flow runs (held at deal-sealed → "encrypt" is active).
+  await expect(page.getByTestId("store-progress")).toBeVisible({ timeout: 20_000 });
   await expect(page.getByTestId("store-step-encrypt")).toHaveAttribute("data-status", "active");
   releaseDeal(); // let the deal-sealed response through; the flow finishes (anchor → verdict)
 
@@ -89,4 +90,32 @@ test("committee store: the browser deals; the relay gets only ciphertext + seale
 
   await page.screenshot({ path: "tests/committee-store.png", fullPage: true });
   expect(errs, errs.join("\n")).toHaveLength(0);
+});
+
+const jsonOf = (body: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+
+test("committee store: validates room + input BEFORE the confirm dialog opens", async ({ page }) => {
+  await page.addInitScript(mock);
+  await page.route("**/dataroom/rooms?owner=**", (r) => r.fulfill(jsonOf({ owner: ADDR, count: 0, rooms: [], dataroomId: "CID" })));
+  await page.goto("/app/dataroom/documents#store");
+  await expect(page.getByTestId("room-label")).toBeVisible({ timeout: 30_000 });
+
+  // 1) Click Store with an empty room → an inline error, and NO confirm dialog opens.
+  await page.getByTestId("upload").click();
+  await expect(page.getByTestId("store-validation-error")).toBeVisible();
+  await expect(page.getByTestId("confirm-modal")).toHaveCount(0);
+
+  // 2) Name the room but leave the (Text) input empty → still blocked, still no dialog.
+  await page.getByTestId("room-label").fill("acme-board-docs"); // editing clears the prior error
+  await expect(page.getByTestId("store-validation-error")).toHaveCount(0);
+  await page.getByTestId("store-mode-text").click();
+  await page.getByTestId("upload").click();
+  await expect(page.getByTestId("store-validation-error")).toBeVisible();
+  await expect(page.getByTestId("confirm-modal")).toHaveCount(0);
+
+  // 3) Fill the text → now the inputs are ready, so the confirm dialog finally opens.
+  await page.getByTestId("doc-content").fill("board minutes");
+  await page.getByTestId("upload").click();
+  await expect(page.getByTestId("confirm-modal")).toBeVisible();
+  await expect(page.getByTestId("store-validation-error")).toHaveCount(0);
 });

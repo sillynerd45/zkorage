@@ -83,6 +83,9 @@ export function useAnchor() {
   const [confirmAnchor, setConfirmAnchor] = useState(false);
   // The store flow's current phase, surfaced by the stepper so the owner knows what each wallet prompt is for.
   const [storeStage, setStoreStage] = useState<StoreStage>("idle");
+  // A pre-submit validation message (missing room name / file / text / wallet), shown inline at the button
+  // BEFORE the confirm dialog. Cleared automatically when the relevant input changes.
+  const [storeErr, setStoreErr] = useState<string | null>(null);
 
   // --- recipient open (key-free, client-side via the SDK) ---
   const [openRoom, setOpenRoom] = useState(DEMO_DATAROOM.roomId);
@@ -121,6 +124,10 @@ export function useAnchor() {
   // fresh wallet starts empty: you only ever see rooms you own.
   useEffect(() => { loadMyRooms(connected ? address : null); }, [connected, address, loadMyRooms]);
 
+  // Clear the pre-submit validation message as soon as the user fixes the offending input (or connects),
+  // so a stale "name a room" doesn't linger after they've named one.
+  useEffect(() => { setStoreErr(null); }, [roomLabel, content, file, storeMode, connected]);
+
   // Read a chosen file to base64 in the browser (FileReader handles large inputs without blowing the call
   // stack). Enforce the size cap up front so a too-big file fails clearly, not as a 413 mid-upload.
   const pickFile = useCallback((f: File | null) => {
@@ -148,21 +155,31 @@ export function useAnchor() {
   // Model B browser dealer: K is generated, the document encrypted, the key split, and every share + the
   // owner-escrow copy sealed ALL IN THIS BROWSER. The relay receives only ciphertext + sealed shares, so the
   // server never sees K or the plaintext. Then the owner signs put_committee_document. No slow prover.
+  // Pre-submit validation: the room name + the active input (file or text) + a connected wallet must all be
+  // present. Returns an error message, or null when the store is ready. Single source of truth for both the
+  // button pre-check (requestStore) and onStoreShared's own guard.
+  function validateStore(): string | null {
+    if (!roomLabel.trim()) return "Name a room, or pick one you already own.";
+    if (!connected || !address) return "Connect your wallet to store a document.";
+    if (storeMode === "file" && !file) return "Choose a file to store, or switch to Text.";
+    if (storeMode === "text" && !content.trim()) return "Paste some text to store, or switch to File.";
+    return null;
+  }
+
+  // The "Store document" button: validate FIRST so a missing room/file/text is caught here, inline, and the
+  // confirm dialog only opens when the inputs are ready (not after the user has committed in the dialog).
+  function requestStore() {
+    const err = validateStore();
+    if (err) { setStoreErr(err); return; }
+    setStoreErr(null);
+    setConfirmAnchor(true);
+  }
+
   async function onStoreShared() {
-    if (!roomLabel.trim()) {
-      setResp({ ok: false, error: "Name a room, or pick one you already own.", dataroomId: "" });
-      setState("rejected"); return;
-    }
-    if (!connected || !address) {
-      setResp({ ok: false, error: "Connect your wallet to store a shared document.", dataroomId: "" });
-      setState("rejected"); return;
-    }
-    if (storeMode === "file" && !file) {
-      setResp({ ok: false, error: "Choose a file to store, or switch to Text.", dataroomId: "" });
-      setState("rejected"); return;
-    }
-    if (storeMode === "text" && !content.trim()) {
-      setResp({ ok: false, error: "Paste some text to store, or switch to File.", dataroomId: "" });
+    // Defense-in-depth: requestStore already gated this, but re-check in case onStoreShared is reached another way.
+    const invalid = validateStore();
+    if (invalid) {
+      setResp({ ok: false, error: invalid, dataroomId: "" });
       setState("rejected"); return;
     }
     setBusy(true); setResp(null); setSharedResult(null); setState("verifying"); setStoreStage("room");
@@ -254,7 +271,7 @@ export function useAnchor() {
   // docs into one room); the wallet-derived room key is cached, so a follow-up store prompts once (anchor).
   function resetStore() {
     setFileState(null); setFileErr(null); setContent("");
-    setResp(null); setSharedResult(null); setStep("");
+    setResp(null); setSharedResult(null); setStep(""); setStoreErr(null);
     setState("draft"); setStoreStage("idle");
   }
 
@@ -318,6 +335,8 @@ export function useAnchor() {
     busy,
     step,
     storeStage,
+    storeErr,
+    requestStore,
     resetStore,
     confirmAnchor,
     setConfirmAnchor,
