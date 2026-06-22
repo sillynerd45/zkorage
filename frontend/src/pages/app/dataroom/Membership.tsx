@@ -321,12 +321,26 @@ export default function Membership() {
 
                   {/* ── Pending requests ── (its own labeled section, parallel to the visibility one below) */}
                   <div className="space-y-3" data-testid="enroll-requests-section">
-                    <SectionLabel withRule>
-                      <span className="inline-flex items-center gap-1.5">
-                        <UserPlus className="size-4" aria-hidden="true" />
-                        Pending requests
-                      </span>
-                    </SectionLabel>
+                    <div className="flex items-center gap-3">
+                      <SectionLabel withRule className="flex-1">
+                        <span className="inline-flex items-center gap-1.5">
+                          <UserPlus className="size-4" aria-hidden="true" />
+                          Pending requests
+                        </span>
+                      </SectionLabel>
+                      {/* Approve everyone waiting in ONE signature (one root re-pin), instead of one at a time. */}
+                      {e.pending.length > 1 && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={e.approveAll}
+                          disabled={e.approvingAll || e.acting !== null}
+                          data-testid="enroll-approve-all"
+                        >
+                          {e.approvingAll ? "Approving…" : `Approve all (${e.pending.length})`}
+                        </Button>
+                      )}
+                    </div>
                     {e.ownerBusy ? (
                       <p className="text-sm text-muted-foreground">Loading requests…</p>
                     ) : e.pending.length === 0 ? (
@@ -352,7 +366,7 @@ export default function Membership() {
                             <Button
                               size="sm"
                               onClick={() => e.approve(p.commitment)}
-                              disabled={e.acting === p.commitment}
+                              disabled={e.acting === p.commitment || e.approvingAll}
                               data-testid="enroll-approve"
                             >
                               {e.acting === p.commitment ? "Working…" : "Approve"}
@@ -361,7 +375,7 @@ export default function Membership() {
                               size="sm"
                               variant="outline"
                               onClick={() => e.reject(p.commitment)}
-                              disabled={e.acting === p.commitment}
+                              disabled={e.acting === p.commitment || e.approvingAll}
                               data-testid="enroll-reject"
                             >
                               Reject

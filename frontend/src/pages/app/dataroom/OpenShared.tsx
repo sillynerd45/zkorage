@@ -20,7 +20,6 @@ import { cn } from "@/lib/utils";
 // never which one. ZK is load-bearing: a login would have to know you to let you in; a proof does not.
 export default function OpenShared() {
   const s = useSharedOpen();
-  const leg = (v: boolean | null | undefined) => (v === null || v === undefined ? "(not required)" : v ? "✓" : "✗");
 
   // Prefill the room (and optionally the doc) when arriving from a deep link, e.g. "Open documents" in
   // Membership > Your requests or the Discover directory: /app/dataroom/access?room=<id>[&doc=<id>].
@@ -234,16 +233,25 @@ export default function OpenShared() {
                 </Verdict>
               </div>
             )}
+            {/* Only the legs THIS document's policy actually requires. compliance/accredited are null when the
+                policy doesn't include them (membership-only is the common case), so those rows are hidden, not
+                shown as "(not required)". membership is the Model B spine unless a policy opts out of it. */}
             <div className="mt-3">
-              <DataRow k="Member (got in anonymously)" mono={false} testId="access-leg-membership">
-                {s.access.membership ? "✓" : "✗"}
-              </DataRow>
-              <DataRow k="ID-checked and not sanctioned" mono={false} testId="access-leg-compliance">
-                {leg(s.access.compliance)}
-              </DataRow>
-              <DataRow k="Accredited investor" mono={false} testId="access-leg-accredited">
-                {leg(s.access.accredited)}
-              </DataRow>
+              {s.access.policy?.require_membership !== false && (
+                <DataRow k="Member (got in anonymously)" mono={false} testId="access-leg-membership">
+                  {s.access.membership ? "✓" : "✗"}
+                </DataRow>
+              )}
+              {s.access.compliance !== null && s.access.compliance !== undefined && (
+                <DataRow k="ID-checked and not sanctioned" mono={false} testId="access-leg-compliance">
+                  {s.access.compliance ? "✓" : "✗"}
+                </DataRow>
+              )}
+              {s.access.accredited !== null && s.access.accredited !== undefined && (
+                <DataRow k="Accredited investor" mono={false} testId="access-leg-accredited">
+                  {s.access.accredited ? "✓" : "✗"}
+                </DataRow>
+              )}
             </div>
 
             {/* Branch: granted -> open below; on the list, not granted -> prove once; not on the list -> join. */}

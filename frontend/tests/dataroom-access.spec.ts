@@ -68,6 +68,12 @@ test("M3 reader: a non-member derives an identity and is sent to request to join
   const result = page.getByTestId("access-result");
   await expect(result).toBeVisible({ timeout: 30_000 });
   await expect(result).toHaveAttribute("data-admitted", "false");
+  // only the legs THIS doc's policy requires are shown: the membership-only demo doc shows just the membership
+  // leg, and unused legs are hidden rather than rendered as "(not required)".
+  await expect(result).not.toContainText("not required");
+  await expect(page.getByTestId("access-leg-membership")).toBeVisible();
+  await expect(page.getByTestId("access-leg-compliance")).toHaveCount(0);
+  await expect(page.getByTestId("access-leg-accredited")).toHaveCount(0);
   await expect(page.getByTestId("access-join-pointer")).toBeVisible();
   await expect(page.getByRole("link", { name: /Request to join in Membership/i })).toHaveAttribute(
     "href",
