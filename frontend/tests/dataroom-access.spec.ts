@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { readFileSync } from "node:fs";
 
 // "Open a document" (redesigned). The member lands on the rooms they are approved for, picks a document, and
 // clicks one "Open" button that orchestrates everything. These tests mock Freighter (connected + signMessage)
@@ -218,4 +219,46 @@ test("Open: the legacy /access route redirects to Documents > Open, preserving ?
   // redirected into the consolidated location, room preserved
   await expect(page).toHaveURL(new RegExp(`/dataroom/documents\\?room=${ROOM}#open$`));
   await expect(page.getByTestId("access-room-detail")).toBeVisible({ timeout: 30_000 });
+});
+
+test("Open: rooms export to an encrypted file and re-import on another device", async ({ page }) => {
+  const errs: string[] = [];
+  page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/i.test(m.text())) errs.push(m.text()); });
+  await page.addInitScript(mock);
+  await stubReads(page, "eligible", 8);
+
+  await page.goto("/app/dataroom/documents#open");
+  // seed this browser's approved-room history, then reload so the hook reads it
+  await page.evaluate((a) => {
+    localStorage.setItem(
+      `zkorage.dr.requests.${a.addr}`,
+      JSON.stringify([{ roomId: a.room, label: "Acme term sheet", state: "eligible", ts: 1 }]),
+    );
+  }, { addr: ADDR, room: ROOM });
+  await page.reload();
+  await expect(page.getByTestId("access-room-row").first()).toContainText("Acme term sheet", { timeout: 30_000 });
+
+  // export -> capture the encrypted download
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    page.getByTestId("access-export").click(),
+  ]);
+  const dlPath = await download.path();
+  expect(dlPath).toBeTruthy();
+  const contents = readFileSync(dlPath!, "utf8");
+  expect(contents).not.toContain(ROOM); // encrypted: the room id never appears in plaintext
+  expect(contents).toContain("AES-256-GCM");
+  await expect(page.getByTestId("access-backup-msg")).toContainText("Exported your room list (1)");
+
+  // simulate a fresh device: drop the local history, confirm the list is empty
+  await page.evaluate((addr) => localStorage.removeItem(`zkorage.dr.requests.${addr}`), ADDR);
+  await page.reload();
+  await expect(page.getByTestId("access-rooms-empty")).toBeVisible({ timeout: 30_000 });
+
+  // import the file with the SAME wallet -> the room comes back
+  await page.getByTestId("access-import-input").setInputFiles(dlPath!);
+  await expect(page.getByTestId("access-backup-msg")).toContainText("Imported 1 room");
+  await expect(page.getByTestId("access-room-row").first()).toContainText("Acme term sheet");
+
+  expect(errs, errs.join("\n")).toHaveLength(0);
 });

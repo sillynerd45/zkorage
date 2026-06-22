@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { type DataRoomIdentity } from "zkorage-sdk";
+import { type DataRoomIdentity, DATAROOM_IDENTITY_MESSAGE } from "zkorage-sdk";
 import { useWallet } from "@/lib/wallet/WalletContext";
 import { deriveRoomIdentity } from "@/lib/dataroom/identity";
 
@@ -45,5 +45,18 @@ export function useDataRoomIdentity() {
     [address, signMessage],
   );
 
-  return { derive, busy, drift, error };
+  // The raw wallet signature (cached per session), used as HKDF input keying material for non-identity keys
+  // such as the encrypted rooms backup. It is the SAME signature that derives the room identity, so this never
+  // adds a second wallet prompt within a session, and the secret bytes stay in memory (never persisted).
+  const getSignature = useCallback(async (): Promise<Uint8Array> => {
+    if (!address) throw new Error("Connect your wallet first.");
+    let sig = sigCache.get(address);
+    if (!sig) {
+      sig = await signMessage(DATAROOM_IDENTITY_MESSAGE);
+      sigCache.set(address, sig);
+    }
+    return sig;
+  }, [address, signMessage]);
+
+  return { derive, getSignature, busy, drift, error };
 }

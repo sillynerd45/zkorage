@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { CheckCircle2, Clock, FileText, FolderOpen, Loader2, Lock, RefreshCw } from "lucide-react";
+import { CheckCircle2, Clock, Download, FileText, FolderOpen, Loader2, Lock, RefreshCw, Upload } from "lucide-react";
 import { useSharedOpen } from "@/lib/hooks/useSharedOpen";
 import { Disclosure, Hex } from "@/components/Disclosure";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -136,6 +136,7 @@ function OpenStatus({ s }: { s: ReturnType<typeof useSharedOpen> }) {
 
 export default function OpenShared() {
   const s = useSharedOpen();
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   // Deep link from "Open documents" (Membership / Discover): /app/dataroom/documents?room=<id>#open selects it.
   const [params] = useSearchParams();
@@ -213,6 +214,55 @@ export default function OpenShared() {
             })}
           </div>
         )}
+
+        {/* Move your rooms to another device. The list is re-derived access, not a credential, so the file holds
+            no secret; we still encrypt it to your wallet so it does not reveal which rooms you are in. */}
+        <div className="mt-4 border-t pt-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-muted-foreground">Use on another device:</span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={s.exportRooms}
+              disabled={s.backupBusy}
+              data-testid="access-export"
+            >
+              <Download className="size-3.5" aria-hidden="true" />
+              Export
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => importInputRef.current?.click()}
+              disabled={s.backupBusy}
+              data-testid="access-import"
+            >
+              <Upload className="size-3.5" aria-hidden="true" />
+              Import
+            </Button>
+            <input
+              ref={importInputRef}
+              type="file"
+              accept="application/json,.json"
+              className="hidden"
+              data-testid="access-import-input"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) s.importRooms(f);
+                e.target.value = "";
+              }}
+            />
+          </div>
+          <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+            The file is encrypted with your wallet, so only the same wallet can read it. Connect that wallet on
+            the other device and import it, then press Refresh.
+          </p>
+          {s.backupMsg && (
+            <p className="mt-1 text-xs text-muted-foreground" data-testid="access-backup-msg">
+              {s.backupMsg}
+            </p>
+          )}
+        </div>
       </Card>
 
       {/* The selected room: its documents, each with one Open button + the live status of the active Open. */}
