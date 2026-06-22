@@ -33,7 +33,7 @@ const HERO: Task = {
 const TASKS: Task[] = [
   {
     to: "/app/dataroom/documents#open",
-    label: "Open a document",
+    label: "Open with a key",
     blurb: "Decrypt a file in your browser with the recipient's key. Your key never leaves the page.",
     testid: "task-open",
     icon: KeyRound,
@@ -58,8 +58,8 @@ const TASKS: Task[] = [
   },
   {
     to: "/app/dataroom/access",
-    label: "Open a shared document",
-    blurb: "Prove a document's conditions (member, KYC'd, accredited), then its keepers release the key to you.",
+    label: "Open a document",
+    blurb: "Open files from rooms you have access to, decrypted in your browser.",
     testid: "task-access",
     icon: Users,
     category: "Access",

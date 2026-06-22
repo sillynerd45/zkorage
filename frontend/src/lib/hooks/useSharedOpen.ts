@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getCommitteeInfo,
   getCommitteeDocument,
@@ -12,200 +12,194 @@ import {
   type CommitteeInfoResp,
   type CommitteeDoc,
   type DataroomDoc,
-  type EnrollState,
   type Bundle,
 } from "@/lib/api";
 import { ANON_FLOOR } from "@/components/app/dataroom/AnonymityMeter";
-import {
-  DEMO_MODELB_ROOM,
-  DEMO_MODELB_DOC,
-  signDataRoomAccess,
-  type DataRoomIdentity,
-  type OpenedCommitteeDocument,
-  type RoomAccess,
-} from "zkorage-sdk";
+import { signDataRoomAccess, type DataRoomIdentity, type OpenedCommitteeDocument, type RoomAccess } from "zkorage-sdk";
 import { sdk } from "@/lib/sdk";
 import { useWallet } from "@/lib/wallet/WalletContext";
 import { useDataRoomIdentity } from "@/lib/hooks/useDataRoomIdentity";
+import { readJoinRequests } from "@/lib/dataroom/requests";
+import { writeOpenTicket, clearOpenTicket, findOpenTicket } from "@/lib/dataroom/openTicket";
 import { isHex32 } from "@/lib/format";
 
-// M3: "Open a shared document" with sign-to-derive identity (Model B). The reader's room identity is derived
-// from their wallet IN THE BROWSER (M0), so the room never learns who they are or which member they are. The
-// flow branches on the reader's live on-chain state:
-//   - already granted        -> read the doc's policy/admission, then open (keepers release the key to them).
-//   - on the room's list, not granted yet -> prove membership ONCE (self-hosted prover, a few minutes) ->
-//                               request_access binds their accessor + recipient key on-chain -> open.
-//   - not on the room's list  -> they are sent to request to join (Membership).
-// ZK is load-bearing: the keepers release the key to someone they cannot identify, because a proof, not a
-// login, decides who qualifies. The recipient secret never leaves the browser; the one-time membership proof
-// is the only step where the witness leaves it, and it goes to the self-hosted prover alone.
+// "Open a document" (Model B). One screen, one action: the member lands on the rooms they are approved for,
+// picks a document, and clicks Open. A single orchestrator reads their live on-chain status and branches:
+//   - not on the list / pending / revoked  -> say so plainly, point to the next step.
+//   - approved but not set up yet           -> ask to run the one-time membership proof (a few minutes).
+//   - already set up (on-chain grant)        -> get the key from the keepers and decrypt, automatically.
+// The one-time proof's witness goes only to the SELF-HOSTED prover; the file decrypts in the browser. ZK is
+// load-bearing: the keepers release the key to someone they cannot identify, because a proof, not a login,
+// decides who qualifies.
 //
-// M7 (timing defense): the proof bundle is NOT submitted on-chain immediately. It is handed to the batching
-// relay, which records the access on-chain SHUFFLED at the next fixed window boundary, together with the other
-// accesses in that window. So the room owner reads only "an approved member accessed in this window", not when
-// (or whether) THIS member acted. Latency until the access lands is the price of breaking that timing link.
-// Honest residual (NOT closed by batching): the on-chain grant also records the membership snapshot
-// (eligible_root) the proof checked, so a stable member list gives everyone the same cover, while a room that
-// re-pins its set in batches narrows a grant to that snapshot's cohort. The full fix (a recent-roots ring /
-// epoch roots) is a contract change, deferred.
-export type ProveStage = "idle" | "proving" | "queuing" | "queued";
+// The proof's access is recorded on-chain in a SHUFFLED batch at a fixed window boundary (M7 timing defense),
+// so the room cannot tell when this member acted. That wait can be minutes, so the queued ticket is persisted
+// (per wallet+room, this browser) and the "waiting" state resumes if the member leaves and returns.
 
-// One source of truth for the below-floor block message (shown when the reader tries to prove/open a room
-// with fewer than ANON_FLOOR members). The backend enforces the same floor independently.
-const FLOOR_BLOCK_MSG = `Access needs at least ${ANON_FLOOR} members in this room. Anonymity needs a crowd to hide in.`;
+export type OpenPhase =
+  | "idle" // a doc is selected but Open hasn't run
+  | "checking" // deriving identity + reading on-chain status
+  | "not-member" // not on the room's list
+  | "pending" // join request still waiting for the owner
+  | "approved" // on the list, no grant yet -> offer the one-time setup
+  | "below-floor" // the room is below the anonymity floor
+  | "revoked" // access removed
+  | "proving" // running the self-hosted prover
+  | "queuing" // handing the proof to the batching relay
+  | "waiting" // queued for the batch window
+  | "opening" // getting the key + decrypting
+  | "opened" // done (the file is in `opened`)
+  | "error";
 
 export function useSharedOpen() {
-  const { connected, connect, status: walletStatus } = useWallet();
+  const { address, connected, connect, status: walletStatus } = useWallet();
   const ident = useDataRoomIdentity();
 
   const [committee, setCommittee] = useState<CommitteeInfoResp | null>(null);
-  const [committeeDoc, setCommitteeDoc] = useState<CommitteeDoc | null>(null);
-  const [room, setRoom] = useState(DEMO_MODELB_ROOM);
-  const [doc, setDoc] = useState(DEMO_MODELB_DOC);
 
-  // The room's eligible-set size (the anonymity set). null = unknown (room not resolved). Below ANON_FLOOR,
-  // access is disabled (a set too small to hide in).
+  // The selected room ("" = none; show the room list). Selecting a room loads its docs + anonymity meter.
+  const [room, setRoom] = useState("");
+  const [roomDocs, setRoomDocs] = useState<DataroomDoc[]>([]);
+  const [docsLoading, setDocsLoading] = useState(false);
   const [anonCount, setAnonCount] = useState<number | null>(null);
   const belowFloor = anonCount !== null && anonCount < ANON_FLOOR;
 
-  // The reader's wallet-derived identity for the CURRENT room (null until they check). Re-derived per room.
+  // The rooms this wallet is approved for, from the local request history (this browser). "eligible" = approved.
+  const [openableRooms, setOpenableRooms] = useState<{ roomId: string; label?: string }[]>([]);
+  useEffect(() => {
+    if (!connected || !address) { setOpenableRooms([]); return; }
+    setOpenableRooms(
+      readJoinRequests(address)
+        .filter((r) => r.state === "eligible")
+        .map((r) => ({ roomId: r.roomId, label: r.label })),
+    );
+  }, [connected, address]);
+
+  // The open flow for ONE document at a time.
+  const [openDocId, setOpenDocId] = useState<string | null>(null);
+  const [phase, setPhase] = useState<OpenPhase>("idle");
   const [identity, setIdentity] = useState<DataRoomIdentity | null>(null);
   const [access, setAccess] = useState<RoomAccess | null>(null);
-  const [enrollState, setEnrollState] = useState<EnrollState | null>(null);
-  const [accessErr, setAccessErr] = useState<string | null>(null);
-  const [checking, setChecking] = useState(false);
-
-  // The one-time membership proof (only when the reader is on the list but not yet granted).
-  const [proveStage, setProveStage] = useState<ProveStage>("idle");
+  const [committeeDoc, setCommitteeDoc] = useState<CommitteeDoc | null>(null);
   const [proveStep, setProveStep] = useState("");
   const [proveBy, setProveBy] = useState<string | null>(null);
-  const [proveErr, setProveErr] = useState<string | null>(null);
-  // M7: the window boundary (unix ms) the queued access lands at, surfaced so the reader sees roughly when.
   const [flushAt, setFlushAt] = useState<number | null>(null);
-
   const [opened, setOpened] = useState<OpenedCommitteeDocument | null>(null);
-  const [openErr, setOpenErr] = useState<string | null>(null);
-  const [opening, setOpening] = useState(false);
+  const [flowErr, setFlowErr] = useState<string | null>(null);
 
   const cancelled = useRef(false);
-  useEffect(() => () => { cancelled.current = true; }, []);
-
   useEffect(() => {
-    getCommitteeInfo().then(setCommittee).catch(() => {});
+    cancelled.current = false;
+    return () => { cancelled.current = true; };
   }, []);
 
-  // Load the document's public fingerprints (content + key commitment) whenever the room/doc are valid hex.
-  // Display only; reveals nothing about the reader.
-  useEffect(() => {
-    if (!isHex32(room) || !isHex32(doc)) {
-      setCommitteeDoc(null);
-      return;
-    }
-    let live = true;
-    getCommitteeDocument(room.trim(), doc.trim())
-      .then((r) => { if (live) setCommitteeDoc(r.document); })
-      .catch(() => { if (live) setCommitteeDoc(null); });
-    return () => { live = false; };
-  }, [room, doc]);
+  // A wallet account switch must stop any in-flight poll: it belongs to the previous wallet, and the derived
+  // identity is now different. open() / setupAccess() / the resume effect each re-arm cancelled=false when they
+  // start, so this only kills work that is mid-flight when the account changes.
+  useEffect(() => { cancelled.current = true; }, [address]);
 
-  // The room's anonymity-set size drives the meter + the access floor (read whenever the room is valid hex).
-  useEffect(() => {
-    if (!isHex32(room)) {
-      setAnonCount(null);
-      return;
-    }
-    let live = true;
-    getEligible(room.trim())
-      .then((r) => { if (live) setAnonCount(r.memberCount); })
-      .catch(() => { if (live) setAnonCount(null); });
-    return () => { live = false; };
-  }, [room]);
+  useEffect(() => { getCommitteeInfo().then(setCommittee).catch(() => {}); }, []);
 
-  // The room's document list, so an approved member can SEE and pick a document instead of pasting a doc id.
-  // These are public on-chain fingerprints (content hash + key commitment), never the contents. Committee docs
-  // only (the anonymous Model B kind the keepers release); legacy DR1 single-recipient seals are not openable
-  // here. Read whenever the room is valid hex.
-  const [roomDocs, setRoomDocs] = useState<DataroomDoc[]>([]);
-  const [docsLoading, setDocsLoading] = useState(false);
+  // Load the selected room's document list (public on-chain fingerprints, committee kind only) + member count.
   useEffect(() => {
-    if (!isHex32(room)) {
-      setRoomDocs([]);
-      return;
-    }
+    if (!isHex32(room)) { setRoomDocs([]); setAnonCount(null); return; }
     let live = true;
     setDocsLoading(true);
     getDataroomDocuments(room.trim())
       .then((r) => { if (live) setRoomDocs(r.documents.filter((d) => d.kind === "committee")); })
       .catch(() => { if (live) setRoomDocs([]); })
       .finally(() => { if (live) setDocsLoading(false); });
+    getEligible(room.trim())
+      .then((r) => { if (live) setAnonCount(r.memberCount); })
+      .catch(() => { if (live) setAnonCount(null); });
     return () => { live = false; };
   }, [room]);
 
-  // Changing the target room/doc invalidates the per-room identity + every result, so the reader re-checks.
-  useEffect(() => {
-    setIdentity(null);
+  // Reset the per-doc open flow whenever the selected room changes.
+  const resetFlow = useCallback(() => {
+    setOpenDocId(null);
+    setPhase("idle");
     setAccess(null);
-    setEnrollState(null);
+    setCommitteeDoc(null);
     setOpened(null);
-    setAccessErr(null);
-    setOpenErr(null);
-    setProveErr(null);
+    setFlowErr(null);
     setProveStep("");
-  }, [room, doc]);
-
-  // Derive the reader's identity for this room (one wallet signature, cached for the session), then read their
-  // live admission (on-chain) + whether they are on the room's list (so we know which step to offer).
-  async function onCheck() {
-    setAccessErr(null);
-    setOpened(null);
-    setOpenErr(null);
-    setProveErr(null);
-    setProveStep("");
-    if (!isHex32(room) || !isHex32(doc)) {
-      setAccessErr("room and doc must each be 32-byte hex (64 hex chars)");
-      return;
-    }
-    setChecking(true);
-    try {
-      const id = await ident.derive(room.trim());
-      if (!id) {
-        setAccessErr(ident.error ?? "Could not derive your identity from the wallet.");
-        return;
-      }
-      setIdentity(id);
-      const [acc, st] = await Promise.all([
-        sdk.canOpenDocument(room.trim(), doc.trim(), id.accessor),
-        getEnrollStatus(room.trim(), id.idCommitment).catch(() => ({ state: "none" as EnrollState })),
-      ]);
-      setAccess(acc);
-      setEnrollState(st.state);
-    } catch (e) {
-      setAccessErr(String((e as Error).message ?? e));
-    } finally {
-      setChecking(false);
-    }
-  }
-
-  // Prove membership ONCE, then hand the proof to the batching relay instead of submitting it directly. The
-  // witness (the reader's wallet-derived secrets) goes to the self-hosted prover, which returns a Groth16
-  // bundle; the relay records the access on-chain (request_access) SHUFFLED at the next fixed window boundary,
-  // so the on-chain timestamp + order reveal the window, not this member's action. The reader waits for the
-  // window to flush, then can open. After it lands, opening any document in the room is instant.
-  async function onProve() {
-    if (!identity) return;
-    if (belowFloor) {
-      setProveErr(FLOOR_BLOCK_MSG);
-      return;
-    }
-    setProveErr(null);
     setProveBy(null);
     setFlushAt(null);
-    setProveStep("Proving your membership (sha256-Merkle, nullifier, holder signature) on the self-hosted prover. This runs once for the room and can take a few minutes.");
-    setProveStage("proving");
+  }, []);
+
+  const selectRoom = useCallback((roomId: string) => {
+    cancelled.current = true; // stop any in-flight poll for the previous room (open()/setupAccess re-arm it)
+    resetFlow();
+    setRoom(roomId.trim());
+  }, [resetFlow]);
+
+  // ── the orchestrated open ──────────────────────────────────────────────────────────────────────
+  // Get the key from the keepers and decrypt in the browser. Only reached once the on-chain grant exists.
+  const doOpen = useCallback(async (docId: string, id: DataRoomIdentity) => {
+    setPhase("opening");
+    setFlowErr(null);
     try {
-      cancelled.current = false;
-      // Sign the NEW-5 consent IN THE BROWSER, so accessor_seed never leaves the device; the backend + prover
-      // receive only the signature + the public accessor.
+      const out = await sdk.openCommitteeDocument(room.trim(), docId.trim(), id.accessor, id.recipientSecret, {
+        minAnonSet: ANON_FLOOR,
+      });
+      if (cancelled.current) return;
+      setOpened(out);
+      setPhase("opened");
+    } catch (e) {
+      if (cancelled.current) return;
+      setFlowErr(String((e as Error).message ?? e));
+      setPhase("error");
+    }
+  }, [room]);
+
+  // Poll the batch ticket until the access lands on-chain (submitted), then auto-open. Returns true if it
+  // landed. Shared by a fresh setup and by resuming a persisted ticket.
+  const waitForBatch = useCallback(
+    async (ticketId: string, windowMs: number | null, docId: string, id: DataRoomIdentity): Promise<boolean> => {
+      setPhase("waiting");
+      const win = windowMs ?? 10 * 60 * 1000;
+      const deadline = Date.now() + win * 2 + 60 * 1000;
+      while (Date.now() < deadline) {
+        if (cancelled.current) return false;
+        await new Promise((r) => setTimeout(r, 4000));
+        const st = await getQueueStatus(ticketId).catch(() => null);
+        if (!st) continue;
+        setFlushAt(st.flushAt ?? null);
+        if (st.status === "submitted") {
+          clearOpenTicket(address, room.trim());
+          await doOpen(docId, id);
+          return true;
+        }
+        if (st.status === "error") {
+          clearOpenTicket(address, room.trim());
+          setFlowErr(`${st.error || "the batched submission did not go through"}. Check access again and set up once more.`);
+          setPhase("error");
+          return false;
+        }
+      }
+      // Still queued past the deadline (the relay missed two windows). Surface a recoverable error instead of a
+      // dead "waiting" screen, and KEEP the ticket so a reload (or Try again) resumes the wait.
+      if (!cancelled.current) {
+        setFlowErr("Your access is taking longer than usual to land. Try Open again to check, or come back later.");
+        setPhase("error");
+      }
+      return false;
+    },
+    [address, room, doOpen],
+  );
+
+  // Run the one-time membership proof, hand it to the batching relay, persist the ticket, wait, then auto-open.
+  const setupAccess = useCallback(async () => {
+    if (!identity || !openDocId) return;
+    if (belowFloor) { setFlowErr(`This room needs at least ${ANON_FLOOR} members before access opens.`); setPhase("below-floor"); return; }
+    cancelled.current = false;
+    setFlowErr(null);
+    setProveBy(null);
+    setFlushAt(null);
+    setPhase("proving");
+    setProveStep("Setting up your access on the self-hosted prover. This runs once for the room and can take a few minutes.");
+    try {
       const holderSig = signDataRoomAccess(identity);
       const pa = await proveAccess({
         roomId: room.trim(),
@@ -223,131 +217,141 @@ export function useSharedOpen() {
         if (cancelled.current) return;
         const s = await getProveStatus(pa.jobId);
         setProveBy(s.by ?? null);
-        if (s.status === "done" && s.bundle) {
-          bundle = s.bundle;
-          break;
-        }
+        if (s.status === "done" && s.bundle) { bundle = s.bundle; break; }
         if (s.status === "error") throw new Error(s.error || "proving failed");
         await new Promise((r) => setTimeout(r, 4000));
       }
       if (!bundle) throw new Error("the proof timed out");
 
-      // Hand the proven bundle to the batching relay (the timing defense). It will be submitted on-chain,
-      // shuffled with the window's other accesses, at the next boundary — not the instant you proved.
-      setProveStage("queuing");
+      setPhase("queuing");
       setProveStep("Handing your access to the batching relay.");
-      const q = await queueAccess({
-        bundle,
-        roomId: room.trim(),
-        accessor: identity.accessor,
-        nullifier: pa.nullifier,
-      });
+      const q = await queueAccess({ bundle, roomId: room.trim(), accessor: identity.accessor, nullifier: pa.nullifier });
       if (!q.ok || !q.ticket) throw new Error(q.error || "could not queue your access for batched submission");
       setFlushAt(q.flushAt ?? null);
-      setProveStage("queued");
-      setProveStep("Your access is queued. It lands on-chain at the next batch window, shuffled with the others in that window, so the room cannot tell when you acted.");
-
-      // Poll the ticket until the window flushes and the access lands (or fails). Allow up to two windows
-      // (the relay may have just missed a boundary) plus a margin.
-      const windowMs = q.windowMs ?? 10 * 60 * 1000;
-      const deadline = Date.now() + windowMs * 2 + 60 * 1000;
-      let landed = false;
-      while (Date.now() < deadline) {
-        if (cancelled.current) return;
-        await new Promise((r) => setTimeout(r, 4000));
-        const st = await getQueueStatus(q.ticket);
-        if (st.status === "submitted") {
-          landed = true;
-          break;
-        }
-        if (st.status === "error") {
-          // A common cause is the room re-pinning its eligible set while the access waited (the proof was built
-          // against the old snapshot), so point the reader at re-proving rather than showing a raw chain error.
-          throw new Error(
-            `${st.error || "the batched submission did not go through"}. If the room changed its members while you waited, check access again and prove once more.`,
-          );
-        }
-      }
-      if (!landed) throw new Error("your batched access has not landed yet; try Check access again shortly");
-
-      // Re-read the live admission now that the grant exists; the reader can open below. (enrollState is
-      // already "eligible" here, since that is the only branch that offers the prove step.)
-      const acc = await sdk.canOpenDocument(room.trim(), doc.trim(), identity.accessor);
-      setAccess(acc);
+      writeOpenTicket(address, {
+        roomId: room.trim().toLowerCase(),
+        docId: openDocId,
+        ticket: q.ticket,
+        flushAt: q.flushAt ?? null,
+        windowMs: q.windowMs ?? null,
+        ts: Date.now(),
+      });
+      await waitForBatch(q.ticket, q.windowMs ?? null, openDocId, identity);
     } catch (e) {
-      setProveErr(String((e as Error).message ?? e));
-    } finally {
-      setProveStage("idle");
+      if (cancelled.current) return;
+      setFlowErr(String((e as Error).message ?? e));
+      setPhase("error");
+    }
+  }, [identity, openDocId, belowFloor, room, address, waitForBatch]);
+
+  // The single Open action for a document: derive identity, read live status, branch.
+  const open = useCallback(
+    async (docId: string) => {
+      if (!isHex32(room) || !isHex32(docId)) { setFlowErr("This document id is not valid."); setPhase("error"); return; }
+      cancelled.current = false;
+      setOpenDocId(docId);
+      setOpened(null);
+      setFlowErr(null);
       setProveStep("");
-    }
-  }
+      setPhase("checking");
+      // load the doc's public fingerprints for the verify panel (display only; ignore if the room changed)
+      getCommitteeDocument(room.trim(), docId.trim())
+        .then((r) => { if (!cancelled.current) setCommitteeDoc(r.document); })
+        .catch(() => { if (!cancelled.current) setCommitteeDoc(null); });
+      try {
+        const id = await ident.derive(room.trim());
+        if (!id) { setFlowErr(ident.error ?? "Could not derive your identity from the wallet."); setPhase("error"); return; }
+        setIdentity(id);
+        const [acc, st, elig] = await Promise.all([
+          sdk.canOpenDocument(room.trim(), docId.trim(), id.accessor),
+          getEnrollStatus(room.trim(), id.idCommitment).catch(() => ({ state: "none" as const })),
+          getEligible(room.trim()).catch(() => null),
+        ]);
+        if (cancelled.current) return;
+        setAccess(acc);
+        if (elig) setAnonCount(elig.memberCount);
+        const below = elig ? elig.memberCount < ANON_FLOOR : belowFloor;
 
-  // Release + open: the keepers release sealed shares only to a doc-admitted accessor; the SDK reconstructs K
-  // (any 2 of 3) and AES-decrypts in the browser. The reader's recipient secret never leaves it.
-  async function onOpen() {
-    if (!identity) {
-      setOpenErr("Check access first so your identity is derived.");
-      return;
-    }
-    if (belowFloor) {
-      setOpenErr(FLOOR_BLOCK_MSG);
-      return;
-    }
-    setOpenErr(null);
-    setOpened(null);
-    setOpening(true);
-    try {
-      setOpened(
-        await sdk.openCommitteeDocument(room.trim(), doc.trim(), identity.accessor, identity.recipientSecret, {
-          minAnonSet: ANON_FLOOR,
-        }),
-      );
-    } catch (e) {
-      setOpenErr(String((e as Error).message ?? e));
-    } finally {
-      setOpening(false);
-    }
-  }
+        if (acc.revoked) setPhase("revoked");
+        else if (acc.admitted) await doOpen(docId, id); // already set up -> open automatically
+        else if (st.state === "eligible") setPhase(below ? "below-floor" : "approved");
+        else if (st.state === "pending") setPhase("pending");
+        else setPhase("not-member");
+      } catch (e) {
+        if (cancelled.current) return;
+        setFlowErr(String((e as Error).message ?? e));
+        setPhase("error");
+      }
+    },
+    [room, ident, belowFloor, doOpen],
+  );
+
+  const dismiss = useCallback(() => { resetFlow(); }, [resetFlow]); // "Not now"
+
+  // Resume a persisted batch wait on landing: if this wallet has an outstanding ticket, auto-select its room
+  // and pick the flow back up (poll, then auto-open) so leaving the tab does not lose the "waiting" state.
+  // Keyed to the address it ran for, so switching wallets re-resumes for the NEW account (the [address] effect
+  // above already cancels the previous account's in-flight poll). `acct` is captured so a switch mid-resume
+  // does not clear the wrong account's ticket.
+  const resumedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!connected || !address || resumedFor.current === address) return;
+    resumedFor.current = address;
+    const acct = address;
+    const t = findOpenTicket(acct);
+    if (!t) return;
+    cancelled.current = false;
+    setRoom(t.roomId);
+    setOpenDocId(t.docId);
+    setFlushAt(t.flushAt);
+    setPhase("waiting");
+    (async () => {
+      const id = await ident.derive(t.roomId).catch(() => null);
+      if (cancelled.current) return;
+      if (!id) {
+        // The wallet declined the signature (the resume auto-prompts), so the wait can't continue. Offer retry.
+        setFlowErr("Sign with your wallet to resume opening this document.");
+        setPhase("error");
+        return;
+      }
+      setIdentity(id);
+      // If the access already landed while away, this opens immediately; otherwise it keeps polling.
+      const acc = await sdk.canOpenDocument(t.roomId, t.docId, id.accessor).catch(() => null);
+      if (cancelled.current) return;
+      if (acc?.admitted) { clearOpenTicket(acct, t.roomId); await doOpen(t.docId, id); return; }
+      await waitForBatch(t.ticket, t.windowMs, t.docId, id);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected, address]);
 
   return {
-    // wallet
     connected,
     connect,
     walletStatus,
     deriving: ident.busy,
     drift: ident.drift,
-    // committee + doc
     committee,
-    committeeDoc,
-    // anonymity meter + floor
-    anonCount,
-    belowFloor,
-    // inputs
+    // rooms + docs
+    openableRooms,
     room,
-    setRoom,
-    doc,
-    setDoc,
-    // the room's document list (pick instead of pasting a doc id)
+    selectRoom,
     roomDocs,
     docsLoading,
-    // check
+    anonCount,
+    belowFloor,
+    // open flow
+    open,
+    openDocId,
+    phase,
     identity,
     access,
-    enrollState,
-    accessErr,
-    checking,
-    onCheck,
-    // prove
-    proveStage,
+    committeeDoc,
     proveStep,
     proveBy,
-    proveErr,
     flushAt,
-    onProve,
-    // open
     opened,
-    openErr,
-    opening,
-    onOpen,
+    flowErr,
+    setupAccess,
+    dismiss,
   };
 }

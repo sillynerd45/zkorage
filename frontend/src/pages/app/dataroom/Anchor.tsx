@@ -484,7 +484,7 @@ export default function Anchor() {
                         <DataRow k="room" testId="shared-result-room">{short(a.sharedResult.roomId, 8)}</DataRow>
                         <DataRow k="document" testId="shared-result-doc">{short(a.sharedResult.docId, 8)}</DataRow>
                         <DataRow k="how to open" mono={false}>
-                          a member opens it from <b className="text-foreground">Open a shared document</b>
+                          a member opens it from the <b className="text-foreground">Open a document</b> tab
                         </DataRow>
                       </>
                     )}
@@ -506,7 +506,7 @@ export default function Anchor() {
       {/* ── OPEN: recipient open (key-free, client-side) ── */}
       {tab === "open" && (
         <Card id="open" className="rounded-2xl p-6">
-          <h2 className="text-base font-semibold tracking-tight">Open a document</h2>
+          <h2 className="text-base font-semibold tracking-tight">Open with a key</h2>
           <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
             The recipient opens it with their private key. It's fetched, fingerprint-checked, and decrypted
             entirely in your browser.
