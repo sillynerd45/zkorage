@@ -15,17 +15,16 @@ import {
   type RoomVisibility,
 } from "@/lib/api";
 import { isHex32 } from "@/lib/format";
+import { type JoinRequest, requestsKey, readJoinRequests } from "@/lib/dataroom/requests";
 
 // M1 — request-then-approve enrollment. Member side: derive your per-room id_commitment from your wallet
 // (sign-to-derive, M0), then request to join in ONE step. Owner side: see pending requests for a room you own
 // and approve them (your wallet signs set_eligible_root). The request carries only your public commitment + an
 // OPTIONAL self-chosen label — never your wallet address (privacy choice A). The membership PROOF (a later
 // step) is what keeps the actual access anonymous.
-
-// A local "your requests" history entry (per wallet, this browser only). It records which rooms you asked to
-// join + the last-known status, so you can see your pending requests at a glance without re-typing a room id.
-export type JoinRequest = { roomId: string; label?: string; state: EnrollState; ts: number };
-const requestsKey = (addr: string) => `zkorage.dr.requests.${addr}`;
+//
+// The local "your requests" history (per wallet, this browser) lives in @/lib/dataroom/requests so Discover
+// can read the same store to reflect status without re-deriving an identity.
 
 export function useEnroll() {
   const { address, connected } = useWallet();
@@ -49,11 +48,7 @@ export function useEnroll() {
   const [requestsBusy, setRequestsBusy] = useState(false);
 
   const loadRequests = useCallback((addr: string | null) => {
-    if (!addr || typeof localStorage === "undefined") { setMyRequests([]); return; }
-    try {
-      const raw = localStorage.getItem(requestsKey(addr));
-      setMyRequests(raw ? (JSON.parse(raw) as JoinRequest[]) : []);
-    } catch { setMyRequests([]); }
+    setMyRequests(readJoinRequests(addr));
   }, []);
 
   const persistRequests = useCallback((addr: string, list: JoinRequest[]) => {

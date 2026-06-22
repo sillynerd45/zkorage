@@ -41,6 +41,14 @@ async function stubReads(
   await page.route("**/dataroom/membership/eligible/**", (r) => r.fulfill(json({
     roomId: "modelb", memberCount, commitments: [], computedRoot: "00".repeat(32), pinnedRoot: "00".repeat(32), inSync: true,
   })));
+  // The room's document list (public fingerprints) so a member can pick a doc instead of pasting an id.
+  await page.route("**/dataroom/documents/**", (r) => r.fulfill(json({
+    roomId: "modelb", count: 1, start: 0, limit: 50, dataroomId: "CID",
+    documents: [{
+      index: 0, room_id: "modelb", doc_id: "ab".repeat(32), content_hash: "cd".repeat(32),
+      blob_pointer: "blob://x", ledger: 1, timestamp: "t", kind: "committee", k_commitment: "ef".repeat(32),
+    }],
+  })));
 }
 
 test("M3 reader: a non-member derives an identity and is sent to request to join (meter shown)", async ({ page }) => {
@@ -151,6 +159,26 @@ test("M4 floor: below 5 members the meter is red and access is disabled", async 
   await expect(page.getByTestId("access-open-btn")).toBeDisabled();
 
   await page.screenshot({ path: "tests/dataroom-access-floor.png", fullPage: true });
+});
+
+test("access: ?room= prefills the room and the document list lets you pick a doc", async ({ page }) => {
+  await page.addInitScript(mock);
+  await stubReads(page, "eligible", 8);
+  const ROOM = "9".repeat(64);
+
+  // a deep link from "Open documents" (Membership / Discover) prefills the room.
+  await page.goto(`/app/dataroom/access?room=${ROOM}`);
+  await expect(page.getByTestId("access-card")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("access-room")).toHaveValue(ROOM);
+  // a room-only deep link clears the doc field (no stale demo doc bound to a different room).
+  await expect(page.getByTestId("access-doc")).toHaveValue("");
+
+  // the room's documents are listed (public fingerprints) and clicking one fills the doc id, so the member
+  // never has to paste it by hand.
+  const docRow = page.getByTestId("access-doc-row").first();
+  await expect(docRow).toBeVisible({ timeout: 30_000 });
+  await docRow.click();
+  await expect(page.getByTestId("access-doc")).toHaveValue("ab".repeat(32));
 });
 
 test("M3 reader: wallet-gated, and the folded tab still routes from the overview", async ({ page }) => {

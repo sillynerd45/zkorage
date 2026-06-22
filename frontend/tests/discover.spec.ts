@@ -72,6 +72,35 @@ test("discover: a request-to-join link routes to Membership with the room prefil
   await expect(page.getByTestId("enroll-connect-prompt")).toBeVisible();
 });
 
+test("discover: reflects your local request status on the directory buttons", async ({ page }) => {
+  // A connected wallet whose local request history (this browser) marks LISTED1 approved + LISTED2 pending.
+  const ADDR = "GDLECNXD76OZQROASQGWEP4KAMJWTJXZW2LN7OJGYPXIJDRXACWGXZY6";
+  await page.addInitScript(`
+    localStorage.setItem("zkorage.wallet.connected", "1");
+    window.__freighterMock = {
+      isConnected: async () => ({ isConnected: true }),
+      isAllowed: async () => ({ isAllowed: true }),
+      requestAccess: async () => ({ address: "${ADDR}" }),
+      getAddress: async () => ({ address: "${ADDR}" }),
+      getNetwork: async () => ({ network: "TESTNET", networkPassphrase: "Test SDF Network ; September 2015" }),
+    };
+    localStorage.setItem("zkorage.dr.requests.${ADDR}", JSON.stringify([
+      { roomId: "${LISTED1}", label: "Series A", state: "eligible", ts: 2 },
+      { roomId: "${LISTED2}", state: "pending", ts: 1 },
+    ]));
+  `);
+  await stubs(page);
+  await page.goto("/app/dataroom/discover");
+  await expect(page.getByTestId("discover-room")).toHaveCount(2);
+
+  // approved -> "Open" deep-links to the access tab; pending -> "Requested"; neither says "Request to join".
+  const openLink = page.getByTestId("discover-open");
+  await expect(openLink).toBeVisible();
+  await expect(openLink).toHaveAttribute("href", `/app/dataroom/access?room=${LISTED1}`);
+  await expect(page.getByTestId("discover-requested")).toBeVisible();
+  await expect(page.getByTestId("discover-join")).toHaveCount(0);
+});
+
 test("discover: renders dark", async ({ page }) => {
   await page.addInitScript(DARK);
   await stubs(page);

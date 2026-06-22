@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
-import { useLocation, useSearchParams } from "react-router-dom";
-import { Compass, Globe, KeyRound, Lock, RefreshCw, ShieldCheck, UserPlus, Users } from "lucide-react";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
+import { Compass, FolderOpen, Globe, KeyRound, Lock, RefreshCw, ShieldCheck, UserPlus, Users } from "lucide-react";
 import { useEnroll } from "@/lib/hooks/useEnroll";
 import { short } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { EnrollState, RoomVisibility } from "@/lib/api";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { DataRow, Verdict } from "@/components/app/blocks";
@@ -244,17 +244,18 @@ export default function Membership() {
                       </div>
                     </div>
                     <StatePill state={r.state} />
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => {
-                        e.setJoinRoom(r.roomId);
-                        e.setJoinLabel(r.label ?? "");
-                      }}
-                      data-testid="request-reopen"
-                    >
-                      Open
-                    </Button>
+                    {/* Approved -> go open the room's documents (the next step). Pending has nothing to open
+                        yet, so no action: the status pill says it all and the room id is copyable above. */}
+                    {r.state === "eligible" && (
+                      <Link
+                        to={`/app/dataroom/access?room=${r.roomId}`}
+                        data-testid="request-open"
+                        className={cn(buttonVariants({ size: "sm", variant: "outline" }), "shrink-0")}
+                      >
+                        <FolderOpen aria-hidden="true" />
+                        Open documents
+                      </Link>
+                    )}
                   </div>
                 ))}
               </div>

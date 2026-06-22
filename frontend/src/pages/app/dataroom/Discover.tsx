@@ -1,14 +1,16 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Compass, Search, ShieldCheck, UserPlus, Users } from "lucide-react";
+import { Clock, Compass, FolderOpen, Search, ShieldCheck, UserPlus, Users } from "lucide-react";
 import { useDirectory } from "@/lib/hooks/useDirectory";
+import { useWallet } from "@/lib/wallet/WalletContext";
+import { joinRequestStates } from "@/lib/dataroom/requests";
 import { short } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Callout, CopyIconButton } from "@/components/app/dataroom/kit";
-import type { AnonTier } from "@/lib/api";
+import type { AnonTier, EnrollState } from "@/lib/api";
 
 // M5 — the public discovery surface. Wallet NOT required to browse. Visibility is a discovery convenience,
 // not the privacy mechanism (that is the membership proof + the k=5 floor + the keepers). The directory shows
@@ -50,8 +52,40 @@ function BucketBadge({ tier, bucket }: { tier: AnonTier; bucket: string }) {
 }
 
 const joinLink = (roomId: string) => `/app/dataroom/membership?room=${roomId}`;
+const accessLink = (roomId: string) => `/app/dataroom/access?room=${roomId}`;
 
-function JoinButton({ roomId, variant = "default" }: { roomId: string; variant?: "default" | "outline" }) {
+// The directory's per-room action reflects your LOCAL request history (this browser, when connected): an
+// approved room opens documents, a pending one shows it's already requested, anything else invites you to join.
+// The history is a hint as fresh as your last Refresh; the access tab does the authoritative on-chain check.
+function JoinButton({
+  roomId,
+  state,
+  variant = "default",
+}: {
+  roomId: string;
+  state?: EnrollState;
+  variant?: "default" | "outline";
+}) {
+  if (state === "eligible") {
+    return (
+      <Link to={accessLink(roomId)} data-testid="discover-open" className={cn(buttonVariants({ size: "sm", variant }))}>
+        <FolderOpen aria-hidden="true" />
+        Open
+      </Link>
+    );
+  }
+  if (state === "pending") {
+    return (
+      <Link
+        to={joinLink(roomId)}
+        data-testid="discover-requested"
+        className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+      >
+        <Clock aria-hidden="true" />
+        Requested
+      </Link>
+    );
+  }
   return (
     <Link to={joinLink(roomId)} data-testid="discover-join" className={cn(buttonVariants({ size: "sm", variant }))}>
       <UserPlus aria-hidden="true" />
@@ -65,6 +99,11 @@ export default function Discover() {
   const { hash } = useLocation();
   const [tab, setTab] = useState<DiscTab>(() => tabFromHash(hash));
   useEffect(() => setTab(tabFromHash(hash)), [hash]);
+
+  // Reflect this wallet's local request history (this browser) on the per-room buttons. No new signature and
+  // no wallet address is sent; we only read what was stored when you requested/refreshed in Membership.
+  const { connected, address } = useWallet();
+  const statusByRoom = useMemo(() => (connected ? joinRequestStates(address) : {}), [connected, address]);
 
   return (
     <div className="space-y-5" data-testid="discover-card">
@@ -137,7 +176,7 @@ export default function Discover() {
                           <CopyIconButton value={r.roomId} label="room id" />
                         </div>
                       </div>
-                      <JoinButton roomId={r.roomId} />
+                      <JoinButton roomId={r.roomId} state={statusByRoom[r.roomId.toLowerCase()]} />
                     </div>
                     {r.description && (
                       <p className="mt-2 text-[13px] leading-relaxed text-muted-foreground">{r.description}</p>
@@ -209,7 +248,11 @@ export default function Discover() {
                     This id is not discoverable. The room is private, or it does not exist. If the owner shared
                     the id with you directly, you can still request to join it.
                   </p>
-                  <JoinButton roomId={d.lookupResult.roomId} variant="outline" />
+                  <JoinButton
+                    roomId={d.lookupResult.roomId}
+                    state={statusByRoom[d.lookupResult.roomId.toLowerCase()]}
+                    variant="outline"
+                  />
                 </div>
               ) : (
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -231,7 +274,7 @@ export default function Discover() {
                       </div>
                     )}
                   </div>
-                  <JoinButton roomId={d.lookupResult.roomId} />
+                  <JoinButton roomId={d.lookupResult.roomId} state={statusByRoom[d.lookupResult.roomId.toLowerCase()]} />
                 </div>
               )}
             </div>

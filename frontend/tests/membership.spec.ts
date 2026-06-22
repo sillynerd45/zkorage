@@ -125,6 +125,23 @@ test("membership: the request button reflects state and resets when the room id 
   await expect(page.getByTestId("enroll-state")).toHaveCount(0);
 });
 
+test("membership: an approved request offers Open documents; a pending one has no open button", async ({ page }) => {
+  // Seed the local request history: JOIN_ROOM approved, OWNER_ROOM pending (this browser, per wallet).
+  await page.addInitScript(mock(ADDR));
+  await page.addInitScript(`localStorage.setItem("zkorage.dr.requests.${ADDR}", JSON.stringify([
+    { roomId: "${JOIN_ROOM}", label: "Acme", state: "eligible", ts: 2 },
+    { roomId: "${OWNER_ROOM}", state: "pending", ts: 1 },
+  ]));`);
+  await stubs(page);
+  await page.goto("/app/dataroom/membership");
+
+  await expect(page.getByTestId("request-row")).toHaveCount(2);
+  // only the approved row has an action: "Open documents" deep-linking to the access tab with the room prefilled.
+  const openLink = page.getByTestId("request-open");
+  await expect(openLink).toHaveCount(1);
+  await expect(openLink).toHaveAttribute("href", `/app/dataroom/access?room=${JOIN_ROOM}`);
+});
+
 test("membership: renders dark + requires a wallet", async ({ page }) => {
   // dark, connected
   await page.addInitScript(mock(ADDR));
