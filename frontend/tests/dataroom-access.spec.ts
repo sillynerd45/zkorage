@@ -1,15 +1,18 @@
 import { test, expect } from "@playwright/test";
 
-// M3 + M4 — "Open a shared document" with sign-to-derive identity (Model B) + the anonymity meter / k=5 floor.
-// The reader's room identity is derived from their wallet in the browser; the flow branches on their live
-// on-chain status, and access is gated on the room's eligible-set size (the anonymity set). These tests mock
-// Freighter (connected + signMessage) and stub the backend reads the hook makes directly. The SDK's chain
-// reads (canOpenDocument) hit the real testnet RPC, where a freshly-derived accessor is never granted
-// (admitted=false), so the not-yet-granted branches are deterministic. The full granted->open crypto path is
-// covered by the live e2e (backend/scripts/m3-live-e2e.mjs).
+// "Open a document" (redesigned). The member lands on the rooms they are approved for, picks a document, and
+// clicks one "Open" button that orchestrates everything. These tests mock Freighter (connected + signMessage)
+// and stub the off-chain reads the hook makes. The SDK's chain read (canOpenDocument) hits the real testnet,
+// where a freshly-derived accessor is never granted for the demo room (admitted=false), so the
+// approved-but-not-proven / below-floor / not-member branches are deterministic. The full granted->open crypto
+// path is covered by the live e2e (backend/scripts/m3-live-e2e.mjs).
 
 const ADDR = "GDLECNXD76OZQROASQGWEP4KAMJWTJXZW2LN7OJGYPXIJDRXACWGXZY6";
 const SIG_B64 = Buffer.from(new Uint8Array(64).fill(0x07)).toString("base64");
+// The seeded Model B demo room/doc (sdk defaults): a REAL room on testnet, so canOpenDocument resolves.
+const ROOM = "9cec7bcada8b0666c59f0b0e435b3a2359960e647204c6dba95f8037631e8fd0";
+const DOC = "dc4a61c504f4f528a1bb7fed7f0bfb613e1b85f1053afc32d308f20903e4ac0d";
+
 const mock = `
   localStorage.setItem("zkorage.wallet.connected", "1");
   window.__freighterMock = {
@@ -22,7 +25,6 @@ const mock = `
     signMessage: async () => ({ signedMessage: "${SIG_B64}", signerAddress: "${ADDR}" }),
   };
 `;
-
 const json = (body: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
 
 async function stubReads(
@@ -39,160 +41,147 @@ async function stubReads(
   })));
   await page.route("**/dataroom/enroll/status/**", (r) => r.fulfill(json({ state: enrollState })));
   await page.route("**/dataroom/membership/eligible/**", (r) => r.fulfill(json({
-    roomId: "modelb", memberCount, commitments: [], computedRoot: "00".repeat(32), pinnedRoot: "00".repeat(32), inSync: true,
+    roomId: ROOM, memberCount, commitments: [], computedRoot: "00".repeat(32), pinnedRoot: "00".repeat(32), inSync: true,
   })));
-  // The room's document list (public fingerprints) so a member can pick a doc instead of pasting an id.
   await page.route("**/dataroom/documents/**", (r) => r.fulfill(json({
-    roomId: "modelb", count: 1, start: 0, limit: 50, dataroomId: "CID",
-    documents: [{
-      index: 0, room_id: "modelb", doc_id: "ab".repeat(32), content_hash: "cd".repeat(32),
-      blob_pointer: "blob://x", ledger: 1, timestamp: "t", kind: "committee", k_commitment: "ef".repeat(32),
-    }],
+    roomId: ROOM, count: 1, start: 0, limit: 50, dataroomId: "CID",
+    documents: [{ index: 0, room_id: ROOM, doc_id: DOC, content_hash: "cd".repeat(32), blob_pointer: "blob://x", ledger: 1, timestamp: "t", kind: "committee", k_commitment: "ef".repeat(32) }],
   })));
 }
 
-test("M3 reader: a non-member derives an identity and is sent to request to join (meter shown)", async ({ page }) => {
+test("Open: an approved member is invited to set up access, not told they don't qualify", async ({ page }) => {
   const errs: string[] = [];
   page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/i.test(m.text())) errs.push(m.text()); });
   await page.addInitScript(mock);
-  await stubReads(page, "none", 8); // above the floor, amber
+  await stubReads(page, "eligible", 8); // above the floor
 
-  await page.goto("/app/dataroom/access");
-  await expect(page.getByTestId("access-card")).toBeVisible({ timeout: 30_000 });
-  // the anonymity meter renders the room's eligible-set size + the honest caveat
-  await expect(page.getByTestId("anon-meter")).toHaveAttribute("data-tier", "amber", { timeout: 30_000 });
-  await expect(page.getByTestId("anon-meter-count")).toHaveText("8");
+  await page.goto(`/app/dataroom/access?room=${ROOM}`);
+  await expect(page.getByTestId("access-room-detail")).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId("access-open").first().click();
 
-  await page.getByTestId("access-check-btn").click();
-  await expect(page.getByTestId("access-stand-in")).toBeVisible({ timeout: 30_000 });
-  const result = page.getByTestId("access-result");
-  await expect(result).toBeVisible({ timeout: 30_000 });
-  await expect(result).toHaveAttribute("data-admitted", "false");
-  // only the legs THIS doc's policy requires are shown: the membership-only demo doc shows just the membership
-  // leg, and unused legs are hidden rather than rendered as "(not required)".
-  await expect(result).not.toContainText("not required");
-  await expect(page.getByTestId("access-leg-membership")).toBeVisible();
-  await expect(page.getByTestId("access-leg-compliance")).toHaveCount(0);
-  await expect(page.getByTestId("access-leg-accredited")).toHaveCount(0);
-  await expect(page.getByTestId("access-join-pointer")).toBeVisible();
-  await expect(page.getByRole("link", { name: /Request to join in Membership/i })).toHaveAttribute(
-    "href",
-    "/app/dataroom/membership",
-  );
-  await expect(page.getByTestId("access-open-btn")).toBeDisabled();
+  const status = page.getByTestId("access-status");
+  await expect(status).toHaveAttribute("data-phase", "approved", { timeout: 30_000 });
+  await expect(page.getByTestId("access-approved")).toContainText("You're approved");
+  await expect(page.getByTestId("access-setup-btn")).toBeVisible();
+  await expect(page.getByTestId("access-dismiss")).toBeVisible();
+  // the old confusing denial wording must be gone
+  await expect(status).not.toContainText(/don't qualify/i);
 
-  await page.screenshot({ path: "tests/dataroom-access-page.png", fullPage: true });
+  await page.screenshot({ path: "tests/dataroom-access-approved.png", fullPage: true });
   expect(errs, errs.join("\n")).toHaveLength(0);
 });
 
-test("M3 reader: on the list but not granted -> the one-time membership proof is offered (dark, above floor)", async ({ page }) => {
-  await page.emulateMedia({ colorScheme: "dark" });
+test("Open: setting up access proves once then waits for the batch window (not submitted instantly)", async ({ page }) => {
   await page.addInitScript(mock);
-  await stubReads(page, "eligible", 25); // green
-
-  await page.goto("/app/dataroom/access");
-  await expect(page.getByTestId("anon-meter")).toHaveAttribute("data-tier", "green", { timeout: 30_000 });
-  await page.getByTestId("access-check-btn").click();
-  await expect(page.getByTestId("access-result")).toHaveAttribute("data-admitted", "false", { timeout: 30_000 });
-
-  // the prove-once step appears, ENABLED above the floor, with the honest self-hosted-prover copy
-  const prove = page.getByTestId("access-prove");
-  await expect(prove).toBeVisible();
-  await expect(prove).toContainText(/self-hosted prover/i);
-  await expect(page.getByTestId("access-prove-btn")).toBeEnabled();
-  // no demo-key inputs remain (sign-to-derive replaced them)
-  await expect(page.getByTestId("access-accessor")).toHaveCount(0);
-  await expect(page.getByTestId("access-secret")).toHaveCount(0);
-
-  await page.screenshot({ path: "tests/dataroom-access-prove-dark.png", fullPage: true });
-});
-
-test("M7 reader: an eligible member's access is BATCHED (queued for the window, not submitted instantly)", async ({ page }) => {
-  await page.addInitScript(mock);
-  await stubReads(page, "eligible", 8); // above the floor (amber)
-
-  // prove once -> hand the bundle to the batching relay -> queued for the next window (NOT request_access now).
+  await stubReads(page, "eligible", 8);
+  let queued = 0;
+  let requested = 0;
   await page.route("**/dataroom/membership/prove-access", (r) => r.fulfill(json({
-    jobId: "job-1", roomId: "modelb", eligibleRoot: "00".repeat(32),
-    nullifier: "ab".repeat(32), accessor: "cd".repeat(32), recipientPub: "ef".repeat(32),
+    jobId: "job-1", roomId: ROOM, eligibleRoot: "00".repeat(32), nullifier: "ab".repeat(32), accessor: "cd".repeat(32), recipientPub: "ef".repeat(32),
   })));
   await page.route("**/prove-status/**", (r) => r.fulfill(json({
     status: "done", bundle: { seal: "00".repeat(8), image_id: "11".repeat(32), journal: "22".repeat(32) },
   })));
-  let queued = 0;
-  let requested = 0;
   await page.route("**/dataroom/membership/request-access", (r) => { requested++; return r.fulfill(json({ ok: true })); });
-  await page.route("**/dataroom/membership/queue-access", (r) => {
-    queued++;
-    return r.fulfill(json({ ok: true, ticket: "aa".repeat(16), status: "queued", flushAt: Date.now() + 60_000, nextFlushAt: Date.now() + 60_000, windowMs: 60_000 }));
-  });
-  await page.route("**/dataroom/membership/queue-status/**", (r) => r.fulfill(json({
-    ticket: "aa".repeat(16), status: "queued", roomId: "modelb", accessor: "cd".repeat(32),
-    flushAt: Date.now() + 60_000, nextFlushAt: Date.now() + 60_000, windowMs: 60_000, txHash: null, error: null,
-  })));
+  await page.route("**/dataroom/membership/queue-access", (r) => { queued++; return r.fulfill(json({ ok: true, ticket: "aa".repeat(16), status: "queued", flushAt: Date.now() + 60_000, nextFlushAt: Date.now() + 60_000, windowMs: 60_000 })); });
+  await page.route("**/dataroom/membership/queue-status/**", (r) => r.fulfill(json({ ticket: "aa".repeat(16), status: "queued", roomId: ROOM, accessor: "cd".repeat(32), flushAt: Date.now() + 60_000, nextFlushAt: Date.now() + 60_000, windowMs: 60_000, txHash: null, error: null })));
 
-  await page.goto("/app/dataroom/access");
-  await expect(page.getByTestId("anon-meter")).toHaveAttribute("data-tier", "amber", { timeout: 30_000 });
-  await page.getByTestId("access-check-btn").click();
-  await expect(page.getByTestId("access-result")).toHaveAttribute("data-admitted", "false", { timeout: 30_000 });
+  await page.goto(`/app/dataroom/access?room=${ROOM}`);
+  await page.getByTestId("access-open").first().click();
+  await expect(page.getByTestId("access-setup-btn")).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId("access-setup-btn").click();
 
-  // the prove copy now explains the access is recorded in a shuffled batch, not instantly
-  await expect(page.getByTestId("access-prove")).toContainText(/batch/i);
-  await page.getByTestId("access-prove-btn").click();
-
-  // it is queued for the window (the batching relay), not submitted immediately: the button + an ETA say so
-  await expect(page.getByTestId("access-prove-btn")).toHaveText(/Waiting for the window/i, { timeout: 30_000 });
-  await expect(page.getByTestId("access-queued-eta")).toBeVisible();
+  await expect(page.getByTestId("access-status")).toHaveAttribute("data-phase", "waiting", { timeout: 30_000 });
+  await expect(page.getByTestId("access-waiting")).toContainText("batch window");
   expect(queued).toBe(1);
   expect(requested).toBe(0); // the immediate request-access route is NOT used by the Model B reader
 });
 
-test("M4 floor: below 5 members the meter is red and access is disabled", async ({ page }) => {
+test("Open: a room below the anonymity floor blocks opening (red meter)", async ({ page }) => {
   await page.addInitScript(mock);
-  await stubReads(page, "eligible", 2); // below the floor -> red, disabled
+  await stubReads(page, "eligible", 2); // below the floor
+
+  await page.goto(`/app/dataroom/access?room=${ROOM}`);
+  await page.getByTestId("access-open").first().click();
+  await expect(page.getByTestId("access-status")).toHaveAttribute("data-phase", "below-floor", { timeout: 30_000 });
+  await expect(page.getByTestId("anon-meter")).toHaveAttribute("data-tier", "red");
+  await expect(page.getByTestId("access-below-floor")).toContainText("5 members");
+});
+
+test("Open: a non-member is pointed to request to join", async ({ page }) => {
+  await page.addInitScript(mock);
+  await stubReads(page, "none", 8);
+
+  await page.goto(`/app/dataroom/access?room=${ROOM}`);
+  await page.getByTestId("access-open").first().click();
+  await expect(page.getByTestId("access-status")).toHaveAttribute("data-phase", "not-member", { timeout: 30_000 });
+  await expect(page.getByTestId("access-go-membership")).toHaveAttribute("href", "/app/dataroom/membership");
+});
+
+test("Open: lands on the rooms you're approved for (local history); empty state otherwise", async ({ page }) => {
+  await page.addInitScript(mock);
+  await page.addInitScript(`localStorage.setItem("zkorage.dr.requests.${ADDR}", JSON.stringify([
+    { roomId: "${ROOM}", label: "Acme board", state: "eligible", ts: 2 },
+    { roomId: "${"7".repeat(64)}", label: "Pending co", state: "pending", ts: 1 },
+  ]));`);
+  await stubReads(page, "eligible", 8);
 
   await page.goto("/app/dataroom/access");
-  await expect(page.getByTestId("access-card")).toBeVisible({ timeout: 30_000 });
-  // red meter + the caveat that names the floor
-  await expect(page.getByTestId("anon-meter")).toHaveAttribute("data-tier", "red", { timeout: 30_000 });
-  await expect(page.getByTestId("access-card")).toContainText(/at least 5 members/i);
-
-  await page.getByTestId("access-check-btn").click();
-  await expect(page.getByTestId("access-result")).toHaveAttribute("data-admitted", "false", { timeout: 30_000 });
-  // even an eligible member cannot prove or open below the floor
-  await expect(page.getByTestId("access-prove-btn")).toBeDisabled();
-  await expect(page.getByTestId("access-floor-note")).toBeVisible();
-  await expect(page.getByTestId("access-open-btn")).toBeDisabled();
-
-  await page.screenshot({ path: "tests/dataroom-access-floor.png", fullPage: true });
+  // only the APPROVED room appears (not the pending one)
+  await expect(page.getByTestId("access-room-row")).toHaveCount(1);
+  await expect(page.getByTestId("access-room-row").first()).toContainText("Acme board");
+  // selecting it loads the room's documents
+  await page.getByTestId("access-room-row").first().click();
+  await expect(page.getByTestId("access-room-detail")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("access-doc-row").first()).toBeVisible({ timeout: 30_000 });
 });
 
-test("access: ?room= prefills the room and the document list lets you pick a doc", async ({ page }) => {
+test("Open: empty state when there are no approved rooms", async ({ page }) => {
+  await page.addInitScript(mock);
+  await stubReads(page, "none", 0);
+  await page.goto("/app/dataroom/access");
+  await expect(page.getByTestId("access-rooms-empty")).toBeVisible();
+});
+
+test("Open: the open-by-room-id fallback selects a room", async ({ page }) => {
   await page.addInitScript(mock);
   await stubReads(page, "eligible", 8);
-  const ROOM = "9".repeat(64);
-
-  // a deep link from "Open documents" (Membership / Discover) prefills the room.
-  await page.goto(`/app/dataroom/access?room=${ROOM}`);
-  await expect(page.getByTestId("access-card")).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByTestId("access-room")).toHaveValue(ROOM);
-  // a room-only deep link clears the doc field (no stale demo doc bound to a different room).
-  await expect(page.getByTestId("access-doc")).toHaveValue("");
-
-  // the room's documents are listed (public fingerprints) and clicking one fills the doc id, so the member
-  // never has to paste it by hand.
-  const docRow = page.getByTestId("access-doc-row").first();
-  await expect(docRow).toBeVisible({ timeout: 30_000 });
-  await docRow.click();
-  await expect(page.getByTestId("access-doc")).toHaveValue("ab".repeat(32));
+  await page.goto("/app/dataroom/access");
+  await page.getByTestId("access-manual-toggle").click();
+  await page.getByTestId("access-manual-input").fill(ROOM);
+  await page.getByTestId("access-manual-btn").click();
+  await expect(page.getByTestId("access-room-detail")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("access-doc-row").first()).toBeVisible({ timeout: 30_000 });
 });
 
-test("M3 reader: wallet-gated, and the folded tab still routes from the overview", async ({ page }) => {
+test("Open: a persisted batch wait resumes after returning to the tab", async ({ page }) => {
+  const now = Date.now();
+  await page.addInitScript(mock);
+  await page.addInitScript(`localStorage.setItem("zkorage.dr.openticket.${ADDR}.${ROOM}", JSON.stringify({
+    roomId: "${ROOM}", docId: "${DOC}", ticket: "aa55aa55aa55aa55aa55aa55aa55aa55", flushAt: ${now + 60_000}, windowMs: 60000, ts: ${now}
+  }));`);
+  await stubReads(page, "eligible", 8);
+  await page.route("**/dataroom/membership/queue-status/**", (r) => r.fulfill(json({ ticket: "aa55aa55aa55aa55aa55aa55aa55aa55", status: "queued", roomId: ROOM, accessor: "cd".repeat(32), flushAt: now + 60_000, nextFlushAt: now + 60_000, windowMs: 60_000, txHash: null, error: null })));
+
+  await page.goto("/app/dataroom/access");
+  // the tab auto-resumes the queued wait (no need to re-pick the room)
+  await expect(page.getByTestId("access-status")).toHaveAttribute("data-phase", "waiting", { timeout: 30_000 });
+});
+
+test("Open: renders dark; the approved state reads positive", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.addInitScript(mock);
+  await stubReads(page, "eligible", 8);
+  await page.goto(`/app/dataroom/access?room=${ROOM}`);
+  await page.getByTestId("access-open").first().click();
+  await expect(page.getByTestId("access-approved")).toBeVisible({ timeout: 30_000 });
+  await page.screenshot({ path: "tests/dataroom-access-approved-dark.png", fullPage: true });
+});
+
+test("Open: wallet-gated, and the folded tab still routes from the overview", async ({ page }) => {
   // no wallet mock -> the page asks to connect first
   await page.goto("/app/dataroom");
   await expect(page.getByTestId("task-access")).toBeVisible();
-  await expect(page.getByTestId("task-policy")).toHaveCount(0);
-  await expect(page.getByTestId("task-release")).toHaveCount(0);
   await page.getByTestId("task-access").click();
   await expect(page).toHaveURL(/\/dataroom\/access$/);
   await expect(page.getByTestId("access-connect-prompt")).toBeVisible({ timeout: 30_000 });

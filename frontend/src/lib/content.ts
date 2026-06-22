@@ -183,8 +183,8 @@ export const DATAROOM_TABS: DataroomTab[] = [
   },
   {
     slug: "access",
-    label: "Open a shared document",
-    blurb: "Prove a document's conditions, then its keepers release the key to you. Anonymous, key-free in your browser.",
+    label: "Open a document",
+    blurb: "Open files from rooms you have access to. The file is decrypted in your browser.",
   },
   {
     slug: "disclosure",

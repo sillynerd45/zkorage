@@ -191,10 +191,10 @@ test("dataroom overview: task-oriented cards route to the right place; guided-de
   await expect(page.getByText("DataRoom contract")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("storage")).toContainText(/Cloudflare R2|local/);
 
-  // "Open a document" deep-links straight into the Documents page's Open sub-tab
+  // "Open with a key" deep-links straight into the Documents page's Open sub-tab (the recipient-key open)
   await page.getByTestId("task-open").click();
   await expect(page).toHaveURL(/\/dataroom\/documents#open$/);
-  await expect(page.getByRole("heading", { name: "Open a document" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Open with a key" })).toBeVisible();
 
   // and that one page exposes Store / Open / Browse as a submenu
   await expect(page.getByTestId("doc-subtab-store")).toBeVisible();
