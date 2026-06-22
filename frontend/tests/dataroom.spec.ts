@@ -57,8 +57,9 @@ test("dataroom: recipient opens the sealed doc in-browser (faithful); wrong key 
   await expect(page.getByTestId("browse-connect-prompt")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("Contents stay encrypted")).toBeVisible();
 
-  // OPEN WITH A KEY sub-tab — RECIPIENT OPEN (prefilled demo doc + demo recipient secret) → faithful plaintext
-  await page.getByTestId("doc-subtab-bykey").click();
+  // OPEN WITH A KEY — RECIPIENT OPEN (prefilled demo doc + demo recipient secret) → faithful plaintext. The
+  // submenu pill was retired, but the view is still reachable by its #bykey hash (and the My-files hand-off).
+  await page.goto("/app/dataroom/documents#bykey");
   await page.getByTestId("open-btn").click();
   const result = page.getByTestId("open-result");
   await expect(result).toBeVisible({ timeout: 60_000 });
@@ -172,10 +173,10 @@ test("dataroom overview: task-oriented cards route to the right place; guided-de
 
   // the document tasks that used to be buried under "Store a document" are now first-class + discoverable
   await expect(page.getByTestId("task-store")).toBeVisible();
-  await expect(page.getByTestId("task-open")).toBeVisible();
   await expect(page.getByTestId("task-browse")).toBeVisible();
-  // the "Get in anonymously" card was retired alongside its nav tab; the real member flow is task-access
+  // the "Get in anonymously" + "Open with a key" cards were retired; the real member flow is task-access
   await expect(page.getByTestId("task-eligibility")).toHaveCount(0);
+  await expect(page.getByTestId("task-open")).toHaveCount(0);
   await expect(page.getByTestId("task-access")).toBeVisible();
 
   // the live key-release readiness pill is shown so a visitor sees the keepers are up before they try the
@@ -192,19 +193,16 @@ test("dataroom overview: task-oriented cards route to the right place; guided-de
   await expect(page.getByText("DataRoom contract")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("storage")).toContainText(/Cloudflare R2|local/);
 
-  // the headline member-open card points to Documents > Open (assert the link before navigating away)
+  // the headline member-open card points to Documents > Open (assert the link, then navigate into it)
   await expect(page.getByTestId("task-access")).toHaveAttribute("href", /\/dataroom\/documents#open$/);
+  await page.getByTestId("task-access").click();
+  await expect(page).toHaveURL(/\/dataroom\/documents#open$/);
 
-  // "Open with a key" (the recipient-key card) deep-links to the by-key sub-tab
-  await page.getByTestId("task-open").click();
-  await expect(page).toHaveURL(/\/dataroom\/documents#bykey$/);
-  await expect(page.getByRole("heading", { name: "Open with a key" })).toBeVisible();
-
-  // and the Documents page now exposes the consolidated submenu: Open / Store / My files / Open with a key
+  // the Documents submenu is now Open / Store / My files ("Open with a key" was retired from the submenu)
   await expect(page.getByTestId("doc-subtab-open")).toBeVisible();
   await expect(page.getByTestId("doc-subtab-store")).toBeVisible();
   await expect(page.getByTestId("doc-subtab-mine")).toBeVisible();
-  await expect(page.getByTestId("doc-subtab-bykey")).toBeVisible();
+  await expect(page.getByTestId("doc-subtab-bykey")).toHaveCount(0);
 });
 
 // M7 — the read-only showcase panel on the Overview: a wallet-free demonstration of the timing defense (a

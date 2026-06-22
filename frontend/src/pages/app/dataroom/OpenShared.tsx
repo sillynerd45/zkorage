@@ -1,15 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { CheckCircle2, Clock, Download, FileText, FolderOpen, Loader2, Lock, RefreshCw, Upload } from "lucide-react";
+import { CheckCircle2, Clock, FileText, FolderOpen, Loader2, Lock, RefreshCw, ShieldCheck } from "lucide-react";
 import { useSharedOpen } from "@/lib/hooks/useSharedOpen";
-import { Disclosure, Hex } from "@/components/Disclosure";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Verdict } from "@/components/app/blocks";
 import { DecryptedFile } from "@/components/app/DecryptedFile";
 import { AnonymityMeter, ANON_FLOOR } from "@/components/app/dataroom/AnonymityMeter";
-import { CopyIconButton, SectionLabel } from "@/components/app/dataroom/kit";
+import { Callout, CopyIconButton, SectionLabel } from "@/components/app/dataroom/kit";
 import { short } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -136,7 +135,7 @@ function OpenStatus({ s }: { s: ReturnType<typeof useSharedOpen> }) {
 
 export default function OpenShared() {
   const s = useSharedOpen();
-  const importInputRef = useRef<HTMLInputElement>(null);
+  const [openTab, setOpenTab] = useState<"rooms" | "search">("rooms");
 
   // Deep link from "Open documents" (Membership / Discover): /app/dataroom/documents?room=<id>#open selects it.
   const [params] = useSearchParams();
@@ -170,135 +169,117 @@ export default function OpenShared() {
         </p>
       </Card>
 
-      {/* Rooms you can open: the wallet's approved rooms (from this browser's request history). Refresh
-          re-checks each room's status so a just-approved room appears without re-requesting. Names come from
-          the public directory (listed rooms), falling back to your own label. */}
-      <Card className="rounded-2xl p-6">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <h3 className="text-base font-semibold tracking-tight">Rooms you can open</h3>
-          <Button variant="outline" size="sm" onClick={s.refreshRooms} disabled={s.refreshing} data-testid="access-refresh">
-            <RefreshCw className={cn("size-3.5", s.refreshing && "animate-spin")} aria-hidden="true" />
-            {s.refreshing ? "Checking…" : "Refresh"}
-          </Button>
-        </div>
-        {s.openableRooms.length === 0 ? (
-          <p className="text-sm leading-relaxed text-muted-foreground" data-testid="access-rooms-empty">
-            No approved rooms yet. After a room owner approves your request, press Refresh and it shows up here.
-            You can <Link to={MEMBERSHIP_LINK} className="text-brand hover:underline">request to join in Membership</Link>,
-            or open a room by id below.
-          </p>
-        ) : (
-          <div className="space-y-2" data-testid="access-rooms">
-            {s.openableRooms.map((r) => {
-              const meta = s.directory[r.roomId.toLowerCase()];
-              const name = meta?.name || r.label || short(r.roomId, 8);
-              const active = s.room === r.roomId;
-              return (
-                <button
-                  key={r.roomId}
-                  onClick={() => s.selectRoom(r.roomId)}
-                  data-testid="access-room-row"
-                  aria-pressed={active}
-                  className={cn(
-                    "flex w-full flex-col gap-0.5 rounded-xl border p-3 text-left transition-colors hover:border-brand/30 hover:bg-accent/40",
-                    active && "border-brand/40 bg-accent/40",
-                  )}
-                >
-                  <div className="text-[13px] font-medium">{name}</div>
-                  {meta?.description && (
-                    <div className="text-xs leading-relaxed text-muted-foreground">{meta.description}</div>
-                  )}
-                  <div className="font-mono text-[11px] text-muted-foreground">{short(r.roomId, 8)}</div>
-                </button>
-              );
-            })}
-          </div>
-        )}
+      {/* Two ways in: the rooms you are already approved for, or a room id someone shared. Both open inline below.
+          A LIGHT segmented control (muted track, raised active) so it reads below the filled-pill Documents submenu. */}
+      <div className="flex w-fit gap-1 rounded-xl bg-muted/60 p-1" role="tablist" aria-label="Open">
+        {([
+          { key: "rooms", label: "Rooms you can open" },
+          { key: "search", label: "Search room by ID" },
+        ] as const).map((t) => (
+          <button
+            key={t.key}
+            role="tab"
+            aria-selected={openTab === t.key}
+            onClick={() => setOpenTab(t.key)}
+            data-testid={`access-subtab-${t.key}`}
+            className={cn(
+              "whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
+              openTab === t.key
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
 
-        {/* Cross-device: your room list is encrypted with your wallet and synced so it follows you to other
-            devices. The server keeps a copy it cannot read; the room owner never sees it. A manual file export
-            stays as a no-server-copy fallback. */}
-        <div className="mt-4 space-y-2 border-t pt-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-medium">Sync across devices</span>
-            {s.syncState === "syncing" && (
-              <span className="inline-flex items-center gap-1 text-xs text-muted-foreground" data-testid="access-sync-state">
-                <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> Syncing…
+      {/* ROOMS YOU CAN OPEN: the wallet's approved rooms (this browser's history, kept current by sync/Refresh). */}
+      {openTab === "rooms" && (
+        <Card className="rounded-2xl p-6">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h3 className="text-base font-semibold tracking-tight">Rooms you can open</h3>
+            <Button variant="outline" size="sm" onClick={s.refreshRooms} disabled={s.refreshing} data-testid="access-refresh">
+              <RefreshCw className={cn("size-3.5", s.refreshing && "animate-spin")} aria-hidden="true" />
+              {s.refreshing ? "Checking…" : "Refresh"}
+            </Button>
+          </div>
+          {s.openableRooms.length === 0 ? (
+            <p className="text-sm leading-relaxed text-muted-foreground" data-testid="access-rooms-empty">
+              No approved rooms yet. After an owner approves your request, press Refresh and it appears here. You
+              can <Link to={MEMBERSHIP_LINK} className="text-brand hover:underline">request to join in Membership</Link>,
+              or look one up under Search room by ID.
+            </p>
+          ) : (
+            <div className="space-y-2" data-testid="access-rooms">
+              {s.openableRooms.map((r) => {
+                const meta = s.directory[r.roomId.toLowerCase()];
+                const name = meta?.name || r.label || short(r.roomId, 8);
+                const active = s.room === r.roomId;
+                return (
+                  <button
+                    key={r.roomId}
+                    onClick={() => s.selectRoom(r.roomId)}
+                    data-testid="access-room-row"
+                    aria-pressed={active}
+                    className={cn(
+                      "flex w-full flex-col gap-0.5 rounded-xl border p-3 text-left transition-colors hover:border-brand/30 hover:bg-accent/40",
+                      active && "border-brand/40 bg-accent/40",
+                    )}
+                  >
+                    <div className="text-[13px] font-medium">{name}</div>
+                    {meta?.description && (
+                      <div className="text-xs leading-relaxed text-muted-foreground">{meta.description}</div>
+                    )}
+                    <div className="font-mono text-[11px] text-muted-foreground">{short(r.roomId, 8)}</div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Sync across devices: a compact toggle. Encrypted with your wallet; the server can't read it. */}
+          <div className="mt-4 border-t pt-3">
+            <div className="flex items-center justify-between gap-3">
+              <span className="inline-flex items-center gap-2 text-[13px] font-medium">
+                <SyncToggle checked={s.syncOn} onChange={s.setSync} />
+                Sync across devices
+                {s.syncState === "syncing" && <Loader2 className="size-3.5 animate-spin text-muted-foreground" aria-hidden="true" />}
+                {s.syncState === "synced" && (
+                  <span className="inline-flex items-center gap-1 text-xs font-normal text-emerald-600 dark:text-emerald-400" data-testid="access-sync-state">
+                    <CheckCircle2 className="size-3.5" aria-hidden="true" /> Synced
+                  </span>
+                )}
               </span>
-            )}
-            {s.syncState === "synced" && (
-              <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400" data-testid="access-sync-state">
-                <CheckCircle2 className="size-3.5" aria-hidden="true" /> Synced
-              </span>
-            )}
-            {s.syncState === "locked" && (
-              <Button variant="outline" size="sm" onClick={s.unlockSync} data-testid="access-sync-unlock">
-                <RefreshCw className="size-3.5" aria-hidden="true" /> Sync my rooms
-              </Button>
-            )}
-            {s.syncState === "error" && (
-              <span className="inline-flex items-center gap-2 text-xs text-destructive" data-testid="access-sync-state">
-                Couldn't sync
+              {s.syncOn && s.syncState === "locked" && (
+                <Button variant="outline" size="sm" onClick={s.unlockSync} data-testid="access-sync-unlock">Unlock</Button>
+              )}
+              {s.syncState === "error" && (
                 <Button variant="outline" size="sm" onClick={s.unlockSync} data-testid="access-sync-retry">Retry</Button>
-              </span>
-            )}
-            {s.syncOn ? (
-              <Button variant="ghost" size="sm" onClick={() => s.setSync(false)} data-testid="access-sync-toggle">
-                Turn off
-              </Button>
-            ) : (
-              <Button variant="outline" size="sm" onClick={() => s.setSync(true)} data-testid="access-sync-toggle">
-                Turn on
-              </Button>
+              )}
+            </div>
+            <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+              Encrypted with your wallet, so your rooms follow you to other devices. The server can't read it.
+              {s.syncOn && s.syncState === "locked" && " Tap Unlock to sign in once on this device."}
+            </p>
+            {s.syncMsg && (
+              <p className="mt-1 text-xs text-muted-foreground" data-testid="access-sync-msg">{s.syncMsg}</p>
             )}
           </div>
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            Your room list is encrypted with your wallet and saved so it follows you to other devices. The server
-            keeps a copy it cannot read, and the room owner never sees it.
-          </p>
-          {s.syncMsg && (
-            <p className="text-xs text-muted-foreground" data-testid="access-sync-msg">
-              {s.syncMsg}
-            </p>
-          )}
+        </Card>
+      )}
 
-          {/* Manual file fallback (keeps nothing on the server). */}
-          <div className="flex flex-wrap items-center gap-2 pt-1">
-            <span className="text-xs text-muted-foreground">Or use a file:</span>
-            <Button variant="outline" size="sm" onClick={s.exportRooms} disabled={s.backupBusy} data-testid="access-export">
-              <Download className="size-3.5" aria-hidden="true" />
-              Export
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => importInputRef.current?.click()}
-              disabled={s.backupBusy}
-              data-testid="access-import"
-            >
-              <Upload className="size-3.5" aria-hidden="true" />
-              Import
-            </Button>
-            <input
-              ref={importInputRef}
-              type="file"
-              accept="application/json,.json"
-              className="hidden"
-              data-testid="access-import-input"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) s.importRooms(f);
-                e.target.value = "";
-              }}
-            />
-          </div>
-          {s.backupMsg && (
-            <p className="text-xs text-muted-foreground" data-testid="access-backup-msg">
-              {s.backupMsg}
-            </p>
-          )}
-        </div>
-      </Card>
+      {/* SEARCH ROOM BY ID: look up any room and open it right here (no reroute). */}
+      {openTab === "search" && (
+        <Card className="rounded-2xl p-6">
+          <h3 className="text-base font-semibold tracking-tight">Search room by ID</h3>
+          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+            Have a room id someone shared? Open it here. If you are not on its list, you'll be pointed to request
+            to join.
+          </p>
+          <ManualOpen onSubmit={s.selectRoom} />
+        </Card>
+      )}
 
       {/* The selected room: its documents, each with one Open button + the live status of the active Open. */}
       {s.room && (
@@ -347,34 +328,11 @@ export default function OpenShared() {
         </Card>
       )}
 
-      {/* Open by room id: the fallback for a room not in your list (or on a fresh device), collapsed by default. */}
-      <Card className="rounded-2xl p-6">
-        <Disclosure toggleTestId="access-manual-toggle" detailsLabel="Open by room id" summary={null}>
-          <p className="text-sm leading-relaxed text-muted-foreground">
-            Have a room id someone shared? Open it here. If you are not on its list, you'll be pointed to request
-            to join.
-          </p>
-          <ManualOpen onSubmit={s.selectRoom} />
-        </Disclosure>
-      </Card>
-
-      {/* How this stays private: the keepers + the honest caveats, demoted out of the main flow. */}
-      <Card className="rounded-2xl p-6">
-        <Disclosure toggleTestId="access-privacy-toggle" detailsLabel="How this stays private" summary={null}>
-          <p className="text-sm leading-relaxed text-muted-foreground">
-            Your identity for a room is derived from your wallet in this browser, so the room learns that an
-            approved member opened a document, never which one. The file's key is split across{" "}
-            {s.committee ? `${s.committee.online}/${s.committee.n}` : "3"} keepers; any 2 release their part to
-            your wallet-derived key and the file rebuilds here. The one-time membership proof is the only step
-            where a private witness leaves this browser, and it goes only to our self-hosted prover.
-          </p>
-          {s.committeeDoc?.content_hash && (
-            <div className="mt-2">
-              <Hex label="Document fingerprint" value={s.committeeDoc.content_hash} chars={8} />
-            </div>
-          )}
-        </Disclosure>
-      </Card>
+      {/* How this stays private: one compact, plain-language note (matches the Store "encrypted" badge style). */}
+      <Callout icon={ShieldCheck} testId="access-privacy">
+        Only members the owner approved can open these files, and the owner never learns which member opened one.
+        The key is split across the keepers and reassembled in your browser.
+      </Callout>
 
       {s.drift && (
         <p className="text-sm text-amber-600 dark:text-amber-500" data-testid="access-drift">
@@ -383,6 +341,31 @@ export default function OpenShared() {
         </p>
       )}
     </div>
+  );
+}
+
+// A small on/off capsule for the cross-device sync setting.
+function SyncToggle({ checked, onChange }: { checked: boolean; onChange: (on: boolean) => void }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label="Sync across devices"
+      onClick={() => onChange(!checked)}
+      data-testid="access-sync-toggle"
+      className={cn(
+        "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors",
+        checked ? "bg-primary" : "bg-muted-foreground/30",
+      )}
+    >
+      <span
+        className={cn(
+          "inline-block size-4 rounded-full bg-white shadow transition-transform",
+          checked ? "translate-x-4" : "translate-x-0.5",
+        )}
+      />
+    </button>
   );
 }
 

@@ -1,5 +1,4 @@
 import { test, expect } from "@playwright/test";
-import { readFileSync } from "node:fs";
 import { exportRoomsBackup } from "../src/lib/dataroom/roomsBackup";
 
 // "Open a document" (redesigned). The member lands on the rooms they are approved for, picks a document, and
@@ -173,13 +172,14 @@ test("Open: empty state when there are no approved rooms", async ({ page }) => {
   await expect(page.getByTestId("access-rooms-empty")).toBeVisible();
 });
 
-test("Open: the open-by-room-id fallback selects a room", async ({ page }) => {
+test("Open: the Search-room-by-ID sub-tab opens a room inline", async ({ page }) => {
   await page.addInitScript(mock);
   await stubReads(page, "eligible", 8);
   await page.goto("/app/dataroom/documents#open");
-  await page.getByTestId("access-manual-toggle").click();
+  await page.getByTestId("access-subtab-search").click();
   await page.getByTestId("access-manual-input").fill(ROOM);
   await page.getByTestId("access-manual-btn").click();
+  // the room opens right here (not rerouted to "Rooms you can open")
   await expect(page.getByTestId("access-room-detail")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("access-doc-row").first()).toBeVisible({ timeout: 30_000 });
 });
@@ -224,48 +224,6 @@ test("Open: the legacy /access route redirects to Documents > Open, preserving ?
   // redirected into the consolidated location, room preserved
   await expect(page).toHaveURL(new RegExp(`/dataroom/documents\\?room=${ROOM}#open$`));
   await expect(page.getByTestId("access-room-detail")).toBeVisible({ timeout: 30_000 });
-});
-
-test("Open: rooms export to an encrypted file and re-import on another device", async ({ page }) => {
-  const errs: string[] = [];
-  page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/i.test(m.text())) errs.push(m.text()); });
-  await page.addInitScript(mock);
-  await stubReads(page, "eligible", 8);
-
-  await page.goto("/app/dataroom/documents#open");
-  // seed this browser's approved-room history, then reload so the hook reads it
-  await page.evaluate((a) => {
-    localStorage.setItem(
-      `zkorage.dr.requests.${a.addr}`,
-      JSON.stringify([{ roomId: a.room, label: "Acme term sheet", state: "eligible", ts: 1 }]),
-    );
-  }, { addr: ADDR, room: ROOM });
-  await page.reload();
-  await expect(page.getByTestId("access-room-row").first()).toContainText("Acme term sheet", { timeout: 30_000 });
-
-  // export -> capture the encrypted download
-  const [download] = await Promise.all([
-    page.waitForEvent("download"),
-    page.getByTestId("access-export").click(),
-  ]);
-  const dlPath = await download.path();
-  expect(dlPath).toBeTruthy();
-  const contents = readFileSync(dlPath!, "utf8");
-  expect(contents).not.toContain(ROOM); // encrypted: the room id never appears in plaintext
-  expect(contents).toContain("AES-256-GCM");
-  await expect(page.getByTestId("access-backup-msg")).toContainText("Exported your room list (1)");
-
-  // simulate a fresh device: drop the local history, confirm the list is empty
-  await page.evaluate((addr) => localStorage.removeItem(`zkorage.dr.requests.${addr}`), ADDR);
-  await page.reload();
-  await expect(page.getByTestId("access-rooms-empty")).toBeVisible({ timeout: 30_000 });
-
-  // import the file with the SAME wallet -> the room comes back
-  await page.getByTestId("access-import-input").setInputFiles(dlPath!);
-  await expect(page.getByTestId("access-backup-msg")).toContainText("Imported 1 room");
-  await expect(page.getByTestId("access-room-row").first()).toContainText("Acme term sheet");
-
-  expect(errs, errs.join("\n")).toHaveLength(0);
 });
 
 test("Open: cross-device sync pulls your rooms from the encrypted vault after a one-tap unlock", async ({ page }) => {
