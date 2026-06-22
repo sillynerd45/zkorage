@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { CheckCircle2, Clock, FileText, FolderOpen, Loader2, Lock } from "lucide-react";
+import { CheckCircle2, Clock, FileText, FolderOpen, Loader2, Lock, RefreshCw } from "lucide-react";
 import { useSharedOpen } from "@/lib/hooks/useSharedOpen";
 import { Disclosure, Hex } from "@/components/Disclosure";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -137,7 +137,7 @@ function OpenStatus({ s }: { s: ReturnType<typeof useSharedOpen> }) {
 export default function OpenShared() {
   const s = useSharedOpen();
 
-  // Deep link from "Open documents" (Membership / Discover): /app/dataroom/access?room=<id> selects the room.
+  // Deep link from "Open documents" (Membership / Discover): /app/dataroom/documents?room=<id>#open selects it.
   const [params] = useSearchParams();
   const paramRoom = params.get("room");
   useEffect(() => {
@@ -169,32 +169,48 @@ export default function OpenShared() {
         </p>
       </Card>
 
-      {/* Rooms you can open: the wallet's approved rooms (from this browser's request history). */}
+      {/* Rooms you can open: the wallet's approved rooms (from this browser's request history). Refresh
+          re-checks each room's status so a just-approved room appears without re-requesting. Names come from
+          the public directory (listed rooms), falling back to your own label. */}
       <Card className="rounded-2xl p-6">
-        <h3 className="text-base font-semibold tracking-tight">Rooms you can open</h3>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h3 className="text-base font-semibold tracking-tight">Rooms you can open</h3>
+          <Button variant="outline" size="sm" onClick={s.refreshRooms} disabled={s.refreshing} data-testid="access-refresh">
+            <RefreshCw className={cn("size-3.5", s.refreshing && "animate-spin")} aria-hidden="true" />
+            {s.refreshing ? "Checking…" : "Refresh"}
+          </Button>
+        </div>
         {s.openableRooms.length === 0 ? (
-          <p className="mt-3 text-sm leading-relaxed text-muted-foreground" data-testid="access-rooms-empty">
-            No approved rooms yet. Once a room owner approves your request, the room shows up here. You can{" "}
-            <Link to={MEMBERSHIP_LINK} className="text-brand hover:underline">request to join in Membership</Link>, or
-            open a room by id below.
+          <p className="text-sm leading-relaxed text-muted-foreground" data-testid="access-rooms-empty">
+            No approved rooms yet. After a room owner approves your request, press Refresh and it shows up here.
+            You can <Link to={MEMBERSHIP_LINK} className="text-brand hover:underline">request to join in Membership</Link>,
+            or open a room by id below.
           </p>
         ) : (
-          <div className="mt-3 flex flex-wrap gap-2" data-testid="access-rooms">
-            {s.openableRooms.map((r) => (
-              <button
-                key={r.roomId}
-                onClick={() => s.selectRoom(r.roomId)}
-                data-testid="access-room-row"
-                aria-pressed={s.room === r.roomId}
-                className={cn(
-                  "rounded-xl border px-3.5 py-2 text-left text-[13px] transition-colors hover:border-brand/30 hover:bg-accent/40",
-                  s.room === r.roomId && "border-brand/40 bg-accent/40",
-                )}
-              >
-                <div className="font-medium">{r.label || short(r.roomId, 8)}</div>
-                <div className="font-mono text-xs text-muted-foreground">{short(r.roomId, 6)}</div>
-              </button>
-            ))}
+          <div className="space-y-2" data-testid="access-rooms">
+            {s.openableRooms.map((r) => {
+              const meta = s.directory[r.roomId.toLowerCase()];
+              const name = meta?.name || r.label || short(r.roomId, 8);
+              const active = s.room === r.roomId;
+              return (
+                <button
+                  key={r.roomId}
+                  onClick={() => s.selectRoom(r.roomId)}
+                  data-testid="access-room-row"
+                  aria-pressed={active}
+                  className={cn(
+                    "flex w-full flex-col gap-0.5 rounded-xl border p-3 text-left transition-colors hover:border-brand/30 hover:bg-accent/40",
+                    active && "border-brand/40 bg-accent/40",
+                  )}
+                >
+                  <div className="text-[13px] font-medium">{name}</div>
+                  {meta?.description && (
+                    <div className="text-xs leading-relaxed text-muted-foreground">{meta.description}</div>
+                  )}
+                  <div className="font-mono text-[11px] text-muted-foreground">{short(r.roomId, 8)}</div>
+                </button>
+              );
+            })}
           </div>
         )}
       </Card>

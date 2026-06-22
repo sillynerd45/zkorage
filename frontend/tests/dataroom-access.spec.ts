@@ -47,6 +47,9 @@ async function stubReads(
     roomId: ROOM, count: 1, start: 0, limit: 50, dataroomId: "CID",
     documents: [{ index: 0, room_id: ROOM, doc_id: DOC, content_hash: "cd".repeat(32), blob_pointer: "blob://x", ledger: 1, timestamp: "t", kind: "committee", k_commitment: "ef".repeat(32) }],
   })));
+  // The member open is now embedded in the Documents page, so Anchor (getMyRooms) + the directory load too.
+  await page.route("**/dataroom/rooms?owner=**", (r) => r.fulfill(json({ owner: ADDR, count: 0, rooms: [], dataroomId: "" })));
+  await page.route("**/dataroom/directory", (r) => r.fulfill(json({ count: 0, rooms: [], dataroomId: "" })));
 }
 
 test("Open: an approved member is invited to set up access, not told they don't qualify", async ({ page }) => {
@@ -55,7 +58,7 @@ test("Open: an approved member is invited to set up access, not told they don't 
   await page.addInitScript(mock);
   await stubReads(page, "eligible", 8); // above the floor
 
-  await page.goto(`/app/dataroom/access?room=${ROOM}`);
+  await page.goto(`/app/dataroom/documents?room=${ROOM}#open`);
   await expect(page.getByTestId("access-room-detail")).toBeVisible({ timeout: 30_000 });
   await page.getByTestId("access-open").first().click();
 
@@ -86,7 +89,7 @@ test("Open: setting up access proves once then waits for the batch window (not s
   await page.route("**/dataroom/membership/queue-access", (r) => { queued++; return r.fulfill(json({ ok: true, ticket: "aa".repeat(16), status: "queued", flushAt: Date.now() + 60_000, nextFlushAt: Date.now() + 60_000, windowMs: 60_000 })); });
   await page.route("**/dataroom/membership/queue-status/**", (r) => r.fulfill(json({ ticket: "aa".repeat(16), status: "queued", roomId: ROOM, accessor: "cd".repeat(32), flushAt: Date.now() + 60_000, nextFlushAt: Date.now() + 60_000, windowMs: 60_000, txHash: null, error: null })));
 
-  await page.goto(`/app/dataroom/access?room=${ROOM}`);
+  await page.goto(`/app/dataroom/documents?room=${ROOM}#open`);
   await page.getByTestId("access-open").first().click();
   await expect(page.getByTestId("access-setup-btn")).toBeVisible({ timeout: 30_000 });
   await page.getByTestId("access-setup-btn").click();
@@ -101,7 +104,7 @@ test("Open: a room below the anonymity floor blocks opening (red meter)", async 
   await page.addInitScript(mock);
   await stubReads(page, "eligible", 2); // below the floor
 
-  await page.goto(`/app/dataroom/access?room=${ROOM}`);
+  await page.goto(`/app/dataroom/documents?room=${ROOM}#open`);
   await page.getByTestId("access-open").first().click();
   await expect(page.getByTestId("access-status")).toHaveAttribute("data-phase", "below-floor", { timeout: 30_000 });
   await expect(page.getByTestId("anon-meter")).toHaveAttribute("data-tier", "red");
@@ -112,41 +115,62 @@ test("Open: a non-member is pointed to request to join", async ({ page }) => {
   await page.addInitScript(mock);
   await stubReads(page, "none", 8);
 
-  await page.goto(`/app/dataroom/access?room=${ROOM}`);
+  await page.goto(`/app/dataroom/documents?room=${ROOM}#open`);
   await page.getByTestId("access-open").first().click();
   await expect(page.getByTestId("access-status")).toHaveAttribute("data-phase", "not-member", { timeout: 30_000 });
   await expect(page.getByTestId("access-go-membership")).toHaveAttribute("href", "/app/dataroom/membership");
 });
 
-test("Open: lands on the rooms you're approved for (local history); empty state otherwise", async ({ page }) => {
+test("Open: lands on approved rooms with directory names + a Refresh; empty state otherwise", async ({ page }) => {
   await page.addInitScript(mock);
   await page.addInitScript(`localStorage.setItem("zkorage.dr.requests.${ADDR}", JSON.stringify([
     { roomId: "${ROOM}", label: "Acme board", state: "eligible", ts: 2 },
     { roomId: "${"7".repeat(64)}", label: "Pending co", state: "pending", ts: 1 },
   ]));`);
   await stubReads(page, "eligible", 8);
+  // the public directory gives the approved room a human name + description (like the Discover tab)
+  await page.route("**/dataroom/directory", (r) => r.fulfill(json({
+    count: 1, rooms: [{ roomId: ROOM, name: "Series A data room", description: "Diligence pack for the round.", memberBucket: "5-19", anonTier: "ok", listedAt: 1 }],
+  })));
 
-  await page.goto("/app/dataroom/access");
-  // only the APPROVED room appears (not the pending one)
+  await page.goto("/app/dataroom/documents#open");
+  // only the APPROVED room appears (not the pending one), shown with its directory name + description
   await expect(page.getByTestId("access-room-row")).toHaveCount(1);
-  await expect(page.getByTestId("access-room-row").first()).toContainText("Acme board");
+  const row = page.getByTestId("access-room-row").first();
+  await expect(row).toContainText("Series A data room");
+  await expect(row).toContainText("Diligence pack for the round.");
+  await expect(page.getByTestId("access-refresh")).toBeVisible();
   // selecting it loads the room's documents
-  await page.getByTestId("access-room-row").first().click();
+  await row.click();
   await expect(page.getByTestId("access-room-detail")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("access-doc-row").first()).toBeVisible({ timeout: 30_000 });
+});
+
+test("Open: Refresh promotes a newly-approved room into the list", async ({ page }) => {
+  await page.addInitScript(mock);
+  // local history still says pending; the live enroll status now reports eligible (owner approved since).
+  await page.addInitScript(`localStorage.setItem("zkorage.dr.requests.${ADDR}", JSON.stringify([
+    { roomId: "${ROOM}", label: "Acme board", state: "pending", ts: 1 },
+  ]));`);
+  await stubReads(page, "eligible", 8);
+
+  await page.goto("/app/dataroom/documents#open");
+  await expect(page.getByTestId("access-rooms-empty")).toBeVisible(); // nothing approved locally yet
+  await page.getByTestId("access-refresh").click();
+  await expect(page.getByTestId("access-room-row")).toHaveCount(1, { timeout: 30_000 }); // promoted after re-check
 });
 
 test("Open: empty state when there are no approved rooms", async ({ page }) => {
   await page.addInitScript(mock);
   await stubReads(page, "none", 0);
-  await page.goto("/app/dataroom/access");
+  await page.goto("/app/dataroom/documents#open");
   await expect(page.getByTestId("access-rooms-empty")).toBeVisible();
 });
 
 test("Open: the open-by-room-id fallback selects a room", async ({ page }) => {
   await page.addInitScript(mock);
   await stubReads(page, "eligible", 8);
-  await page.goto("/app/dataroom/access");
+  await page.goto("/app/dataroom/documents#open");
   await page.getByTestId("access-manual-toggle").click();
   await page.getByTestId("access-manual-input").fill(ROOM);
   await page.getByTestId("access-manual-btn").click();
@@ -163,7 +187,7 @@ test("Open: a persisted batch wait resumes after returning to the tab", async ({
   await stubReads(page, "eligible", 8);
   await page.route("**/dataroom/membership/queue-status/**", (r) => r.fulfill(json({ ticket: "aa55aa55aa55aa55aa55aa55aa55aa55", status: "queued", roomId: ROOM, accessor: "cd".repeat(32), flushAt: now + 60_000, nextFlushAt: now + 60_000, windowMs: 60_000, txHash: null, error: null })));
 
-  await page.goto("/app/dataroom/access");
+  await page.goto("/app/dataroom/documents#open");
   // the tab auto-resumes the queued wait (no need to re-pick the room)
   await expect(page.getByTestId("access-status")).toHaveAttribute("data-phase", "waiting", { timeout: 30_000 });
 });
@@ -172,17 +196,26 @@ test("Open: renders dark; the approved state reads positive", async ({ page }) =
   await page.emulateMedia({ colorScheme: "dark" });
   await page.addInitScript(mock);
   await stubReads(page, "eligible", 8);
-  await page.goto(`/app/dataroom/access?room=${ROOM}`);
+  await page.goto(`/app/dataroom/documents?room=${ROOM}#open`);
   await page.getByTestId("access-open").first().click();
   await expect(page.getByTestId("access-approved")).toBeVisible({ timeout: 30_000 });
   await page.screenshot({ path: "tests/dataroom-access-approved-dark.png", fullPage: true });
 });
 
-test("Open: wallet-gated, and the folded tab still routes from the overview", async ({ page }) => {
-  // no wallet mock -> the page asks to connect first
+test("Open: wallet-gated, and the Overview card routes into Documents > Open", async ({ page }) => {
+  // no wallet mock -> the embedded member open asks to connect first
   await page.goto("/app/dataroom");
   await expect(page.getByTestId("task-access")).toBeVisible();
   await page.getByTestId("task-access").click();
-  await expect(page).toHaveURL(/\/dataroom\/access$/);
+  await expect(page).toHaveURL(/\/dataroom\/documents#open$/);
   await expect(page.getByTestId("access-connect-prompt")).toBeVisible({ timeout: 30_000 });
+});
+
+test("Open: the legacy /access route redirects to Documents > Open, preserving ?room=", async ({ page }) => {
+  await page.addInitScript(mock);
+  await stubReads(page, "eligible", 8);
+  await page.goto(`/app/dataroom/access?room=${ROOM}`);
+  // redirected into the consolidated location, room preserved
+  await expect(page).toHaveURL(new RegExp(`/dataroom/documents\\?room=${ROOM}#open$`));
+  await expect(page.getByTestId("access-room-detail")).toBeVisible({ timeout: 30_000 });
 });

@@ -32,7 +32,7 @@ const HERO: Task = {
 
 const TASKS: Task[] = [
   {
-    to: "/app/dataroom/documents#open",
+    to: "/app/dataroom/documents#bykey",
     label: "Open with a key",
     blurb: "Decrypt a file in your browser with the recipient's key. Your key never leaves the page.",
     testid: "task-open",
@@ -40,8 +40,8 @@ const TASKS: Task[] = [
     category: "Documents",
   },
   {
-    to: "/app/dataroom/documents#browse",
-    label: "Browse documents",
+    to: "/app/dataroom/documents#mine",
+    label: "My files",
     blurb: "See the rooms you own and the documents you stored. Contents stay encrypted.",
     testid: "task-browse",
     icon: Files,
@@ -57,7 +57,7 @@ const TASKS: Task[] = [
     star: true,
   },
   {
-    to: "/app/dataroom/access",
+    to: "/app/dataroom/documents#open",
     label: "Open a document",
     blurb: "Open files from rooms you have access to, decrypted in your browser.",
     testid: "task-access",

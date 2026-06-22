@@ -52,7 +52,7 @@ function BucketBadge({ tier, bucket }: { tier: AnonTier; bucket: string }) {
 }
 
 const joinLink = (roomId: string) => `/app/dataroom/membership?room=${roomId}`;
-const accessLink = (roomId: string) => `/app/dataroom/access?room=${roomId}`;
+const accessLink = (roomId: string) => `/app/dataroom/documents?room=${roomId}#open`;
 
 // The directory's per-room action reflects your LOCAL request history (this browser, when connected): an
 // approved room opens documents, a pending one shows it's already requested, anything else invites you to join.

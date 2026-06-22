@@ -41,7 +41,7 @@ test("a11y: no horizontal scroll on wide-input routes across 768/1024/1440", asy
 });
 
 test("a11y: every form control on the documents route has an accessible name (WCAG 4.1.2 / 3.3.2)", async ({ page }) => {
-  await page.goto("/app/dataroom/documents");
+  await page.goto("/app/dataroom/documents#store"); // the Store sub-tab has the form controls (Open is the default)
   await expect(page.getByTestId("room-label")).toBeVisible();
   const controls = page.locator("input, textarea, select");
   const n = await controls.count();

@@ -163,7 +163,7 @@ export const DATAROOM_TABS: DataroomTab[] = [
   {
     slug: "documents",
     label: "Documents",
-    blurb: "Store and open encrypted files, and browse the rooms you own.",
+    blurb: "Open a room you're approved for, store a document, or browse your own files.",
   },
   {
     slug: "membership",
@@ -180,11 +180,6 @@ export const DATAROOM_TABS: DataroomTab[] = [
     label: "Get in anonymously",
     blurb: "Prove you're allowed in without revealing who you are. Each pass works once.",
     star: true,
-  },
-  {
-    slug: "access",
-    label: "Open a document",
-    blurb: "Open files from rooms you have access to. The file is decrypted in your browser.",
   },
   {
     slug: "disclosure",

@@ -19,6 +19,16 @@ export function readJoinRequests(addr: string | null | undefined): JoinRequest[]
   }
 }
 
+/** Overwrite the local join-request history for a wallet (used by a Refresh that re-checks statuses). */
+export function writeJoinRequests(addr: string | null | undefined, list: JoinRequest[]): void {
+  if (!addr || typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(requestsKey(addr), JSON.stringify(list));
+  } catch {
+    /* ignore quota */
+  }
+}
+
 /** Map of lowercased roomId -> last-known state, for quick status lookups (e.g. the Discover directory). The
  *  state is only as fresh as the last write/Refresh, so it is a hint; the authoritative check is on-chain. */
 export function joinRequestStates(addr: string | null | undefined): Record<string, EnrollState> {

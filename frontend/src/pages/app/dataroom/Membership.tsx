@@ -248,7 +248,7 @@ export default function Membership() {
                         yet, so no action: the status pill says it all and the room id is copyable above. */}
                     {r.state === "eligible" && (
                       <Link
-                        to={`/app/dataroom/access?room=${r.roomId}`}
+                        to={`/app/dataroom/documents?room=${r.roomId}#open`}
                         data-testid="request-open"
                         className={cn(buttonVariants({ size: "sm", variant: "outline" }), "shrink-0")}
                       >
