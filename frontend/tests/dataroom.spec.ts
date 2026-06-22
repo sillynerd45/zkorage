@@ -122,6 +122,47 @@ test("dataroom Browse: a fresh connected wallet sees only its own rooms (empty),
   await expect(page.getByTestId("dataroom-docs")).toHaveCount(0);
 });
 
+// Browse now lists COMMITTEE documents (the kind the Store form makes), which live in a separate on-chain
+// keyspace from the legacy DR1 seals. Each row is tagged kind="committee" and opens INLINE via the owner
+// escrow copy (no recipient-key hand-off). We mock the two backend reads (rooms + documents) so the row
+// renders deterministically; clicking it derives the room key (signMessage) then reads the on-chain doc —
+// which is absent for this mock room id, so the opener surfaces a clean "not found", proving the wiring.
+const SIG_B64 = Buffer.from(new Uint8Array(64).fill(0x09)).toString("base64");
+const ROOM_HEX = "ab".repeat(32);
+const DOC_HEX = "cd".repeat(32);
+const browseMock = () => `
+  ${freighterMock()}
+  window.__freighterMock.signMessage = async () => ({ signedMessage: "${SIG_B64}", signerAddress: "${DEMO_G}" });
+`;
+test("dataroom Browse: lists a committee doc and wires the owner-open", async ({ page }) => {
+  await page.addInitScript(browseMock());
+  await page.route("**/dataroom/rooms?owner=**", (r) => r.fulfill({
+    status: 200, contentType: "application/json",
+    body: JSON.stringify({ owner: DEMO_G, count: 1, dataroomId: "CID", rooms: [
+      { roomId: ROOM_HEX, label: "acme-board-docs", owner: DEMO_G, docCount: 1, dr1DocCount: 0, committeeDocCount: 1, ledger: 5, visibility: "private", name: null, description: null },
+    ] }),
+  }));
+  await page.route("**/dataroom/documents/**", (r) => r.fulfill({
+    status: 200, contentType: "application/json",
+    body: JSON.stringify({ roomId: ROOM_HEX, count: 1, dr1Count: 0, committeeCount: 1, start: 0, limit: 25, dataroomId: "CID", documents: [
+      { kind: "committee", index: 0, room_id: ROOM_HEX, doc_id: DOC_HEX, content_hash: "ef".repeat(32), k_commitment: "12".repeat(32), blob_pointer: "local://x", ledger: 5, timestamp: "0" },
+    ] }),
+  }));
+
+  await page.goto("/app/dataroom/documents#browse");
+  await page.getByTestId("my-room").first().click({ timeout: 30_000 });
+  // the committee doc renders (tagged kind=committee, anonymous keeper-released subtitle, not a recipient seal)
+  const row = page.getByTestId("doc-row").first();
+  await expect(row).toBeVisible({ timeout: 30_000 });
+  await expect(row).toHaveAttribute("data-kind", "committee");
+  await expect(row).toContainText("anonymous");
+
+  // clicking it runs the owner-open: derive the room key (signMessage), then read the on-chain doc. This mock
+  // room id is not anchored on testnet, so the opener returns "not found" — a clean, wired error (not a crash).
+  await row.click();
+  await expect(page.getByTestId("owner-open-error")).toBeVisible({ timeout: 30_000 });
+});
+
 test("dataroom overview: task-oriented cards route to the right place; guided-demo tab removed", async ({ page }) => {
   await page.goto("/app/dataroom");
   // the landing is a featured "Store a document" hero card + an "All tasks" grid (no duplicate "what do you

@@ -34,8 +34,12 @@ test("committee store: the browser deals; the relay gets only ciphertext + seale
     threshold: 2, n: 3, online: 3, dataroomId: "CID", note: "",
     keypers: [1, 2, 3].map((i) => ({ endpoint: `k${i}`, ok: true, keyperIndex: i, shares: 0, sealPub: String(i).repeat(64).slice(0, 64) })),
   })));
-  await page.route("**/dataroom/committee/deal-sealed", (r) => {
+  // Gate deal-sealed so the (otherwise instant) store pauses mid-flow and the stepper is observable.
+  let releaseDeal: () => void = () => {};
+  const dealGate = new Promise<void>((res) => { releaseDeal = res; });
+  await page.route("**/dataroom/committee/deal-sealed", async (r) => {
     dealBody = r.request().postDataJSON();
+    await dealGate;
     return r.fulfill(json({ ok: true, roomId: ROOM_ID, docId: dealBody.docId, contentHash: "ef".repeat(32), blobPointer: "blob://x", kCommitment: dealBody.kCommitment, dealt: 3 }));
   });
   await page.route("**/dataroom/committee/anchor", (r) => r.fulfill(json({ ok: true, xdr: "AAAAanchor" })));
@@ -55,6 +59,11 @@ test("committee store: the browser deals; the relay gets only ciphertext + seale
   await page.getByTestId("upload").click(); // "Store shared document"
   await page.getByRole("button", { name: "Yes, post it" }).click();
 
+  // #3a — the store stepper is shown while the flow runs (held at deal-sealed → the "encrypt" phase is active).
+  await expect(page.getByTestId("store-stepper")).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByTestId("store-step-encrypt")).toHaveAttribute("data-status", "active");
+  releaseDeal(); // let the deal-sealed response through; the flow finishes (anchor → verdict)
+
   await expect(page.getByTestId("anchor-verdict-card")).toBeVisible({ timeout: 20_000 });
   await expect(page.getByTestId("shared-result-room")).toBeVisible();
   await expect(page.getByTestId("shared-result-doc")).toBeVisible();
@@ -69,6 +78,14 @@ test("committee store: the browser deals; the relay gets only ciphertext + seale
   const wire = JSON.stringify(dealBody);
   expect(wire.includes(PLAINTEXT)).toBe(false);
   expect(Buffer.from(dealBody.blobB64, "base64").toString("utf8").includes(PLAINTEXT)).toBe(false);
+
+  // #1 — after a successful store the button resets the form so another doc can be filed cleanly: the verdict
+  // clears, the Store button returns, and the text input is empty (placeholder-guided again).
+  await expect(page.getByTestId("store-another")).toBeVisible();
+  await page.getByTestId("store-another").click();
+  await expect(page.getByTestId("anchor-verdict-card")).toHaveCount(0);
+  await expect(page.getByTestId("upload")).toBeVisible();
+  await expect(page.getByTestId("doc-content")).toHaveValue("");
 
   await page.screenshot({ path: "tests/committee-store.png", fullPage: true });
   expect(errs, errs.join("\n")).toHaveLength(0);
