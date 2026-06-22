@@ -17,7 +17,7 @@ import { TESTNET } from "./defaults.js";
 import { decodeJournal, decodeIdentityJournal, decodeComplianceJournal, decodePayrollJournal, decodeDataroomSealJournal, decodeMembershipJournal, decodeDocauthJournal, decodeTierJournal, fromHex, toHex, bytesToHex, sha256Hex } from "./journal.js";
 import { sha256 } from "@noble/hashes/sha256";
 import { openDisclosure, type OpenedDisclosure } from "./disclosure.js";
-import { recoverDocumentKey, aeadDecrypt } from "./dataroom.js";
+import { recoverDocumentKey, aeadDecrypt, type DataroomDisclosure } from "./dataroom.js";
 import { openShare, reconstructWithCommitment, type SealedShareHex, type OpenedShare } from "./committee.js";
 import type {
   AccessRecord,
@@ -1389,6 +1389,70 @@ export class ZkorageClient {
     const res = await fetch(`${base}/dataroom/blob/${contentHash}`);
     if (!res.ok) throw new Error(`blob fetch failed: HTTP ${res.status}`);
     return new Uint8Array(await res.arrayBuffer());
+  }
+
+  /**
+   * Open a committee document via the OWNER-ESCROW copy (Model B), WITHOUT the keeper committee and WITHOUT a
+   * membership proof. When the browser dealer stored the doc it also ECIES-sealed a copy of K to the owner's
+   * own sign-to-derive recipient key; the owner re-derives that recipient secret from their wallet (client
+   * side) and passes it here to reopen the document on any device. The escrow copy is sealed ciphertext (it
+   * opens only with the owner's secret); it is fetched from the backend (`opts.fetchEscrow` → `opts.apiBaseUrl`
+   * / `cfg.apiBaseUrl` → `/dataroom/committee/escrow/:room/:doc`). The on-chain committee doc's `content_hash`
+   * is the AUTHORITATIVE binding, cross-checked against the escrow so a backend cannot serve a bait copy, and
+   * the fetched blob is sha256-verified before decrypt. `faithful=false` means the secret is not the owner's
+   * key (or the wallet's signing format drifted). Throws only when it cannot safely produce plaintext.
+   */
+  async openCommitteeDocumentAsOwner(
+    roomIdHex: string,
+    docIdHex: string,
+    ownerRecipientSecretHex: string,
+    opts: {
+      fetchEscrow?: (roomIdHex: string, docIdHex: string) => Promise<(DataroomDisclosure & { recipientPub?: string }) | null>;
+      fetchBlob?: (contentHash: string) => Promise<Uint8Array>;
+      blobBaseUrl?: string;
+      apiBaseUrl?: string;
+    } = {},
+  ): Promise<OpenedDocument> {
+    const empty: OpenedDocument = { found: false, faithful: false, contentHashVerified: false, contentHash: "", recipientPub: "", plaintext: null, plaintextUtf8: null };
+    const doc = await this.getCommitteeDocument(roomIdHex, docIdHex);
+    if (!doc) return empty;
+    const escrow = await this.fetchEscrow(roomIdHex, docIdHex, opts);
+    if (!escrow) {
+      throw new Error("no owner-escrow copy is stored for this document (it can still be opened via the member path)");
+    }
+    // The on-chain content_hash is authoritative: cross-check the escrow against it so a malicious backend
+    // cannot serve a bait escrow that decrypts to a different (attacker-chosen) blob.
+    if (escrow.contentHash.toLowerCase() !== doc.content_hash.toLowerCase()) {
+      throw new Error("the owner-escrow copy does not match the on-chain document (content hash mismatch)");
+    }
+    const rec = recoverDocumentKey(
+      { ephPub: escrow.ephPub, ct: escrow.ct, tag: escrow.tag, contentHash: doc.content_hash, roomId: doc.room_id, docId: doc.doc_id },
+      ownerRecipientSecretHex,
+    );
+    if (!rec.faithful) {
+      return { found: true, faithful: false, contentHashVerified: false, contentHash: doc.content_hash, recipientPub: escrow.recipientPub ?? "", plaintext: null, plaintextUtf8: null };
+    }
+    const blob = await this.fetchBlob(doc.content_hash, opts);
+    const contentHashVerified = sha256Hex(blob) === doc.content_hash;
+    if (!contentHashVerified) throw new Error("fetched blob hash mismatch — refusing to decrypt");
+    const plaintext = await aeadDecrypt(blob, rec.k);
+    let plaintextUtf8: string | null = null;
+    try { plaintextUtf8 = new TextDecoder("utf-8", { fatal: true }).decode(plaintext); } catch { /* binary */ }
+    return { found: true, faithful: true, contentHashVerified: true, contentHash: doc.content_hash, recipientPub: escrow.recipientPub ?? "", plaintext, plaintextUtf8 };
+  }
+
+  private async fetchEscrow(
+    roomIdHex: string,
+    docIdHex: string,
+    opts: { fetchEscrow?: (roomIdHex: string, docIdHex: string) => Promise<(DataroomDisclosure & { recipientPub?: string }) | null>; apiBaseUrl?: string },
+  ): Promise<(DataroomDisclosure & { recipientPub?: string }) | null> {
+    if (opts.fetchEscrow) return opts.fetchEscrow(roomIdHex, docIdHex);
+    const base = (opts.apiBaseUrl ?? this.cfg.apiBaseUrl ?? "").replace(/\/$/, "");
+    if (!base) throw new Error("no escrow source: pass opts.fetchEscrow or opts.apiBaseUrl, or set cfg.apiBaseUrl");
+    const res = await fetch(`${base}/dataroom/committee/escrow/${roomIdHex}/${docIdHex}`);
+    if (!res.ok) throw new Error(`escrow fetch failed: HTTP ${res.status}`);
+    const body = (await res.json()) as { escrow?: (DataroomDisclosure & { recipientPub?: string }) | null };
+    return body.escrow ?? null;
   }
 
   /**
