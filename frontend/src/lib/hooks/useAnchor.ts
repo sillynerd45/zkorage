@@ -1,27 +1,19 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
-  getDataroomInfo,
   getDataroomRoom,
   createRoom,
-  proveSeal,
-  submitDocument,
-  getProveStatus,
   getDataroomDocuments,
   getMyRooms,
   getCommitteeInfo,
   dealSealed,
   committeeAnchor,
-  type DataroomInfoResp,
   type DataroomDoc,
   type MyRoom,
   type SubmitDocResp,
-  type Bundle,
 } from "@/lib/api";
 import { useTxSigner, useWallet } from "@/lib/wallet/WalletContext";
 import {
   DEMO_DATAROOM,
-  DEMO_RECIPIENT_PUB,
-  decodeDataroomSealJournal,
   recipientPublicKeyFromSecret,
   aeadSeal,
   randomKey,
@@ -56,25 +48,21 @@ export type PickedFile = { name: string; type: string; size: number; b64: string
 // 8 MB raw is ~10.7 MB once base64-encoded, which stays under the backend's 12 MB JSON body limit.
 export const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
 
-// DR1 (the data plane): encrypt a document (fresh per-doc key K, AES-256-GCM), store the ciphertext
-// off-chain, prove the faithful seal of K to a recipient's x25519 key (bound to the content hash), and
-// anchor only a sha256(ciphertext) commitment plus the sealed-key disclosure on-chain. The recipient later
-// recovers K with their key. This happens entirely in the browser, and the key never leaves it.
+// The Data Room stores a document one way: an anonymous, policy-gated committee document (Model B). A fresh
+// per-doc key K (AES-256-GCM) encrypts the file IN THE BROWSER, K is split across the keeper committee, and
+// only a sha256(ciphertext) commitment goes on-chain. Anyone who proves room membership can open it later,
+// without revealing which member. The key and the plaintext never leave the browser in the clear.
 export function useAnchor() {
-  const [info, setInfo] = useState<DataroomInfoResp | null>(null);
-
-  // --- upload / encrypt / anchor (the slow path: real proof) ---
+  // --- store a shared document (browser dealer; no prover) ---
   // No default room: the field starts empty (placeholder-guided). The connected wallet's existing rooms are
   // offered as a picker in the Store form, so you name a new room or pick one you already own.
   const [roomLabel, setRoomLabel] = useState("");
-  const [content, setContent] = useState("Confidential term sheet. Series A, $4M at $20M pre.");
+  // The text input starts empty so its placeholder shows (like the Room field). Default store mode is "file".
+  const [content, setContent] = useState("");
   // The Store form asks for ONE input at a time: a file or pasted text. `storeMode` is the explicit choice
   // (default "file"); switching modes preserves both inputs (an accidental tap is reversible), and submit
   // sends only the active mode's input. Picking/dropping a file snaps the mode to "file".
   const [storeMode, setStoreMode] = useState<"file" | "text">("file");
-  // Access mode: "shared" = anonymous policy-gated committee doc (Model B, browser dealer); "direct" = a seal
-  // to one named recipient (Model A, explicitly NOT anonymous). Default shared (the headline).
-  const [accessMode, setAccessMode] = useState<"shared" | "direct">("shared");
   const identity = useDataRoomIdentity();
   // On a successful shared (committee) store: the room/doc ids to open it from "Open a shared document".
   const [sharedResult, setSharedResult] = useState<{ roomId: string; docId: string } | null>(null);
@@ -82,15 +70,11 @@ export function useAnchor() {
   // exactly like text. Capped so the base64 body stays under the backend's JSON limit.
   const [file, setFileState] = useState<PickedFile | null>(null);
   const [fileErr, setFileErr] = useState<string | null>(null);
-  const [recipientPub, setRecipientPub] = useState(DEMO_RECIPIENT_PUB);
   const [state, setState] = useState<ClaimState>("draft");
-  const [proveBy, setProveBy] = useState<string | null>(null);
-  const [bundle, setBundle] = useState<Bundle | null>(null);
   const [resp, setResp] = useState<SubmitDocResp | null>(null);
   const [busy, setBusy] = useState(false);
   const [step, setStep] = useState<string>("");
   const [confirmAnchor, setConfirmAnchor] = useState(false);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // --- recipient open (key-free, client-side via the SDK) ---
   const [openRoom, setOpenRoom] = useState(DEMO_DATAROOM.roomId);
@@ -117,11 +101,6 @@ export function useAnchor() {
     if (!addr) { setMyRooms([]); return; }
     setRoomsLoading(true);
     getMyRooms(addr).then((r) => setMyRooms(r.rooms)).catch(() => setMyRooms([])).finally(() => setRoomsLoading(false));
-  }, []);
-
-  useEffect(() => {
-    getDataroomInfo().then(setInfo).catch(() => {});
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, []);
 
   // "My rooms" follows the connected wallet (cleared on disconnect). Nothing seeded is auto-loaded, so a
@@ -152,48 +131,27 @@ export function useAnchor() {
   }, []);
   const clearFile = useCallback(() => { setFileState(null); setFileErr(null); }, []);
 
-  const journal = bundle?.journal ? decodeDataroomSealJournal(bundle.journal) : null;
-
-  async function onAnchor(b: Bundle, blobPointer: string, roomId: string, docId: string) {
-    setState("verifying");
-    setStep("Anchoring on Soroban (put_document)…");
-    try {
-      const r = await submitDocument(b, blobPointer, signer);
-      setResp(r);
-      setState(r.ok ? "verified" : "rejected");
-      if (r.ok) {
-        // Point the open panel + the browser at the freshly-anchored document, and refresh "my rooms" so the
-        // room you just created (and own) appears in Browse.
-        setOpenRoom(roomId); setOpenDoc(docId); setBrowseRoom(roomId); refreshDocs(roomId);
-        loadMyRooms(connected ? address : null);
-      }
-    } catch (e) {
-      setResp({ ok: false, error: String((e as Error).message ?? e), dataroomId: info?.dataroomId ?? "" });
-      setState("rejected");
-    } finally { setBusy(false); setStep(""); }
-  }
-
   // Model B browser dealer: K is generated, the document encrypted, the key split, and every share + the
   // owner-escrow copy sealed ALL IN THIS BROWSER. The relay receives only ciphertext + sealed shares, so the
   // server never sees K or the plaintext. Then the owner signs put_committee_document. No slow prover.
   async function onStoreShared() {
     if (!roomLabel.trim()) {
       setResp({ ok: false, error: "Name a room, or pick one you already own.", dataroomId: "" });
-      setState("rejected"); setBundle(null); return;
+      setState("rejected"); return;
     }
     if (!connected || !address) {
       setResp({ ok: false, error: "Connect your wallet to store a shared document.", dataroomId: "" });
-      setState("rejected"); setBundle(null); return;
+      setState("rejected"); return;
     }
     if (storeMode === "file" && !file) {
       setResp({ ok: false, error: "Choose a file to store, or switch to Text.", dataroomId: "" });
-      setState("rejected"); setBundle(null); return;
+      setState("rejected"); return;
     }
     if (storeMode === "text" && !content.trim()) {
       setResp({ ok: false, error: "Paste some text to store, or switch to File.", dataroomId: "" });
-      setState("rejected"); setBundle(null); return;
+      setState("rejected"); return;
     }
-    setBusy(true); setResp(null); setBundle(null); setSharedResult(null); setState("verifying");
+    setBusy(true); setResp(null); setSharedResult(null); setState("verifying");
     try {
       // 1) resolve the room's 32-byte id. The backend hashes a label deterministically, so `roomId` is present
       //    even before the room is on-chain (avoids a create→read propagation race). It binds the share +
@@ -274,75 +232,6 @@ export function useAnchor() {
     }
   }
 
-  async function onUpload() {
-    // Need a room to store into (the field has no default now): name a new one or pick an existing one.
-    if (!roomLabel.trim()) {
-      setResp({ ok: false, error: "Name a room, or pick one you already own.", dataroomId: "" });
-      setState("rejected"); setBundle(null);
-      return;
-    }
-    // Fail fast (and clearly) on a malformed recipient pubkey before the multi-minute proof path.
-    if (recipientPub.trim() && !isHex32(recipientPub)) {
-      setResp({ ok: false, error: "recipient x25519 pub must be 32-byte hex (64 hex chars)", dataroomId: "" });
-      setState("rejected"); setBundle(null);
-      return;
-    }
-    // Need something to store in the ACTIVE mode (the other mode's input is ignored on submit).
-    if (storeMode === "file" && !file) {
-      setResp({ ok: false, error: "Choose a file to store, or switch to Text.", dataroomId: "" });
-      setState("rejected"); setBundle(null);
-      return;
-    }
-    if (storeMode === "text" && !content.trim()) {
-      setResp({ ok: false, error: "Paste some text to store, or switch to File.", dataroomId: "" });
-      setState("rejected"); setBundle(null);
-      return;
-    }
-    if (pollRef.current) clearInterval(pollRef.current);
-    setBusy(true); setResp(null); setBundle(null); setProveBy(null); setState("proving");
-    try {
-      // 1. ensure the room exists (create it if not; it is owned and paid for by the demo server key).
-      setStep("Making sure the room exists…");
-      const room = await getDataroomRoom(roomLabel).catch(() => null);
-      if (!room?.room) {
-        // With a wallet connected, the room is created ON-CHAIN owned by the wallet (it signs create_room),
-        // so it shows up under "your documents". No wallet → the server relay owns it.
-        const cr = await createRoom(roomLabel, signer).catch((e) => ({ ok: false, error: String((e as Error)?.message ?? e) }));
-        if (signer && !cr.ok) throw new Error(cr.error || "could not create the room (the wallet signature is needed to own it)");
-      }
-      // 2. encrypt (fresh K, AES-256-GCM), upload the ciphertext, and enqueue the seal proof.
-      setStep("Encrypting and uploading the ciphertext, then queuing the seal proof…");
-      const pr = await proveSeal(
-        roomLabel,
-        storeMode === "file" && file ? { contentB64: file.b64 } : { content },
-        recipientPub,
-      );
-      if (!pr.jobId) throw new Error(pr.error || "prove-seal failed");
-      const { jobId, roomId, docId, blobPointer } = pr;
-      setStep("Proving (STARK then Groth16) on the self-hosted prover…");
-      // 3. poll for the proof, then anchor.
-      pollRef.current = setInterval(async () => {
-        try {
-          const s = await getProveStatus(jobId);
-          setProveBy(s.by ?? null);
-          if (s.status === "done" && s.bundle) {
-            if (pollRef.current) clearInterval(pollRef.current);
-            setBundle(s.bundle);
-            setState("proved");
-            onAnchor(s.bundle, blobPointer, roomId, docId);
-          } else if (s.status === "error") {
-            if (pollRef.current) clearInterval(pollRef.current);
-            setResp({ ok: false, error: s.error || "proving failed", dataroomId: "" });
-            setState("failed"); setBusy(false); setStep("");
-          }
-        } catch { /* keep polling */ }
-      }, 4000);
-    } catch (e) {
-      setResp({ ok: false, error: String((e as Error).message ?? e), dataroomId: "" });
-      setState("failed"); setBusy(false); setStep("");
-    }
-  }
-
   async function onOpen() {
     setOpenErr(null); setOpened(null);
     // The open panel needs raw 32-byte hex room/doc ids (not labels), so guard up front. That way a typo
@@ -367,7 +256,6 @@ export function useAnchor() {
   })();
 
   return {
-    info,
     roomLabel,
     setRoomLabel,
     content,
@@ -378,11 +266,7 @@ export function useAnchor() {
     pickFile,
     clearFile,
     fileErr,
-    recipientPub,
-    setRecipientPub,
     state,
-    proveBy,
-    bundle,
     resp,
     busy,
     step,
@@ -406,12 +290,8 @@ export function useAnchor() {
     loadMyRooms,
     connected,
     address,
-    journal,
-    onUpload,
     onOpen,
     sealedToYou,
-    accessMode,
-    setAccessMode,
     onStoreShared,
     sharedResult,
     identityDrift: identity.drift,
