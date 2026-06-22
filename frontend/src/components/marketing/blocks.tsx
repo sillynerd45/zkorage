@@ -1,6 +1,4 @@
 import { type ReactNode } from "react";
-import { Link } from "react-router-dom";
-import { ArrowRight, type LucideIcon } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { VerdictMark } from "@/components/StatusBadge";
 import { cn } from "@/lib/utils";
@@ -101,46 +99,5 @@ export function Verdict({ ok, children }: { ok: boolean; children: ReactNode }) 
       </span>
       <span>{children}</span>
     </div>
-  );
-}
-
-export function FeatureCard({
-  to,
-  icon: Icon,
-  title,
-  blurb,
-  proves,
-  star,
-}: {
-  to: string;
-  icon: LucideIcon;
-  title: string;
-  blurb: string;
-  proves?: string;
-  star?: boolean;
-}) {
-  return (
-    <Link to={to} className="group block focus-visible:outline-none">
-      <Card className="h-full p-5 transition-all duration-200 hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-md group-focus-visible:border-brand group-focus-visible:ring-2 group-focus-visible:ring-ring">
-        <div className="flex items-start gap-3.5">
-          <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-brand/10 text-brand">
-            <Icon className="size-5" />
-          </span>
-          <div className="min-w-0">
-            <div className="flex items-center gap-1.5">
-              <h3 className="font-semibold tracking-tight">{title}</h3>
-              {star && <span aria-hidden="true" className="text-sm">⭐</span>}
-              <ArrowRight className="size-4 -translate-x-1 text-muted-foreground opacity-0 transition-all group-hover:translate-x-0 group-hover:text-brand group-hover:opacity-100" />
-            </div>
-            <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{blurb}</p>
-            {proves && (
-              <p className="mt-2.5 inline-flex rounded-md bg-muted px-2 py-0.5 font-mono text-[11px] text-muted-foreground">
-                {proves}
-              </p>
-            )}
-          </div>
-        </div>
-      </Card>
-    </Link>
   );
 }
