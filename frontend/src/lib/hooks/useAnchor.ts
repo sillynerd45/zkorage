@@ -48,6 +48,12 @@ export type PickedFile = { name: string; type: string; size: number; b64: string
 // 8 MB raw is ~10.7 MB once base64-encoded, which stays under the backend's 12 MB JSON body limit.
 export const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
 
+// The store flow's phase, for the stepper. "room"/"key"/"anchor" each prompt the wallet (a Soroban tx for the
+// room + the anchor, a SEP-53 message-sign for the room key); "encrypt" runs entirely in the browser. These
+// are separate prompts by design: two Soroban contract calls can't share one transaction, the message-sign is
+// not a transaction, and the wallet must sign so the room/doc stay owned by it (not the server).
+export type StoreStage = "idle" | "room" | "key" | "encrypt" | "anchor" | "done";
+
 // The Data Room stores a document one way: an anonymous, policy-gated committee document (Model B). A fresh
 // per-doc key K (AES-256-GCM) encrypts the file IN THE BROWSER, K is split across the keeper committee, and
 // only a sha256(ciphertext) commitment goes on-chain. Anyone who proves room membership can open it later,
@@ -75,6 +81,8 @@ export function useAnchor() {
   const [busy, setBusy] = useState(false);
   const [step, setStep] = useState<string>("");
   const [confirmAnchor, setConfirmAnchor] = useState(false);
+  // The store flow's current phase, surfaced by the stepper so the owner knows what each wallet prompt is for.
+  const [storeStage, setStoreStage] = useState<StoreStage>("idle");
 
   // --- recipient open (key-free, client-side via the SDK) ---
   const [openRoom, setOpenRoom] = useState(DEMO_DATAROOM.roomId);
@@ -91,8 +99,14 @@ export function useAnchor() {
   const [docs, setDocs] = useState<DataroomDoc[]>([]);
   const [myRooms, setMyRooms] = useState<MyRoom[]>([]);
   const [roomsLoading, setRoomsLoading] = useState(false);
+  // Owner re-open of a committee doc via the escrow copy (no membership proof, no anonymity floor): the
+  // decrypted result, the in-flight doc id, and any error. Cleared whenever the browsed room changes.
+  const [ownerOpened, setOwnerOpened] = useState<{ docId: string; result: OpenedDocument } | null>(null);
+  const [ownerOpenErr, setOwnerOpenErr] = useState<string | null>(null);
+  const [ownerOpeningId, setOwnerOpeningId] = useState<string | null>(null);
 
   const refreshDocs = useCallback((room: string) => {
+    setOwnerOpened(null); setOwnerOpenErr(null);
     if (!/^[0-9a-fA-F]{64}$/.test(room.trim())) { setDocs([]); return; }
     getDataroomDocuments(room.trim(), 0, 25).then((r) => setDocs(r.documents)).catch(() => setDocs([]));
   }, []);
@@ -151,7 +165,7 @@ export function useAnchor() {
       setResp({ ok: false, error: "Paste some text to store, or switch to File.", dataroomId: "" });
       setState("rejected"); return;
     }
-    setBusy(true); setResp(null); setSharedResult(null); setState("verifying");
+    setBusy(true); setResp(null); setSharedResult(null); setState("verifying"); setStoreStage("room");
     try {
       // 1) resolve the room's 32-byte id. The backend hashes a label deterministically, so `roomId` is present
       //    even before the room is on-chain (avoids a create→read propagation race). It binds the share +
@@ -178,11 +192,13 @@ export function useAnchor() {
       }
 
       // 4) derive YOUR room identity — the owner-escrow copy is sealed to it so you can reopen on any device.
+      setStoreStage("key");
       setStep("Deriving your room key…");
       const ident = await identity.derive(roomIdHex);
       if (!ident) throw new Error(identity.error || "could not derive your room identity");
 
       // 5) THE DEALER, in your browser: generate K, encrypt the file, split + seal — none of it leaves as plaintext.
+      setStoreStage("encrypt");
       setStep("Encrypting and splitting the key in your browser…");
       const k = randomKey();
       const plaintext = storeMode === "file" && file ? b64ToBytes(file.b64) : new TextEncoder().encode(content);
@@ -212,6 +228,7 @@ export function useAnchor() {
       if (!dealt.ok || !dealt.blobPointer || !dealt.contentHash) throw new Error(dealt.error || "share distribution failed");
 
       // 7) anchor on-chain — your wallet signs put_committee_document.
+      setStoreStage("anchor");
       setStep("Anchoring on Soroban (your wallet signs)…");
       const anchored = await committeeAnchor(
         { roomId: roomIdHex, docId: docIdHex, contentHash: dealt.contentHash, kCommitment, blobPointer: dealt.blobPointer },
@@ -221,14 +238,44 @@ export function useAnchor() {
 
       setResp({ ok: true, txHash: anchored.txHash, blobPointer: dealt.blobPointer, dataroomId: info.dataroomId ?? "" });
       setSharedResult({ roomId: roomIdHex, docId: docIdHex });
-      setState("verified");
+      setState("verified"); setStoreStage("done");
       loadMyRooms(connected ? address : null);
     } catch (e) {
       setResp({ ok: false, error: String((e as Error).message ?? e), dataroomId: "" });
-      setState("failed");
+      setState("failed"); setStoreStage("idle");
     } finally {
       setBusy(false);
       setStep("");
+    }
+  }
+
+  // After a successful store, clear the document inputs + the verdict so the owner can store another doc in
+  // the same room without the previous result lingering. The room stays selected (you usually file several
+  // docs into one room); the wallet-derived room key is cached, so a follow-up store prompts once (anchor).
+  function resetStore() {
+    setFileState(null); setFileErr(null); setContent("");
+    setResp(null); setSharedResult(null); setStep("");
+    setState("draft"); setStoreStage("idle");
+  }
+
+  // Reopen a committee doc you OWN via the escrow copy (sealed to your wallet-derived room key) — no keepers,
+  // no membership proof, no anonymity floor. Derives the room key once (cached for the session), then opens
+  // client-side. faithful=false means this wallet did not store the doc (the escrow is not sealed to its key).
+  async function openOwnerDoc(roomIdHex: string, docIdHex: string) {
+    setOwnerOpenErr(null); setOwnerOpened(null); setOwnerOpeningId(docIdHex);
+    try {
+      const ident = await identity.derive(roomIdHex);
+      if (!ident) throw new Error(identity.error || "could not derive your room key from the wallet");
+      const result = await sdk.openCommitteeDocumentAsOwner(roomIdHex, docIdHex, ident.recipientSecret);
+      if (!result.found) throw new Error("document not found on the public record");
+      if (!result.faithful) {
+        throw new Error("this document is not sealed to your wallet's room key, so you cannot reopen it here (it was stored by a different wallet, or your wallet's signing format changed)");
+      }
+      setOwnerOpened({ docId: docIdHex, result });
+    } catch (e) {
+      setOwnerOpenErr(String((e as Error).message ?? e));
+    } finally {
+      setOwnerOpeningId(null);
     }
   }
 
@@ -270,6 +317,8 @@ export function useAnchor() {
     resp,
     busy,
     step,
+    storeStage,
+    resetStore,
     confirmAnchor,
     setConfirmAnchor,
     openRoom,
@@ -294,6 +343,10 @@ export function useAnchor() {
     sealedToYou,
     onStoreShared,
     sharedResult,
+    ownerOpened,
+    ownerOpenErr,
+    ownerOpeningId,
+    openOwnerDoc,
     identityDrift: identity.drift,
   };
 }

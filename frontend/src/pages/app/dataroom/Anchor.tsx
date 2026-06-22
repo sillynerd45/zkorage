@@ -7,13 +7,14 @@ import {
   KeyRound,
   Lock,
   LockKeyholeOpen,
+  Plus,
   Search,
   ShieldCheck,
   Upload,
   Users,
   X,
 } from "lucide-react";
-import { useAnchor } from "@/lib/hooks/useAnchor";
+import { useAnchor, type StoreStage } from "@/lib/hooks/useAnchor";
 import { short, explorer } from "@/lib/format";
 import { humanError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
@@ -41,6 +42,60 @@ const tabFromHash = (h: string): DocTab => {
   return id === "open" || id === "browse" ? id : "store";
 };
 
+// The store flow's four phases. Three of them prompt the wallet (a Soroban tx for the room + the anchor, a
+// SEP-53 message-sign for the room key); "Encrypt & split" runs entirely in the browser. The stepper makes
+// each wallet prompt legible instead of three unexplained pop-ups. (For a room you already own, the "Create
+// room" step is skipped on-chain and the key prompt is cached, so a follow-up store prompts once: the anchor.)
+const STORE_STEPS: { key: Exclude<StoreStage, "idle" | "done">; label: string; signs: boolean }[] = [
+  { key: "room", label: "Create or open the room", signs: true },
+  { key: "key", label: "Derive your room key", signs: true },
+  { key: "encrypt", label: "Encrypt & split in your browser", signs: false },
+  { key: "anchor", label: "Anchor the document on-chain", signs: true },
+];
+
+function StoreStepper({ stage }: { stage: StoreStage }) {
+  if (stage === "idle") return null;
+  const order = STORE_STEPS.map((s) => s.key) as StoreStage[];
+  const activeIdx = stage === "done" ? STORE_STEPS.length : order.indexOf(stage);
+  return (
+    <ol className="mt-4 space-y-2 rounded-xl border bg-muted/30 p-3" data-testid="store-stepper" aria-label="Storing the document">
+      {STORE_STEPS.map((s, i) => {
+        const status = i < activeIdx ? "done" : i === activeIdx ? "active" : "pending";
+        return (
+          <li
+            key={s.key}
+            data-testid={`store-step-${s.key}`}
+            data-status={status}
+            className="flex items-center gap-2.5 text-[13px]"
+          >
+            <span
+              className={cn(
+                "grid size-5 shrink-0 place-items-center rounded-full border text-[11px] font-medium",
+                status === "done"
+                  ? "border-success/50 bg-success/10 text-success"
+                  : status === "active"
+                    ? "border-brand/50 bg-brand/10 text-brand"
+                    : "border-input text-muted-foreground",
+              )}
+            >
+              {status === "done" ? "✓" : i + 1}
+            </span>
+            <span className={cn(status === "pending" ? "text-muted-foreground" : "text-foreground", status === "active" && "font-medium")}>
+              {s.label}
+            </span>
+            {s.signs && (
+              <span className="rounded-full border px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                wallet
+              </span>
+            )}
+            {status === "active" && <span className="size-1.5 animate-pulse-dot rounded-full bg-brand" aria-hidden="true" />}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 export default function Anchor() {
   const a = useAnchor();
   const { hash } = useLocation();
@@ -52,13 +107,20 @@ export default function Anchor() {
     setTab(tabFromHash(hash));
   }, [hash]);
 
-  // Browse → Open hand-off: prefill the room/doc and switch to the Open sub-tab, where the reader supplies
-  // the private key. Browse is the owner view and does not know the recipient's key, so it cannot decrypt
-  // inline; this keeps every crypto step exactly where it is today.
+  // Browse → Open hand-off for a legacy DR1 (single-recipient) doc: prefill the room/doc and switch to the
+  // Open sub-tab, where the reader supplies the private key (Browse can't know the recipient's key).
   const openFromBrowse = (docId: string) => {
     a.setOpenRoom(a.browseRoom);
     a.setOpenDoc(docId);
     setTab("open");
+  };
+
+  // Open a doc from the Browse list. A committee doc (the kind the Store form makes) the owner reopens INLINE
+  // via the escrow copy sealed to their wallet's room key (no keepers, no membership, no anonymity floor). A
+  // legacy DR1 seal still hands off to the Open sub-tab (it needs a recipient private key).
+  const openDocFromBrowse = (d: { kind?: string; doc_id: string }) => {
+    if (d.kind === "committee") a.openOwnerDoc(a.browseRoom, d.doc_id);
+    else openFromBrowse(d.doc_id);
   };
 
   const q = docQuery.trim().toLowerCase();
@@ -288,11 +350,21 @@ export default function Anchor() {
               </Callout>
             </div>
 
+            {/* The store needs THREE wallet prompts on a new room (create-room tx, a SEP-53 key sign, the
+                anchor tx). The stepper labels each so they aren't unexplained pop-ups. After a successful
+                store the button resets the inputs so you can file another document without the old one lingering. */}
             <div className="mt-4">
-              <Button onClick={() => a.setConfirmAnchor(true)} disabled={a.busy} data-testid="upload">
-                <Lock aria-hidden="true" />
-                {a.busy ? "Working…" : "Store shared document"}
-              </Button>
+              {a.resp?.ok ? (
+                <Button variant="outline" onClick={a.resetStore} data-testid="store-another">
+                  <Plus aria-hidden="true" />
+                  Store another document
+                </Button>
+              ) : (
+                <Button onClick={() => a.setConfirmAnchor(true)} disabled={a.busy} data-testid="upload">
+                  <Lock aria-hidden="true" />
+                  {a.busy ? "Working…" : "Store shared document"}
+                </Button>
+              )}
             </div>
 
             <ConfirmModal
@@ -309,10 +381,13 @@ export default function Anchor() {
               <p>
                 The file is encrypted and its key split across the keepers in this browser. Only ciphertext
                 and sealed shares are sent; the server never sees the key or the contents. Your wallet then
-                signs the on-chain record. Only a tamper-evident fingerprint is posted.
+                signs the on-chain record. Only a tamper-evident fingerprint is posted. Storing a document in a
+                new room asks your wallet three times: to create the room, derive your room key, and anchor the
+                document. The stepper below shows each one.
               </p>
             </ConfirmModal>
 
+            {a.busy && <StoreStepper stage={a.storeStage} />}
             {a.busy && a.step && (
               <p className="mt-2 text-xs text-muted-foreground" data-testid="upload-step">
                 {a.step}
@@ -573,40 +648,71 @@ export default function Anchor() {
                     <p className="text-sm text-muted-foreground">No documents match your search.</p>
                   ) : (
                     <div className="divide-y divide-border/70 rounded-xl border" data-testid="dataroom-docs">
-                      {shownDocs.map((d) => (
-                        <div
-                          key={d.index}
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => openFromBrowse(d.doc_id)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" || e.key === " ") {
-                              e.preventDefault();
-                              openFromBrowse(d.doc_id);
-                            }
-                          }}
-                          data-testid="doc-row"
-                          className="group/row flex cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors hover:bg-accent/40 focus-visible:bg-accent/40 focus-visible:outline-none"
-                        >
-                          <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-brand/10 text-brand">
-                            <FileText className="size-4" aria-hidden="true" />
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate font-mono text-[13px]" title={d.doc_id}>
-                              {short(d.doc_id, 10)}
+                      {shownDocs.map((d) => {
+                        const opening = a.ownerOpeningId === d.doc_id;
+                        return (
+                          <div
+                            key={`${d.kind ?? "dr1"}-${d.index}`}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => openDocFromBrowse(d)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                openDocFromBrowse(d);
+                              }
+                            }}
+                            data-testid="doc-row"
+                            data-kind={d.kind ?? "dr1"}
+                            aria-busy={opening}
+                            className="group/row flex cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors hover:bg-accent/40 focus-visible:bg-accent/40 focus-visible:outline-none"
+                          >
+                            <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-brand/10 text-brand">
+                              <FileText className="size-4" aria-hidden="true" />
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate font-mono text-[13px]" title={d.doc_id}>
+                                {short(d.doc_id, 10)}
+                              </div>
+                              <div className="truncate text-xs text-muted-foreground">
+                                {d.kind === "committee"
+                                  ? `Recorded at ledger ${d.ledger} · anonymous (keeper-released)`
+                                  : `Recorded at ledger ${d.ledger} · sealed to x25519 ${short(d.recipient_pub ?? "", 6)}`}
+                              </div>
                             </div>
-                            <div className="truncate text-xs text-muted-foreground">
-                              Recorded at ledger {d.ledger} · sealed to x25519 {short(d.recipient_pub, 6)}
-                            </div>
+                            <span className="inline-flex shrink-0 items-center gap-1 rounded-full border bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground">
+                              <Lock className="size-3" aria-hidden="true" /> Encrypted
+                            </span>
+                            <span
+                              className={cn(
+                                "inline-flex shrink-0 items-center gap-1 rounded-md border border-input px-2.5 py-1 text-xs font-medium text-muted-foreground transition-opacity",
+                                opening ? "opacity-100" : "opacity-0 group-hover/row:opacity-100 group-focus-visible/row:opacity-100",
+                              )}
+                            >
+                              <LockKeyholeOpen className="size-3.5" aria-hidden="true" /> {opening ? "Opening…" : "Open"}
+                            </span>
                           </div>
-                          <span className="inline-flex shrink-0 items-center gap-1 rounded-full border bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground">
-                            <Lock className="size-3" aria-hidden="true" /> Encrypted
-                          </span>
-                          <span className="inline-flex shrink-0 items-center gap-1 rounded-md border border-input px-2.5 py-1 text-xs font-medium text-muted-foreground opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-visible/row:opacity-100">
-                            <LockKeyholeOpen className="size-3.5" aria-hidden="true" /> Open
-                          </span>
-                        </div>
-                      ))}
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Owner-reopen result: a committee doc you stored, decrypted in your browser with your
+                      wallet-derived room key (the escrow copy). No keepers, no membership proof. */}
+                  {a.ownerOpenErr && (
+                    <p className="mt-2 text-sm text-destructive" data-testid="owner-open-error">
+                      {a.ownerOpenErr}
+                    </p>
+                  )}
+                  {a.ownerOpened && (
+                    <div className="mt-2 rounded-xl border bg-muted/20 p-4" data-testid="owner-open-result">
+                      <Verdict ok>Opened with your wallet's room key. The document never left your browser in the clear.</Verdict>
+                      <div className="mt-3" data-testid="owner-open-plaintext">
+                        <DecryptedFile
+                          plaintext={a.ownerOpened.result.plaintext}
+                          plaintextUtf8={a.ownerOpened.result.plaintextUtf8}
+                        />
+                      </div>
                     </div>
                   )}
                 </div>
