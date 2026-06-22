@@ -18,14 +18,15 @@ self-tested on Stellar testnet. The Data Room has since been redesigned into one
 **Model B**): a policy-gated committee document you open by proving anonymous membership, with keys derived
 from your wallet so you open on any device. It adds a public discovery directory and, in its load-bearing
 slice, a timing defense that batches and shuffles the on-chain access records, so the room sees that an
-approved member accessed in a window, not which member or exactly when. Frontend is **v0.12.15**. A new
+approved member accessed in a window, not which member or exactly when. Frontend is **v0.12.16**. A new
 **Bonded Proofs** pillar (a Soroban-native time-locked escrow plus two
 live ZK products: a **solvency proof that dies when you pull your collateral** and an **anonymous bonded
 tier**) is also live; see below. The whole stack
 runs on **RISC Zero 5.0.0-rc.1** (GPU proving on a self-hosted box, with a CPU fallback). The frontend is a
 single unified app — a **public marketing site** (`/` — landing, documentation, verify, explorer) plus a
-**sidebar app** (`/app/*` — the five proofs, the Data Room, and Bonded Proofs) in the "Precision Ink"
-design system.
+**sidebar app** (`/app/*`) in the "Precision Ink" design system. The app nav now focuses on the **Data Room**
+and **Bonded Proofs**, with a read-only **Contracts** reference page; the five standalone proofs stay reachable
+by URL.
 
 **Live demo:** the app runs at **https://zkorage.wazowsky.id** (API at `https://apizk.wazowsky.id`), on
 Stellar testnet. Connect **Freighter** (top right) to sign and submit your own proof transactions and pay
