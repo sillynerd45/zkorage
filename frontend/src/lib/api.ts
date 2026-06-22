@@ -536,14 +536,20 @@ export interface DataroomDoc {
   index: number;
   room_id: string;
   doc_id: string;
-  recipient_pub: string;
   content_hash: string;
-  eph_pub: string;
-  ct: string;
-  tag: string;
   blob_pointer: string;
   ledger: number;
   timestamp: string;
+  // "dr1" = a single-recipient ECIES seal (legacy); "committee" = an anonymous Model B doc (keeper-released,
+  // or owner-reopened via the escrow copy). The current Store form only makes committee docs.
+  kind?: "dr1" | "committee";
+  // DR1-only seal fields (absent on committee docs).
+  recipient_pub?: string;
+  eph_pub?: string;
+  ct?: string;
+  tag?: string;
+  // Committee-only commitment (sha256(K)).
+  k_commitment?: string;
 }
 
 export interface CreateRoomResp {
@@ -598,7 +604,9 @@ export interface MyRoom {
   roomId: string;
   label: string | null;
   owner: string;
-  docCount: number;
+  docCount: number; // total = DR1 seals + committee docs
+  dr1DocCount?: number;
+  committeeDocCount?: number;
   ledger: number | null;
   // M5: the owner's own discovery settings (surfaced only on the owner's own rooms; not a public leak).
   visibility?: RoomVisibility | null;

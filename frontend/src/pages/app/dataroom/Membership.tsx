@@ -181,6 +181,16 @@ export default function Membership() {
                   <Users className="size-4" aria-hidden="true" />
                   {e.memberCount} approved member{e.memberCount === 1 ? "" : "s"}
                 </div>
+                {/* The exact room id, to copy and share with people you want to invite (they paste it into
+                    "Request to join" above, or you send them a Discover link). */}
+                <div
+                  className="flex flex-wrap items-center gap-2 text-[13px] text-muted-foreground"
+                  data-testid="enroll-room-id"
+                >
+                  <span>Room id</span>
+                  <code className="font-mono text-xs text-foreground" title={e.ownerRoom}>{short(e.ownerRoom, 10)}</code>
+                  <CopyIconButton value={e.ownerRoom} label="room id" />
+                </div>
                 {e.ownerBusy ? (
                   <p className="text-sm text-muted-foreground">Loading requests…</p>
                 ) : e.pending.length === 0 ? (

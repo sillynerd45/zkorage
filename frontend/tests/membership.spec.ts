@@ -55,6 +55,10 @@ test("membership: member derives + requests; owner approves (light)", async ({ p
   // owner: pick a room I own -> see the pending request -> approve -> it clears.
   await expect(page.getByTestId("enroll-my-rooms")).toBeVisible();
   await page.getByTestId("enroll-owner-room").first().click();
+  // the selected room exposes its exact id with a copy button (to share with people to invite).
+  const roomIdRow = page.getByTestId("enroll-room-id");
+  await expect(roomIdRow).toBeVisible();
+  await expect(roomIdRow.getByRole("button", { name: /copy room id/i })).toBeVisible();
   await expect(page.getByTestId("enroll-pending-row")).toHaveCount(1);
   await page.getByTestId("enroll-approve").click();
   await expect(page.getByTestId("enroll-no-pending")).toBeVisible({ timeout: 15_000 });
