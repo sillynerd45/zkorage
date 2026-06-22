@@ -1694,14 +1694,24 @@ app.get("/dataroom/rooms", async (req, res) => {
           const { value: room } = await readContract(DATAROOM_ID, "get_room", [scBytes(c.roomId)]);
           const r = room ? (jsonSafe(room) as { owner?: string }) : null;
           if (!r || r.owner !== owner) return null; // chain is authoritative; drop stale/unsubmitted entries
-          const { value: cnt } = await readContract(DATAROOM_ID, "get_doc_count", [scBytes(c.roomId)]);
+          // Count BOTH document kinds: DR1 single-recipient seals (`Doc`) and committee documents
+          // (`CommitteeDoc`, the anonymous Model B kind the Store form makes now). They live in separate
+          // on-chain keyspaces, so a room that only holds committee docs would otherwise read as "0 docs".
+          const [{ value: cnt }, { value: ccnt }] = await Promise.all([
+            readContract(DATAROOM_ID, "get_doc_count", [scBytes(c.roomId)]),
+            readContract(DATAROOM_ID, "get_committee_doc_count", [scBytes(c.roomId)]),
+          ]);
+          const dr1DocCount = Number(cnt ?? 0);
+          const committeeDocCount = Number(ccnt ?? 0);
           // M5: include the owner's OWN discovery settings (their own rooms — not a public leak) so the
           // visibility control can show + prefill the current state. Absent visibility reads as "private".
           return {
             roomId: c.roomId,
             label: c.label ?? null,
             owner,
-            docCount: Number(cnt ?? 0),
+            docCount: dr1DocCount + committeeDocCount,
+            dr1DocCount,
+            committeeDocCount,
             ledger: (r as { ledger?: number }).ledger ?? null,
             visibility: c.visibility ?? "private",
             name: c.name ?? null,
@@ -1857,15 +1867,32 @@ app.get("/dataroom/documents/:roomId", async (req, res) => {
   const start = Math.max(0, Number(req.query.start ?? 0) | 0);
   const limit = Math.min(50, Math.max(1, Number(req.query.limit ?? 50) | 0));
   try {
-    const { value: countRaw } = await readContract(DATAROOM_ID, "get_doc_count", [scBytes(roomIdHex)]);
+    // Both keyspaces: DR1 single-recipient seals (`Doc`) and committee docs (`CommitteeDoc`, the anonymous
+    // Model B kind the Store form makes now). Each item is tagged with `kind` so the UI knows which open
+    // path applies (a DR1 doc opens with a recipient key; a committee doc opens via the keepers or, for the
+    // owner, the escrow copy). DR1 is paginated as before; committee docs are small in the demo, so we fetch
+    // the whole committee log (capped) rather than carry a second cursor.
+    const [{ value: countRaw }, { value: ccountRaw }] = await Promise.all([
+      readContract(DATAROOM_ID, "get_doc_count", [scBytes(roomIdHex)]),
+      readContract(DATAROOM_ID, "get_committee_doc_count", [scBytes(roomIdHex)]),
+    ]);
     const count = Number(countRaw ?? 0);
+    const committeeCount = Number(ccountRaw ?? 0);
     const end = Math.min(count, start + limit);
-    const idxs: number[] = [];
-    for (let i = start; i < end; i++) idxs.push(i);
-    // Fetch the page's documents in parallel (the contract has no batch read; one simulate per index).
-    const rows = await Promise.all(idxs.map((i) => readContract(DATAROOM_ID, "get_doc_by_index", [scBytes(roomIdHex), scU32(i)])));
-    const docs = rows.map((r) => r.value).filter(Boolean).map((doc) => dataroomDocView(doc));
-    res.json({ roomId: roomIdHex, count, start, limit, documents: docs, dataroomId: DATAROOM_ID });
+    const dr1Idxs: number[] = [];
+    for (let i = start; i < end; i++) dr1Idxs.push(i);
+    const ccIdxs: number[] = [];
+    for (let i = 0; i < Math.min(committeeCount, 50); i++) ccIdxs.push(i);
+    // Fetch both kinds in parallel (the contract has no batch read; one simulate per index).
+    const [dr1Rows, ccRows] = await Promise.all([
+      Promise.all(dr1Idxs.map((i) => readContract(DATAROOM_ID, "get_doc_by_index", [scBytes(roomIdHex), scU32(i)]))),
+      Promise.all(ccIdxs.map((i) => readContract(DATAROOM_ID, "get_committee_doc_by_index", [scBytes(roomIdHex), scU32(i)]))),
+    ]);
+    const dr1Docs = dr1Rows.map((r) => r.value).filter(Boolean).map((doc) => ({ kind: "dr1", ...(dataroomDocView(doc) as object) }));
+    const committeeDocs = ccRows.map((r) => r.value).filter(Boolean).map((doc) => ({ kind: "committee", ...(dataroomDocView(doc) as object) }));
+    // Committee docs first (the kind the current UI produces), then any legacy DR1 docs.
+    const documents = [...committeeDocs, ...dr1Docs];
+    res.json({ roomId: roomIdHex, count: count + committeeCount, dr1Count: count, committeeCount, start, limit, documents, dataroomId: DATAROOM_ID });
   } catch (e) {
     res.status(500).json({ error: err(e) });
   }
