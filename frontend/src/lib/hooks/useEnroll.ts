@@ -6,6 +6,7 @@ import {
   getEnrollStatus,
   getEnrollRequests,
   enrollApprove,
+  enrollApproveBatch,
   enrollReject,
   getMyRooms,
   setRoomVisibility,
@@ -141,6 +142,7 @@ export function useEnroll() {
   const [ownerBusy, setOwnerBusy] = useState(false);
   const [ownerErr, setOwnerErr] = useState<string | null>(null);
   const [acting, setActing] = useState<string | null>(null);
+  const [approvingAll, setApprovingAll] = useState(false);
 
   useEffect(() => {
     if (!connected || !address) {
@@ -268,6 +270,27 @@ export function useEnroll() {
     [ownerRoom, signer, loadPending],
   );
 
+  // Approve EVERY pending request for the selected room in one batch (one wallet signature, one root re-pin).
+  // The backend appends the new commitments in randomized order (M7 timing defense) and pins the root once.
+  const approveAll = useCallback(async () => {
+    if (!ownerRoom) return;
+    setApprovingAll(true);
+    setOwnerErr(null);
+    let failure: string | null = null;
+    try {
+      const r = await enrollApproveBatch(ownerRoom.trim(), signer);
+      if (!r.ok) failure = r.error ?? "Approve all failed.";
+    } catch (e) {
+      failure = String((e as Error).message ?? e);
+    } finally {
+      // Refresh regardless: a partial batch may have admitted some members on-chain, so never leave the full
+      // list shown as still-pending. loadPending clears ownerErr, so restore the batch error after it.
+      await loadPending(ownerRoom.trim());
+      if (failure) setOwnerErr(failure);
+      setApprovingAll(false);
+    }
+  }, [ownerRoom, signer, loadPending]);
+
   const reject = useCallback(
     async (c: string) => {
       setActing(c);
@@ -313,7 +336,9 @@ export function useEnroll() {
     ownerBusy,
     ownerErr,
     acting,
+    approvingAll,
     approve,
+    approveAll,
     reject,
     // owner: visibility
     vis,

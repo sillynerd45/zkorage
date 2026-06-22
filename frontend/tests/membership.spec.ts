@@ -125,6 +125,36 @@ test("membership: the request button reflects state and resets when the room id 
   await expect(page.getByTestId("enroll-state")).toHaveCount(0);
 });
 
+test("membership: Approve all batches every pending request in one action", async ({ page }) => {
+  const j = (b: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(b) });
+  let batched = false;
+  let batchCalls = 0;
+  await page.addInitScript(mock(ADDR));
+  await page.route("**/dataroom/committee/info", (r) => r.fulfill(j({ online: 3, n: 3, threshold: 2 })));
+  await page.route("**/dataroom/rooms?owner=**", (r) =>
+    r.fulfill(j({ owner: ADDR, count: 1, rooms: [{ roomId: OWNER_ROOM, label: "Acme board", owner: ADDR, docCount: 0, ledger: 1, visibility: "private", name: null, description: null }], dataroomId: "" })));
+  await page.route("**/dataroom/enroll/requests/**", (r) =>
+    r.fulfill(j({
+      roomId: OWNER_ROOM,
+      pending: batched ? [] : [{ commitment: "c".repeat(64), label: "Alice", ts: 1 }, { commitment: "d".repeat(64), label: "Bob", ts: 2 }],
+      memberCount: batched ? 2 : 0,
+    })));
+  await page.route("**/dataroom/enroll/approve-batch", (r) => { batched = true; batchCalls++; return r.fulfill(j({ ok: true, xdr: "AAAAtest" })); });
+  await page.route("**/tx/submit", (r) => r.fulfill(j({ ok: true, txHash: "deadbeef" })));
+
+  await page.goto("/app/dataroom/membership");
+  await page.getByTestId("member-subtab-approve").click();
+  await page.getByTestId("enroll-owner-room").first().click();
+  await expect(page.getByTestId("enroll-pending-row")).toHaveCount(2);
+
+  // a single "Approve all (N)" button clears every pending request in one batch (one wallet signature).
+  const allBtn = page.getByTestId("enroll-approve-all");
+  await expect(allBtn).toContainText("Approve all (2)");
+  await allBtn.click();
+  await expect(page.getByTestId("enroll-no-pending")).toBeVisible({ timeout: 15_000 });
+  expect(batchCalls).toBe(1);
+});
+
 test("membership: an approved request offers Open documents; a pending one has no open button", async ({ page }) => {
   // Seed the local request history: JOIN_ROOM approved, OWNER_ROOM pending (this browser, per wallet).
   await page.addInitScript(mock(ADDR));

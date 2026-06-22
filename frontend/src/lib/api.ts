@@ -668,6 +668,14 @@ export const enrollApprove = (
     ? writeViaWallet("/dataroom/enroll/approve", { roomId, commitment }, signer)
     : post<WalletWriteResult>("/dataroom/enroll/approve", { roomId, commitment });
 
+/** Owner approves ALL currently-pending members in ONE root re-pin (the M7 batch append: new leaves added in
+ *  randomized order, the root pinned once). Omitting `commitments` approves every pending request, so the
+ *  owner signs a single tx for the whole batch instead of one per member. */
+export const enrollApproveBatch = (roomId: string, signer?: TxSigner): Promise<WalletWriteResult> =>
+  signer
+    ? writeViaWallet("/dataroom/enroll/approve-batch", { roomId }, signer)
+    : post<WalletWriteResult>("/dataroom/enroll/approve-batch", { roomId });
+
 // ── M5: discovery tiers + public directory ───────────────────────────────────────────────────────
 // Visibility is an off-chain, NON-security discovery flag. The directory shows only rooms the owner opted
 // into ("listed"), with COARSE member buckets (never exact counts) and no access feed.
