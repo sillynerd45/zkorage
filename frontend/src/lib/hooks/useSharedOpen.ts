@@ -8,13 +8,21 @@ import {
   queueAccess,
   getQueueStatus,
   getProveStatus,
+  getBondRequirementApi,
+  getBondQualSet,
+  getTokenBalance,
+  escrowDeposit,
+  proveBond,
+  submitBond,
   type DataroomDoc,
   type Bundle,
+  type BondRequirement,
 } from "@/lib/api";
 import { ANON_FLOOR } from "@/components/app/dataroom/AnonymityMeter";
-import { signDataRoomAccess, type DataRoomIdentity, type OpenedCommitteeDocument, type RoomAccess } from "zkorage-sdk";
+import { BOND_FLOOR } from "@/components/app/dataroom/kit";
+import { signDataRoomAccess, bondAccessCommitment, type DataRoomIdentity, type OpenedCommitteeDocument, type RoomAccess } from "zkorage-sdk";
 import { sdk } from "@/lib/sdk";
-import { useWallet } from "@/lib/wallet/WalletContext";
+import { useWallet, useTxSigner } from "@/lib/wallet/WalletContext";
 import { useDataRoomIdentity } from "@/lib/hooks/useDataRoomIdentity";
 import { readJoinRequests, writeJoinRequests } from "@/lib/dataroom/requests";
 import { pullVault, pushVault, forgetVault, isVaultSyncOn, setVaultSyncOn } from "@/lib/dataroom/vault";
@@ -47,7 +55,13 @@ export type OpenPhase =
   | "waiting" // queued for the batch window
   | "opening" // getting the key + decrypting
   | "opened" // done (the file is in `opened`)
-  | "error";
+  | "error"
+  // ── Bonded Access (BA5): a bonded room/document requires a qualifying bond proof instead of plain membership.
+  | "bond-detecting" // reading the room's bond requirement
+  | "bond-not-member" // bonded room, reader not on the approved list
+  | "bond-deposit" // approved member, no qualifying bond yet -> the inline deposit step
+  | "bond-below-floor" // has a qualifying bond, fewer than BOND_FLOOR qualifying bonders
+  | "bond-ready"; // has a qualifying bond, at/above the floor -> offer the one-time bond proof
 
 // Cross-device sync status for the encrypted rooms vault.
 export type SyncState =
@@ -59,6 +73,7 @@ export type SyncState =
 
 export function useSharedOpen() {
   const { address, connected, connect, status: walletStatus } = useWallet();
+  const signer = useTxSigner();
   const ident = useDataRoomIdentity();
 
   // The selected room ("" = none; show the room list). Selecting a room loads its docs + anonymity meter.
@@ -223,6 +238,13 @@ export function useSharedOpen() {
   const [opened, setOpened] = useState<OpenedCommitteeDocument | null>(null);
   const [flowErr, setFlowErr] = useState<string | null>(null);
 
+  // ── Bonded Access (BA5) state ──
+  const [bondReq, setBondReq] = useState<BondRequirement | null>(null);
+  const [bondCount, setBondCount] = useState<number | null>(null);
+  const [bondTokenMeta, setBondTokenMeta] = useState<{ symbol: string; decimals: number } | null>(null);
+  const [bondLocking, setBondLocking] = useState(false);
+  const bondBelowFloor = bondCount !== null && bondCount < BOND_FLOOR;
+
   const cancelled = useRef(false);
   useEffect(() => {
     cancelled.current = false;
@@ -259,6 +281,9 @@ export function useSharedOpen() {
     setProveStep("");
     setProveBy(null);
     setFlushAt(null);
+    setBondReq(null);
+    setBondCount(null);
+    setBondTokenMeta(null);
   }, []);
 
   const selectRoom = useCallback((roomId: string) => {
@@ -377,6 +402,123 @@ export function useSharedOpen() {
     }
   }, [identity, openDocId, belowFloor, room, address, waitForBatch]);
 
+  // ── Bonded Access (BA5) ──────────────────────────────────────────────────────────────────────
+  // Resolve which bond phase a member is in for a bonded document: read the live qualifying set, see whether
+  // this member already has a qualifying lock (their bond commitment is in the set), and whether the set has
+  // reached the anonymity floor. Membership is checked first (the bond proof also proves membership, so a
+  // non-member must request to join + then bond). `memberState` is the reader's enroll status (already read).
+  const resolveBondPhase = useCallback(
+    async (req: BondRequirement, id: DataRoomIdentity, memberState: "none" | "pending" | "eligible") => {
+      setBondReq(req);
+      if (address && req.token) {
+        getTokenBalance(address, req.token)
+          .then((t) => setBondTokenMeta({ symbol: t.symbol, decimals: t.decimals }))
+          .catch(() => setBondTokenMeta({ symbol: "token", decimals: 7 }));
+      } else {
+        setBondTokenMeta({ symbol: "token", decimals: 7 });
+      }
+      const qual = await getBondQualSet(req.token!, req.minAmount!, req.deadline!).catch(() => null);
+      if (cancelled.current) return;
+      setBondCount(qual ? qual.anonSetSize : null);
+      if (memberState === "pending") { setPhase("pending"); return; }
+      if (memberState !== "eligible") { setPhase("bond-not-member"); return; }
+      const mine = bondAccessCommitment(id.idSecret).toLowerCase();
+      const hasBond = !!qual && qual.locks.some((l) => l.commitment.toLowerCase() === mine);
+      if (!hasBond) { setPhase("bond-deposit"); return; }
+      setPhase(qual && qual.anonSetSize < BOND_FLOOR ? "bond-below-floor" : "bond-ready");
+    },
+    [address],
+  );
+
+  // Re-read the qualifying set after a deposit (or on a "Check again"), then move to the right bond phase
+  // without a fresh identity derive. Uses the identity + requirement already in state.
+  const refreshBond = useCallback(async () => {
+    if (!identity || !bondReq?.token || !bondReq.minAmount || !bondReq.deadline) return;
+    const qual = await getBondQualSet(bondReq.token, bondReq.minAmount, bondReq.deadline).catch(() => null);
+    if (cancelled.current) return;
+    setBondCount(qual ? qual.anonSetSize : null);
+    const mine = bondAccessCommitment(identity.idSecret).toLowerCase();
+    const hasBond = !!qual && qual.locks.some((l) => l.commitment.toLowerCase() === mine);
+    if (!hasBond) { setPhase("bond-deposit"); return; }
+    setPhase(qual && qual.anonSetSize < BOND_FLOOR ? "bond-below-floor" : "bond-ready");
+  }, [identity, bondReq]);
+
+  // Lock a qualifying bond inline: a NON-revocable self-bond of the required token, at least `amountBase`,
+  // until the requirement's deadline, with the access commitment = sha256(0x03 ‖ id_secret ‖ "escrow") so it
+  // counts for THIS member anonymously. The wallet signs the escrow deposit; then re-resolve the bond phase.
+  const lockBond = useCallback(
+    async (amountBase: string) => {
+      if (!identity || !bondReq?.token || !bondReq.deadline) return;
+      if (!signer) { setFlowErr("Connect your wallet on testnet to lock a bond."); setPhase("error"); return; }
+      setBondLocking(true);
+      setFlowErr(null);
+      try {
+        const commitment = bondAccessCommitment(identity.idSecret);
+        const r = await escrowDeposit(
+          { amount: amountBase, unlock_time: bondReq.deadline, revocable: false, token: bondReq.token, commitment },
+          signer,
+        );
+        if (!r.ok) throw new Error(r.error || "could not lock your bond");
+        if (cancelled.current) return;
+        await refreshBond();
+      } catch (e) {
+        if (cancelled.current) return;
+        setFlowErr(String((e as Error).message ?? e));
+        setPhase("error");
+      } finally {
+        setBondLocking(false);
+      }
+    },
+    [identity, bondReq, signer, refreshBond],
+  );
+
+  // Run the one-time bond proof (member ∧ qualifying bond, anonymous), submit it to the gate, then auto-open.
+  // The witness reaches the self-hosted prover only. Unlike the membership path, the bond submit is direct
+  // (not M7-batched): the accessor is already unlinkable within the bonder crowd, so the on-chain timestamp
+  // reveals "someone in the set proved", never which member.
+  const setupBondAccess = useCallback(async () => {
+    if (!identity || !openDocId || !bondReq?.token || !bondReq.minAmount || !bondReq.deadline) return;
+    if (bondBelowFloor) { setPhase("bond-below-floor"); return; }
+    cancelled.current = false;
+    setFlowErr(null);
+    setProveBy(null);
+    setPhase("proving");
+    setProveStep("Setting up your access on the self-hosted prover. This runs once for the room and can take a few minutes.");
+    try {
+      const pa = await proveBond({
+        roomId: room.trim(),
+        idSecret: identity.idSecret,
+        idTrapdoor: identity.idTrapdoor,
+        holderSeed: identity.accessorSeed,
+        token: bondReq.token,
+        minAmount: bondReq.minAmount,
+        deadline: bondReq.deadline,
+      });
+      if (!pa.jobId) throw new Error(pa.error || "could not start the bond proof");
+      let bundle: Bundle | null = null;
+      const t0 = Date.now();
+      while (Date.now() - t0 < 12 * 60 * 1000) {
+        if (cancelled.current) return;
+        const s = await getProveStatus(pa.jobId);
+        setProveBy(s.by ?? null);
+        if (s.status === "done" && s.bundle) { bundle = s.bundle; break; }
+        if (s.status === "error") throw new Error(s.error || "proving failed");
+        await new Promise((r) => setTimeout(r, 4000));
+      }
+      if (!bundle) throw new Error("the proof timed out");
+      setPhase("queuing");
+      setProveStep("Recording your access on-chain.");
+      const sub = await submitBond(bundle);
+      if (cancelled.current) return;
+      if (!sub.ok) throw new Error(sub.error || "could not record your access on-chain");
+      await doOpen(openDocId, identity);
+    } catch (e) {
+      if (cancelled.current) return;
+      setFlowErr(String((e as Error).message ?? e));
+      setPhase("error");
+    }
+  }, [identity, openDocId, bondReq, bondBelowFloor, room, doOpen]);
+
   // The single Open action for a document: derive identity, read live status, branch.
   const open = useCallback(
     async (docId: string) => {
@@ -386,24 +528,35 @@ export function useSharedOpen() {
       setOpened(null);
       setFlowErr(null);
       setProveStep("");
+      setBondReq(null);
       setPhase("checking");
       try {
         const id = await ident.derive(room.trim());
         if (!id) { setFlowErr(ident.error ?? "Could not derive your identity from the wallet."); setPhase("error"); return; }
         setIdentity(id);
-        const [acc, st, elig] = await Promise.all([
+        const [acc, req, st, elig] = await Promise.all([
           sdk.canOpenDocument(room.trim(), docId.trim(), id.accessor),
+          getBondRequirementApi(room.trim(), docId.trim()).catch(() => ({ found: false }) as BondRequirement),
           getEnrollStatus(room.trim(), id.idCommitment).catch(() => ({ state: "none" as const })),
           getEligible(room.trim()).catch(() => null),
         ]);
         if (cancelled.current) return;
         setAccess(acc);
         if (elig) setAnonCount(elig.memberCount);
-        const below = elig ? elig.memberCount < ANON_FLOOR : belowFloor;
 
-        if (acc.revoked) setPhase("revoked");
-        else if (acc.admitted) await doOpen(docId, id); // already set up -> open automatically
-        else if (st.state === "eligible") setPhase(below ? "below-floor" : "approved");
+        if (acc.revoked) { setPhase("revoked"); return; }
+        if (acc.admitted) { await doOpen(docId, id); return; } // already set up (bond or membership) -> open
+
+        // Bonded document: the bond proof replaces the plain-membership spine.
+        if (req.found && req.token && req.minAmount && req.deadline) {
+          setPhase("bond-detecting");
+          await resolveBondPhase(req, id, st.state);
+          return;
+        }
+
+        // Plain-membership path (no bond requirement).
+        const below = elig ? elig.memberCount < ANON_FLOOR : belowFloor;
+        if (st.state === "eligible") setPhase(below ? "below-floor" : "approved");
         else if (st.state === "pending") setPhase("pending");
         else setPhase("not-member");
       } catch (e) {
@@ -412,7 +565,7 @@ export function useSharedOpen() {
         setPhase("error");
       }
     },
-    [room, ident, belowFloor, doOpen],
+    [room, ident, belowFloor, doOpen, resolveBondPhase],
   );
 
   const dismiss = useCallback(() => { resetFlow(); }, [resetFlow]); // "Not now"
@@ -489,5 +642,14 @@ export function useSharedOpen() {
     flowErr,
     setupAccess,
     dismiss,
+    // bonded access (BA5)
+    bondReq,
+    bondCount,
+    bondTokenMeta,
+    bondBelowFloor,
+    bondLocking,
+    lockBond,
+    refreshBond,
+    setupBondAccess,
   };
 }

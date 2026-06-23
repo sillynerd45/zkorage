@@ -8,6 +8,7 @@ import {
   Copy,
   FolderLock,
   Star,
+  Users,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -264,5 +265,39 @@ export function DataRoomHeader({ aside }: { aside?: ReactNode }) {
       </div>
       {aside}
     </header>
+  );
+}
+
+// The Bonded Access anonymity floor: at least this many qualifying bonders must exist for a requirement
+// before a bond proof is allowed (a set of 1 or 2 narrows down who acted). Enforced by the backend; the UI
+// surfaces it. This is a DIFFERENT floor from the plain-membership ANON_FLOOR (members, currently 5): the two
+// sets are distinct (a room's approved members vs the qualifying-bonder crowd for a requirement). Keep it here.
+export const BOND_FLOOR = 3;
+
+// A compact count chip for the qualifying-bonder set of a Bonded Access requirement. A colored dot + count +
+// a one-line tier note (below the floor of 3 / enough to prove anonymously). Used by the owner requirement
+// panel and the reader open flow. NOTE: do not reuse AnonymityMeter (it is the floor-5 "members" meter).
+export function BondCount({ count, className }: { count: number | null; className?: string }) {
+  const n = count ?? 0;
+  const enough = n >= BOND_FLOOR;
+  return (
+    <span
+      data-testid="bond-count"
+      data-count={n}
+      data-tier={enough ? "ok" : "low"}
+      className={cn("inline-flex flex-wrap items-center gap-2 text-[13px]", className)}
+    >
+      <span
+        className={cn("size-2 shrink-0 rounded-full", enough ? "bg-success" : "bg-destructive")}
+        aria-hidden="true"
+      />
+      <Users className="size-4 text-muted-foreground" aria-hidden="true" />
+      <span className="font-medium">
+        {count === null ? "…" : n} qualifying bonder{n === 1 ? "" : "s"}
+      </span>
+      <span className="text-muted-foreground">
+        {enough ? "enough to prove anonymously" : `below the floor of ${BOND_FLOOR}`}
+      </span>
+    </span>
   );
 }

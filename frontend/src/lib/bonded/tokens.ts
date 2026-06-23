@@ -1,4 +1,4 @@
-import { Asset, Networks } from "@stellar/stellar-sdk";
+import { Asset, Networks, StrKey } from "@stellar/stellar-sdk";
 import { toBaseUnits } from "@/lib/api";
 
 // Token options for the Bonded Proofs Deposit picker. The escrow holds any SEP-41 token, so a deposit just
@@ -75,4 +75,24 @@ export async function loadWalletTokens(address: string): Promise<TokenOption[]> 
     /* Horizon unreachable: return what we have (possibly empty); the paste path still works. */
   }
   return opts;
+}
+
+// Build a TokenOption for a classic Stellar asset addressed by code + issuer (its Stellar Asset Contract).
+// A bond requirement may name a token the OWNER does not hold, so this needs no balance read: a classic
+// asset's SAC is deterministic from (code, issuer) and its decimals are 7. The symbol is the code. Throws on
+// a bad code or issuer. balanceBase is "0" (unknown / not the owner's concern when SETTING a requirement).
+export function classicAssetToken(code: string, issuer: string): TokenOption {
+  const c = code.trim();
+  const iss = issuer.trim().toUpperCase();
+  if (!/^[A-Za-z0-9]{1,12}$/.test(c)) throw new Error("Asset code must be 1 to 12 letters or digits.");
+  if (!StrKey.isValidEd25519PublicKey(iss)) throw new Error("Issuer must be a valid G... address.");
+  return {
+    key: `${c}:${iss}`,
+    symbol: c,
+    contractId: new Asset(c, iss).contractId(NET),
+    decimals: 7,
+    balanceBase: "0",
+    kind: "classic",
+    issuer: iss,
+  };
 }

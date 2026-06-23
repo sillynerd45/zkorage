@@ -1,16 +1,23 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { ArrowRight, CheckCircle2, Clock, FileText, FolderOpen, Loader2, Lock, RefreshCw, ShieldCheck } from "lucide-react";
+import { ArrowRight, CheckCircle2, Clock, FileText, FolderOpen, Info, Loader2, Lock, RefreshCw, ShieldCheck } from "lucide-react";
 import { useSharedOpen, type SyncState } from "@/lib/hooks/useSharedOpen";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
-import { Verdict } from "@/components/app/blocks";
+import { DataRow, Verdict } from "@/components/app/blocks";
 import { DecryptedFile } from "@/components/app/DecryptedFile";
 import { AnonymityMeter, ANON_FLOOR } from "@/components/app/dataroom/AnonymityMeter";
-import { Callout, CopyIconButton, SectionLabel } from "@/components/app/dataroom/kit";
+import { BondCount, BOND_FLOOR, Callout, CopyIconButton, SectionLabel } from "@/components/app/dataroom/kit";
+import { plainAmount } from "@/lib/bonded/tokens";
+import { fmtAmount, toBaseUnits } from "@/lib/api";
 import { short } from "@/lib/format";
 import { cn } from "@/lib/utils";
+
+// A bonded requirement's deadline (unix seconds) as a local date-time string.
+function fmtDeadline(unix: number): string {
+  return new Date(unix * 1000).toLocaleString();
+}
 
 const MEMBERSHIP_LINK = "/app/dataroom/membership";
 
@@ -60,8 +67,8 @@ function OpenStatus({ s }: { s: ReturnType<typeof useSharedOpen> }) {
             right away.
           </p>
           <p className="text-xs text-muted-foreground">
-            This runs a one-time membership proof on our self-hosted prover, then records your access on-chain in
-            a shuffled batch so the room cannot tell when you acted.
+            This runs a one-time access proof on our self-hosted prover, then records your access on-chain in a
+            shuffled batch so the room cannot tell when you acted.
           </p>
           <div className="flex flex-wrap gap-2">
             <Button size="sm" onClick={s.setupAccess} data-testid="access-setup-btn">Set up access</Button>
@@ -77,6 +84,53 @@ function OpenStatus({ s }: { s: ReturnType<typeof useSharedOpen> }) {
             This room is too small to open privately yet. It needs {ANON_FLOOR} members{s.anonCount !== null ? ` and has ${s.anonCount}` : ""}.
           </p>
           <Button size="sm" variant="outline" onClick={retry} data-testid="access-check-again">Check again</Button>
+        </div>
+      );
+    case "bond-detecting":
+      return (
+        <p className="flex items-center gap-2 text-sm text-muted-foreground" data-testid="access-bond-detecting">
+          <Loader2 className="size-4 animate-spin" aria-hidden="true" /> Checking this room's bond requirement…
+        </p>
+      );
+    case "bond-not-member":
+      return (
+        <div className="space-y-2" data-testid="access-bond-not-member">
+          <p className="text-sm text-muted-foreground">
+            This room needs a bond and you are not on its list yet. Ask to join first, then lock a bond.
+          </p>
+          <Link to={MEMBERSHIP_LINK} className={cn(buttonVariants({ size: "sm", variant: "outline" }))} data-testid="access-go-membership">
+            Request to join
+          </Link>
+        </div>
+      );
+    case "bond-deposit":
+      return <BondDeposit s={s} />;
+    case "bond-below-floor":
+      return (
+        <div className="space-y-2" data-testid="access-bond-below-floor">
+          <BondCount count={s.bondCount} />
+          <p className="text-sm text-muted-foreground">
+            You have a qualifying bond. The room needs at least {BOND_FLOOR} qualifying bonders before a proof
+            is allowed, so no one can be singled out. It has {s.bondCount ?? 0} right now.
+          </p>
+          <Button size="sm" variant="outline" onClick={() => void s.refreshBond()} data-testid="access-check-again">Check again</Button>
+        </div>
+      );
+    case "bond-ready":
+      return (
+        <div className="space-y-2" data-testid="access-bond-ready">
+          <BondCount count={s.bondCount} />
+          <p className="text-sm text-foreground">
+            You qualify. Prove access once (about a few minutes), then every document in this room opens right away.
+          </p>
+          <p className="text-xs text-muted-foreground">
+            This runs a one-time proof on our self-hosted prover that you hold a qualifying bond and are on the
+            room's list, without revealing which bond or which member.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" onClick={s.setupBondAccess} data-testid="access-bond-prove">Prove access</Button>
+            <Button size="sm" variant="ghost" onClick={s.dismiss} data-testid="access-dismiss">Not now</Button>
+          </div>
         </div>
       );
     case "proving":
@@ -389,6 +443,69 @@ function SyncToggle({ checked, onChange }: { checked: boolean; onChange: (on: bo
         )}
       />
     </button>
+  );
+}
+
+// The inline "deposit a qualifying bond" step (BA5). Shown when the reader is an approved member of a bonded
+// room but has no qualifying lock yet. Locks a NON-revocable self-bond of the required token (>= the minimum,
+// until the deadline) with the access commitment set, then re-resolves the bond phase. Local amount state so
+// typing doesn't churn the hook.
+function BondDeposit({ s }: { s: ReturnType<typeof useSharedOpen> }) {
+  const req = s.bondReq;
+  const decimals = s.bondTokenMeta?.decimals ?? 7;
+  const symbol = s.bondTokenMeta?.symbol ?? "token";
+  const minBase = req?.minAmount ?? "0";
+  const [amount, setAmount] = useState(() => plainAmount(minBase, decimals));
+  // Once the token's decimals are known (meta loads async), prefill the field to the minimum.
+  useEffect(() => { setAmount(plainAmount(minBase, decimals)); }, [minBase, decimals]);
+  if (!req || !req.token || !req.deadline) return null;
+  const base = toBaseUnits(amount, decimals);
+  const enough = !!base && BigInt(base) >= BigInt(minBase);
+  const below = s.bondCount !== null && s.bondCount < BOND_FLOOR;
+  return (
+    <div className="space-y-3" data-testid="access-bond-deposit">
+      <div className="space-y-1 rounded-xl border p-3 text-[13px]">
+        <p className="font-medium">This room requires a bond:</p>
+        <DataRow k="token">
+          <span className="font-mono">{symbol}</span>
+          <CopyIconButton value={req.token} label="token contract" />
+        </DataRow>
+        <DataRow k="at least">{fmtAmount(minBase, decimals)} {symbol}</DataRow>
+        <DataRow k="locked until at least" mono={false}>{fmtDeadline(req.deadline)}</DataRow>
+      </div>
+
+      <div>
+        <label className="flex flex-col gap-1.5 text-[13px] text-muted-foreground">
+          Amount to lock ({symbol})
+          <Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} className="w-48" data-testid="access-bond-amount" />
+        </label>
+        {!enough && <p className="mt-1 text-xs text-destructive">Lock at least {fmtAmount(minBase, decimals)} {symbol}.</p>}
+        <p className="mt-1 text-xs text-muted-foreground">
+          This lock cannot be released until {fmtDeadline(req.deadline)}. It is tied to you anonymously: the room
+          never learns it is yours.
+        </p>
+      </div>
+
+      <BondCount count={s.bondCount} />
+      {below && (
+        <p className="text-xs text-muted-foreground">
+          Only {s.bondCount ?? 0} qualifying bonder{(s.bondCount ?? 0) === 1 ? "" : "s"} so far. The room needs{" "}
+          {BOND_FLOOR} before anyone can prove. Your deposit counts toward that.
+        </p>
+      )}
+
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" onClick={() => base && void s.lockBond(base)} disabled={!enough || s.bondLocking} data-testid="access-bond-lock">
+          {s.bondLocking ? "Locking…" : "Lock bond and continue"}
+        </Button>
+        <Button size="sm" variant="ghost" onClick={s.dismiss} data-testid="access-bond-dismiss">Not now</Button>
+      </div>
+
+      <Callout icon={Info}>
+        Locking is public: your wallet, the token, and the amount show on-chain. Opening a document later is
+        private: the proof hides which bond is yours.
+      </Callout>
+    </div>
   );
 }
 
