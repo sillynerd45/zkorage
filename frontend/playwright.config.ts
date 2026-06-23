@@ -20,5 +20,17 @@ export default defineConfig({
     viewport: { width: 1100, height: 1400 },
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
+    // HARD REQUIREMENT (do not remove): force software rendering in Chromium. Headless-Chrome GPU/compositor
+    // teardown crashed this dev box with a Windows BSOD (PFN_LIST_CORRUPT, 0x4E in nt!MiDecommitFreePage),
+    // twice, including during screenshotting. Disabling the GPU path avoids it. See CLAUDE.md hard rules +
+    // memory [[devbox-pfn-crash]].
+    launchOptions: {
+      args: [
+        "--disable-gpu",
+        "--disable-software-rasterizer",
+        "--disable-gpu-compositing",
+        "--disable-accelerated-2d-canvas",
+      ],
+    },
   },
 });
