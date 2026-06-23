@@ -1,6 +1,6 @@
 import { Compass, Files, FolderOpen, Lock, UserPlus, type LucideIcon } from "lucide-react";
 import { Link } from "react-router-dom";
-import { TaskCard, GroupLabel, type DRCategory } from "@/components/app/dataroom/kit";
+import { TaskCard, GroupLabel } from "@/components/app/dataroom/kit";
 
 // Task-oriented landing: one featured "Store a document" card, then a grid of the remaining tasks. Each card
 // maps to a real place in the Data Room nav (Documents > Open / Store / My files, plus Membership and
@@ -13,7 +13,6 @@ interface Task {
   blurb: string;
   testid: string;
   icon: LucideIcon;
-  category?: DRCategory;
 }
 
 const HERO: Task = {
@@ -31,7 +30,6 @@ const TASKS: Task[] = [
     blurb: "Open files from a room you have been approved for. They are decrypted in your browser.",
     testid: "task-access",
     icon: FolderOpen,
-    category: "Access",
   },
   {
     to: "/app/dataroom/documents#mine",
@@ -39,7 +37,6 @@ const TASKS: Task[] = [
     blurb: "See the rooms you own and the documents you stored. Contents stay encrypted.",
     testid: "task-browse",
     icon: Files,
-    category: "Documents",
   },
   {
     to: "/app/dataroom/membership",
@@ -80,7 +77,6 @@ export default function DataRoomOverview() {
               icon={t.icon}
               title={t.label}
               blurb={t.blurb}
-              category={t.category}
               testid={t.testid}
             />
           ))}
