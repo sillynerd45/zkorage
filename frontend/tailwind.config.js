@@ -46,12 +46,18 @@ export default {
           "50%": { opacity: ".3", transform: "scale(.55)" },
         },
         "fade-in": { from: { opacity: "0", transform: "translateY(4px)" }, to: { opacity: "1", transform: "none" } },
+        // A calm "breathing" ring used to draw the eye to the off cross-device-sync switch (low amplitude).
+        "sync-attn": {
+          "0%,100%": { boxShadow: "0 0 0 0 hsl(var(--brand) / 0)" },
+          "50%": { boxShadow: "0 0 0 4px hsl(var(--brand) / 0.18)" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down .2s ease-out",
         "accordion-up": "accordion-up .2s ease-out",
         "pulse-dot": "pulse-dot 1.4s ease-in-out infinite",
         "fade-in": "fade-in .25s ease-out",
+        "sync-attn": "sync-attn 2.4s ease-in-out infinite",
       },
     },
   },

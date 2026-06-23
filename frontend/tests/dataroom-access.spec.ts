@@ -226,9 +226,7 @@ test("Open: the legacy /access route redirects to Documents > Open, preserving ?
   await expect(page.getByTestId("access-room-detail")).toBeVisible({ timeout: 30_000 });
 });
 
-test("Open: cross-device sync pulls your rooms from the encrypted vault after a one-tap unlock", async ({ page }) => {
-  await page.addInitScript(mock);
-  await stubReads(page, "eligible", 8);
+async function stubVault(page: import("@playwright/test").Page) {
   // the vault holds a room this fresh browser does not have, encrypted under the wallet's signature (SIG_B64)
   const blob = await exportRoomsBackup(new Uint8Array(64).fill(0x07), [
     { roomId: ROOM, label: "Synced room", state: "eligible", ts: 1 },
@@ -236,14 +234,41 @@ test("Open: cross-device sync pulls your rooms from the encrypted vault after a 
   await page.route("**/dataroom/rooms-vault/**", (r) =>
     r.fulfill(json(r.request().method() === "GET" ? { found: true, blob } : { ok: true })),
   );
+}
+
+test("Open: turning on cross-device sync signs once and pulls your rooms from the encrypted vault", async ({ page }) => {
+  await page.addInitScript(mock);
+  await stubReads(page, "eligible", 8);
+  await stubVault(page);
 
   await page.goto("/app/dataroom/documents#open");
-  // fresh browser: no local rooms, sync is on but locked (we never pop the wallet just to load the page)
+  // sync defaults OFF: no local rooms, the switch is off, no synced room yet
   await expect(page.getByTestId("access-rooms-empty")).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByTestId("access-sync-unlock")).toBeVisible();
+  await expect(page.getByTestId("access-sync-toggle")).toHaveAttribute("aria-checked", "false");
 
-  // one tap -> sign -> pull the vault -> the room appears + state reads Synced
-  await page.getByTestId("access-sync-unlock").click();
+  // turning the switch on signs once (mock) -> pulls the vault -> the room appears + state reads Synced
+  await page.getByTestId("access-sync-toggle").click();
+  await expect(page.getByTestId("access-room-row").first()).toContainText("Synced room", { timeout: 30_000 });
+  await expect(page.getByTestId("access-sync-state")).toContainText("Synced");
+  await expect(page.getByTestId("access-sync-toggle")).toHaveAttribute("aria-checked", "true");
+});
+
+test("Open: a returning device with sync already on shows a prominent sign-in, then syncs", async ({ page }) => {
+  await page.addInitScript(mock);
+  // returning device: sync was enabled before (persisted), but the wallet has not signed this session
+  await page.addInitScript(`localStorage.setItem("zkorage.dr.vaultSync.${ADDR}", "1");`);
+  await stubReads(page, "eligible", 8);
+  await stubVault(page);
+
+  await page.goto("/app/dataroom/documents#open");
+  await expect(page.getByTestId("access-rooms-empty")).toBeVisible({ timeout: 30_000 });
+  // sync is on but locked (no signature yet): the prominent "Sign in to turn on sync" action is shown
+  await expect(page.getByTestId("access-sync-toggle")).toHaveAttribute("aria-checked", "true");
+  const unlock = page.getByTestId("access-sync-unlock");
+  await expect(unlock).toBeVisible();
+  await expect(unlock).toContainText("Sign in to turn on sync");
+
+  await unlock.click();
   await expect(page.getByTestId("access-room-row").first()).toContainText("Synced room", { timeout: 30_000 });
   await expect(page.getByTestId("access-sync-state")).toContainText("Synced");
 });

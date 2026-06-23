@@ -1,14 +1,14 @@
 import { Link } from "react-router-dom";
 import { ArrowRight } from "lucide-react";
-import { GROUPS, byGroup } from "@/lib/content";
+import { byGroup } from "@/lib/content";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { NavCard } from "@/components/app/blocks";
 
 // The app Home. The "How it works" and "Don't trust, verify" asides moved to the Landing page and Docs.
-// Here we keep the greeting, quick actions, and the grouped capability cards (Data Room first, then
-// Bonded Proofs). Verify/Explorer/Developer are public surfaces, reached from the footer.
-const APP_GROUPS = ["dataroom", "bonded"].map((key) => GROUPS.find((g) => g.key === key)!);
+// Here we keep the greeting, quick actions, and the capability cards (Data Room + Bonded Proofs) in one
+// row that fills the width. Verify/Explorer/Developer are public surfaces, reached from the footer.
+const APP_CARDS = (["dataroom", "bonded"] as const).flatMap((key) => byGroup(key));
 
 export default function Home() {
   return (
@@ -31,19 +31,10 @@ export default function Home() {
         </div>
       </div>
 
-      {/* grouped capability cards */}
-      <div className="space-y-7">
-        {APP_GROUPS.map((g) => (
-          <section key={g.key}>
-            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-              {g.label}
-            </h2>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {byGroup(g.key).map((c) => (
-                <NavCard key={c.key} to={c.to} icon={c.icon} title={c.title} blurb={c.blurb} proves={c.proves} />
-              ))}
-            </div>
-          </section>
+      {/* capability cards: Data Room + Bonded Proofs, side by side so they fill the row */}
+      <div className="grid gap-4 sm:grid-cols-2">
+        {APP_CARDS.map((c) => (
+          <NavCard key={c.key} to={c.to} icon={c.icon} title={c.title} blurb={c.blurb} proves={c.proves} />
         ))}
       </div>
     </div>

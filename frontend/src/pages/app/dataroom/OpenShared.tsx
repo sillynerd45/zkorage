@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { CheckCircle2, Clock, FileText, FolderOpen, Loader2, Lock, RefreshCw, ShieldCheck } from "lucide-react";
-import { useSharedOpen } from "@/lib/hooks/useSharedOpen";
+import { ArrowRight, CheckCircle2, Clock, FileText, FolderOpen, Loader2, Lock, RefreshCw, ShieldCheck } from "lucide-react";
+import { useSharedOpen, type SyncState } from "@/lib/hooks/useSharedOpen";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
@@ -13,6 +13,15 @@ import { short } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 const MEMBERSHIP_LINK = "/app/dataroom/membership";
+
+// One helper line per sync state, so the description text changes by state but the box stays a stable height.
+const SYNC_HELP: Record<SyncState, string> = {
+  off: "Encrypted with your wallet, so your rooms follow you to other devices. The server cannot read it.",
+  locked: "Sync is on for this account. Sign in once on this device to load your rooms.",
+  syncing: "Signing in and syncing your rooms.",
+  synced: "Your rooms are synced and encrypted with your wallet.",
+  error: "Could not sync your rooms. Your wallet stays the only key.",
+};
 
 // The status of the in-progress Open for one document. Each branch is plain and short; "approved" reads as a
 // positive next step, not a denial.
@@ -239,7 +248,9 @@ export default function OpenShared() {
             </div>
           )}
 
-          {/* Sync across devices: a compact toggle. Encrypted with your wallet; the server can't read it. */}
+          {/* Sync across devices: an opt-in toggle. Turning it on signs once and pulls your rooms; while it is
+              off the switch carries a gentle attention pulse. The helper block keeps a stable height across all
+              states, and a returning device shows a prominent "Sign in to turn on sync" action. */}
           <div className="mt-4 border-t pt-3">
             <div className="flex items-center justify-between gap-3">
               <span className="inline-flex items-center gap-2 text-[13px] font-medium">
@@ -253,19 +264,27 @@ export default function OpenShared() {
                 )}
               </span>
               {s.syncOn && s.syncState === "locked" && (
-                <Button variant="outline" size="sm" onClick={s.unlockSync} data-testid="access-sync-unlock">Unlock</Button>
+                <Button
+                  onClick={s.unlockSync}
+                  data-testid="access-sync-unlock"
+                  className="h-8 gap-1.5 bg-brand font-medium text-brand-foreground shadow-sm hover:bg-brand/90 focus-visible:ring-brand"
+                >
+                  Sign in to turn on sync <ArrowRight className="size-3.5" aria-hidden="true" />
+                </Button>
               )}
               {s.syncState === "error" && (
                 <Button variant="outline" size="sm" onClick={s.unlockSync} data-testid="access-sync-retry">Retry</Button>
               )}
             </div>
-            <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-              Encrypted with your wallet, so your rooms follow you to other devices. The server can't read it.
-              {s.syncOn && s.syncState === "locked" && " Tap Unlock to sign in once on this device."}
-            </p>
-            {s.syncMsg && (
-              <p className="mt-1 text-xs text-muted-foreground" data-testid="access-sync-msg">{s.syncMsg}</p>
-            )}
+            {/* min-h reserves two helper lines so the box keeps a steady height across off/locked/syncing/
+                synced (the longest line wraps to two on a narrow card); the message only renders on
+                error/info, a distinct state where a little growth is fine. */}
+            <div className="mt-1.5 min-h-[2.75rem] text-xs leading-relaxed text-muted-foreground">
+              <p>{SYNC_HELP[s.syncState]}</p>
+              {s.syncMsg && (
+                <p className="mt-0.5 text-[11px]" data-testid="access-sync-msg">{s.syncMsg}</p>
+              )}
+            </div>
           </div>
         </Card>
       )}
@@ -358,7 +377,9 @@ function SyncToggle({ checked, onChange }: { checked: boolean; onChange: (on: bo
       className={cn(
         "relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-        checked ? "bg-brand" : "bg-muted-foreground/40",
+        checked
+          ? "bg-brand"
+          : "bg-muted-foreground/40 animate-sync-attn hover:animate-none focus-visible:animate-none",
       )}
     >
       <span
