@@ -289,13 +289,15 @@
       "membership_dr2": "9550a12e84a9b26bc3926e79e271dc0f1a740f45d86f88c19d3e3e438939011c",
       "docauth_dr4": "e4f4a356cbacde61ef901500a6d396d2fa83a666b31224be2848fd69bbff8741",
       "solvency_bp3": "d0a2f137812e05084aa79d0f7353d3fb7785da25facadd140494b94bed10e267",
-      "tier_bp5": "2671938b59598c129913fee8e0ef29159e6475dd61c37c503429bdaf0fba4e69"
+      "tier_bp5": "2671938b59598c129913fee8e0ef29159e6475dd61c37c503429bdaf0fba4e69",
+      "bond_ba1": "dc4da02d887b3f388ffee26860a8416b393d4cfea982831183d15d5bfcf1f6c4"
     },
     "dataroom_DR1_thru_DR6": "CDUQITRVJOPJNVWBUINLZFI2LHPOLVFW2I7354WEFDG2W3VIG627HLNN",
     "bond_token_zkUSD_BP1": "CCFHRZAP7GYUBNJ4RN7NBZL5GS7Q32F4CIXDTWTTIGPYEDWRIS2TUPA5",
     "escrow_BP1": "CAMQKJKAJTOMT66N5N3E3VIRTN5ACDKV6P3Z2HLYVJHLAVRGJKHZFOXC",
     "solvency_gate_BP3": "CDHUG4NFTDIO4HX2MZH3PR77EKYUAU47HVKH4UO2WG7GSKDEF4ABWMLA",
-    "tier_gate_BP5": "CASSJSBMFDS3BCUBYKXG52SUS7GIHBCHDUM5FGQO4LY5VOWPUPPUFKZP"
+    "tier_gate_BP5": "CASSJSBMFDS3BCUBYKXG52SUS7GIHBCHDUM5FGQO4LY5VOWPUPPUFKZP",
+    "bond_gate_BA1": "CCKX6B7QIE42YA27Y4KTB6CTXRB3OBGR5EW7N2BLAG4AB3V6CFDKXCZU"
   },
   "solvency_gate_BP3": {
     "name": "zkorage solvency-gate (BP3 — a solvency proof that dies when you pull your collateral)",
@@ -565,5 +567,79 @@
     "predicate": "NO attester. Extends the DR2 membership guest with a SECOND depth-20 Merkle path: (1) NEW-5 holder ed25519 sig over 'zkorage-tier-bonded-v1' | context | accessor, pk==accessor asserted; (2) member leaf id_commitment = sha256(0x00 | id_secret | id_trapdoor) folds to member_root; (3) qual leaf c = sha256(0x03 | id_secret | 'escrow') folds to qual_root (the SAME c the depositor stores as the lock's commitment; one id_secret drives BOTH leaves = the core binding); (4) nullifier = sha256(0x02 | id_secret | context). Commits a 181-byte journal {result, claim_type=13, member_root, qual_root, threshold, unlock_after=X, context, nullifier, accessor}; id_secret/id_trapdoor/both leaf indices ABSENT (anonymous).",
     "reproducible": "ed25519 + sha256 only (no x25519) -> canonical image_id reproduces cross-machine; ruint pinned 1.17.2. Built on the WSL2 box (risc0 5.0.0-rc.1, ~/zkorage-r5).",
     "prover_kind": "tier (gateway + worker, 10th canonical bin host_tier); fields sig/pk/accessor/context/threshold/unlock_after/id_secret/id_trapdoor/member-siblings+index/qual-siblings+index; worker-first."
+  },
+  "bond_gate_BA1": {
+    "name": "zkorage bond-gate (BA1 - anonymous per-requirement Bonded Access; the generalized successor to the tier-gate)",
+    "contract_id": "CCKX6B7QIE42YA27Y4KTB6CTXRB3OBGR5EW7N2BLAG4AB3V6CFDKXCZU",
+    "claim_type": 14,
+    "image_id_pinned": "dc4da02d887b3f388ffee26860a8416b393d4cfea982831183d15d5bfcf1f6c4",
+    "verifier": "CBAPC663PTWIWDLYNCG5WAD5MIZF4SKY43U6L2NM5ZUU5XFOS4JDYAFW",
+    "escrow": "CAMQKJKAJTOMT66N5N3E3VIRTN5ACDKV6P3Z2HLYVJHLAVRGJKHZFOXC",
+    "init_tx": "691865578d800dc75a93193e89cd7d3ef3b811a4db467a8233bbb15523863a96",
+    "wasm_size_bytes": 22784,
+    "req_id": "req_id = sha256(token_contract_id(32) | min_amount(i128 BE 16) | deadline(u64 BE 8)). Each Data Room document/room can require its OWN bond; many requirements coexist in one gate. The qual_root ring is keyed by req_id (shared across rooms with the same requirement -> the bonder crowd merges).",
+    "binds": "submit_bond_proof(seal,image_id,journal): image pin -> on-chain sha256(221-B journal) -> bare-verifier cross-call -> result==1 & claim_type==14 -> min_amount>0 -> recompute req_id = sha256(journal[69..125]) on-chain & require journal.context==req_id -> journal.qual_root in the recent accepted QualRing(req_id) ring (RING_CAP=8) -> now < deadline (deadline-encoded freshness; SOUND because qualifying locks are NON-revocable) -> nullifier UNUSED -> record Grant(accessor, req_id) binding the member_root, expiring at deadline. PERMISSIONLESS submit (the in-guest NEW-5 holder sig pk==accessor is the off-chain consent).",
+    "bond_implies_membership": "Option A: the gate does NOT pin a member root (it is generalized). The grant RECORDS the member_root the proof checked; the relying DataRoom passes its CURRENT room eligible_root to the 3-arg is_granted_for(accessor, req_id, member_root), so a single bond proof proves BOTH room membership AND the qualifying bond. A grant proven vs a fake member set has member_root != the room's eligible_root (admits nobody); forging a path to the real root needs enrollment (sha256 preimage). Re-pinning the room root drops stale grants (like DR2).",
+    "anonymity": "hides WHICH wallet / WHICH lock / the EXACT amount; id_secret/id_trapdoor/both Merkle indices are never committed. qual_root is admin-set + PUBLICLY auditable (recomputable from the escrow's public get_lock state). Anon-set minimum N=3 enforced OFF-CHAIN (backend refuses to prove below N; UI warns).",
+    "acceptance_testnet": {
+      "note": "BA1 on-chain e2e GREEN. Demo requirement: token 0x7A*32 (raw demo id), min_amount 1e9, deadline 9999999999 -> req_id b7f9f4bf6703f0485332cbda64a3a9ec257d288ca0413a30d2d60368b2484633. Demo proof (member root 8be67872, qual root 75c7de57, accessor ed4928c6) GPU-proved (image dc4da02d, seal selector ef6cb709).",
+      "set_qual_root_tx": "c66a76ef077a2c7ef344799925522f849a5d88be1a3c601d9637c1d4308fb876 (req_id b7f9f4bf, qual_root 75c7de57, ring_len 1)",
+      "submit_bond_proof_tx": "c030fc1630800be79847042bf52e1de88e5dd1c56b35e5c1164069586508f547 (BondGranted accessor ed4928c6, index 0, min_amount 1e9, deadline 9999999999)",
+      "is_granted_for": "is_granted_for(ed4928c6, b7f9f4bf, member_root 8be67872) = true; with a WRONG member_root = false (the Option-A binding); with a WRONG req_id = false (per-requirement). is_granted(acc, req) [root-agnostic] = true.",
+      "nullifier_reuse_rejected": "resubmit the SAME proof -> Error(Contract, #10) NullifierUsed."
+    },
+    "exported_functions": [
+      "initialize",
+      "submit_bond_proof",
+      "is_granted_for",
+      "is_granted",
+      "get_grant",
+      "is_nullifier_used",
+      "get_qual_ring",
+      "is_qual_root_accepted",
+      "get_latest",
+      "get_count",
+      "get_by_index",
+      "get_history",
+      "get_config",
+      "set_qual_root",
+      "set_image_id",
+      "set_verifier",
+      "upgrade"
+    ],
+    "contract_tests": "cargo 26/26 (happy + member-root-binding [wrong root false] + per-requirement keying + context==req_id + bad-min-amount + deadline + qual-ring + nullifier reuse + journal/proof negatives + reads/history/admin).",
+    "prover": "GPU worker rebuilt with host_bond (11th canonical bin); gateway.py 'bond' kind live (13 fields). VM CPU host_bond fallback DEFERRED (the GPU worker is the bond-capable primary; rebuilding the VM fallback needs restoring the cleaned solvency/tier/bond .bin).",
+    "plan": "development/Build-Plan/dataroom/BONDED-ACCESS-PLAN.md (BA1 done; next BA3 wires the bond leg into the DataRoom is_doc_admitted via the 3-arg is_granted_for)."
+  },
+  "guest_bond": {
+    "name": "bond_predicate (RISC0 zkVM guest, BA1 anonymous Bonded Access) - deterministic Docker build",
+    "canonical_image_id": "dc4da02d887b3f388ffee26860a8416b393d4cfea982831183d15d5bfcf1f6c4",
+    "predicate": "NO attester. guest-tier generalized to bind the requirement: (1) NEW-5 holder ed25519 sig over 'zkorage-bond-access-v1' | context | accessor, pk==accessor asserted; (2) member leaf id_commitment = sha256(0x00 | id_secret | id_trapdoor) folds to member_root (the ROOM's eligible set); (3) qual leaf c = sha256(0x03 | id_secret | 'escrow') folds to qual_root (the SAME c the depositor stores as the lock's commitment; one id_secret drives BOTH leaves); (4) nullifier = sha256(0x02 | id_secret | context). Commits a 221-byte journal {result, claim_type=14, member_root, qual_root, token(32), min_amount(i128 BE 16), deadline(u64), context, nullifier, accessor}; id_secret/id_trapdoor/both leaf indices ABSENT. min_amount passed as 16 bytes (no zkVM-serde i128 dependency). The guest does NOT read the lock; it commits token/min/deadline verbatim and the indexer+gate tie qual_root in QualRoot(req_id).",
+    "reproducible": "ed25519 + sha256 only (no x25519) -> canonical image_id reproduces cross-machine; same Cargo.lock pins as guest-tier. Built on the WSL2 box (risc0 5.0.0-rc.1, ~/zkorage-r5). EXEC segments=1.",
+    "prover_kind": "bond (gateway + worker, 11th canonical bin host_bond); fields sig/pk/accessor/id_secret/id_trapdoor/context/token/min_amount/deadline/member-siblings+index/qual-siblings+index; worker-first.",
+    "byte_exact_journal_demo": "010000000e8be678722c84e8bf478cd0c2a8e257bcc599f80d56ad2839e0188a1cace651da75c7de57b1536d37bdbc48033e4d01f5a8bd116005be8eb637c1325f45d11c2a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a0000000000000000000000003b9aca0000000002540be3ffb7f9f4bf6703f0485332cbda64a3a9ec257d288ca0413a30d2d60368b2484633af600e12af4552510da3a16da7277b557ec8164ed6e51f3d46e4ac4f4b8d7102ed4928c628d1c2c6eae90338905995612959273a5c63f93636c14614ac8737d1 (host_bond EXEC_ONLY == backend ba1-bond-selftest)."
+  },
+  "dataroom_BA1_bond_leg": {
+    "name": "DataRoom contract - BA1 Bonded Access leg (in-place upgrade): bond requirement cross-call in is_doc_admitted / is_admitted",
+    "contract_id": "CDUQITRVJOPJNVWBUINLZFI2LHPOLVFW2I7354WEFDG2W3VIG627HLNN",
+    "upgrade_wasm_hash": "034091be72fd5ded06ba3dbd21426b60b98a5e1686b143312459c66875338a72",
+    "wasm_size_bytes": 81462,
+    "bond_gate": "CCKX6B7QIE42YA27Y4KTB6CTXRB3OBGR5EW7N2BLAG4AB3V6CFDKXCZU",
+    "new_storage": "DataKeys added in place (existing storage untouched - no retype): BondReq(room), BondReqDoc(room,doc) -> a NEW BondRequirement struct {gate:Address, req_id:BytesN<32>, token:Address, min_amount:i128, deadline:u64}. NOT new fields on the stored RoomPolicy (a retype would break existing on-chain records). New error BadBondRequirement=28. New 3-arg #[contractclient] BondGateClient (is_granted_for(accessor,req_id,member_root)->bool).",
+    "binds": "set_bond_requirement / set_doc_bond_requirement (room-owner auth, min_amount>0) store the requirement; is_doc_admitted / is_admitted: effective bond req (doc>room). When set, the bond leg READS the room's EligibleRoot and cross-calls bond_gate.try_is_granted_for(accessor, req.req_id, room_eligible_root) -> bond-implies-membership (Option A): a satisfied bond leg REPLACES the DR2 membership spine (the bond proof's member_root IS the room's eligible_root). Compliance/accredited policy legs still AND on top. Neither bond nor policy set -> the unchanged bare-membership fallback (legacy committee docs preserved). Fail-closed: no eligible_root or a reverting/wrong-root gate -> false; a root rotation drops access (mirrors DR2).",
+    "new_methods": [
+      "set_bond_requirement",
+      "set_doc_bond_requirement",
+      "clear_bond_requirement",
+      "clear_doc_bond_requirement",
+      "get_bond_requirement",
+      "get_doc_bond_requirement"
+    ],
+    "contract_tests": "cargo 110/110 (10 BA1: bond admits WITHOUT a DR2 grant; wrong member_root denies; fail-closed without eligible_root; root rotation drops; doc req overrides room; bond AND compliance; revoked denied; clear falls back; zero min_amount #28; owner-auth). All DR1-DR6 tests still green (storage-preserving, behavior-identical for non-bond rooms).",
+    "acceptance_testnet": {
+      "note": "LIVE composition e2e GREEN. In-place upgrade (wasm 034091be) preserved storage (room_count 42, config intact). Test room ba01..ba01 (index 42): set_eligible_root = the demo member root 8be67872 + set_bond_requirement(gate CCKX6B7Q, req_id b7f9f4bf, min 1e9, deadline 9999999999) -> is_doc_admitted(room, doc, accessor ed4928c6) = true (the DataRoom cross-called the bond gate with the room's eligible_root). Negative: rotate eligible_root -> WRONG -> is_doc_admitted = false (the grant's member_root no longer matches); restore -> true.",
+      "upgrade_tx": "in-place update_current_contract_wasm via scripts/upgrade_dataroom_bond.sh (admin = deployer)."
+    },
+    "plan": "development/Build-Plan/dataroom/BONDED-ACCESS-PLAN.md (BA1+BA3 done + live; next BA2 backend /bonded/bond/* endpoints + a deposit-for-access helper, then BA4/BA5 frontend, BA6 polish/demo seed)."
   }
 }

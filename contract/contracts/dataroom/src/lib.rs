@@ -139,6 +139,9 @@ pub enum DataRoomError {
     /// `set_room_policy`: a policy with no membership spine AND no gates would admit everyone (an
     /// unintentionally-open room); rejected so the anonymity-eligibility model can't be fat-fingered away.
     EmptyPolicy = 27,
+    // 28.. — BA1 Bonded Access. Added in place by the BA1 upgrade.
+    /// `set_bond_requirement` / `set_doc_bond_requirement`: a non-positive `min_amount` is not a bond claim.
+    BadBondRequirement = 28,
 }
 
 #[contracttype]
@@ -232,6 +235,16 @@ pub enum DataKey {
     /// struct. Absence ⇒ access for THIS committee document falls back to the room policy, then (if neither
     /// is set) to the bare DR2 membership grant — see `is_doc_admitted`. Set by the room owner.
     DocPolicy(BytesN<32>, BytesN<32>),
+    // ---- BA1 Bonded Access (anonymous per-requirement bond gating) — added in place; existing keys untouched ----
+    /// A room-level anonymous Bonded Access requirement (persistent), keyed by room. A SEPARATE struct +
+    /// key (NOT a `RoomPolicy` field) so the existing stored `RoomPolicy` shape is preserved across this
+    /// in-place upgrade. When set, the bond leg REPLACES the DR2 membership spine for the room's documents
+    /// (the bond proof's `member_root` is the room's eligible_root, so it implies membership — see
+    /// `is_doc_admitted`). Set by the room owner.
+    BondReq(BytesN<32>),
+    /// A per-document Bonded Access requirement (persistent), keyed by (room, doc). Overrides `BondReq(room)`
+    /// for that committee document. Set by the room owner.
+    BondReqDoc(BytesN<32>, BytesN<32>),
 }
 
 #[contracttype]
@@ -493,6 +506,42 @@ pub struct Admission {
     pub timestamp: u64,
 }
 
+/// A BA1 anonymous Bonded Access requirement. A reader who locked a qualifying NON-revocable bond (this
+/// token, at least `min_amount`, until at least `deadline`) proves it ANONYMOUSLY (no wallet, no lock id, no
+/// exact amount) and the document key release proceeds. `req_id = sha256(token_id ‖ min_amount ‖ deadline)`
+/// is the bond gate's per-requirement key; the DataRoom passes it (plus the room's eligible_root) to the
+/// gate's 3-arg `is_granted_for`, so a single bond proof proves BOTH room membership AND the bond (Option A).
+/// `token`/`min_amount`/`deadline` are stored for display + a self-describing on-chain record; `req_id` (the
+/// precomputed binding) and `gate` (the cross-call target) are what enforcement uses.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BondRequirement {
+    /// The deployed bond gate to cross-call (the BA1 generalized gate).
+    pub gate: Address,
+    /// `req_id = sha256(token_id ‖ min_amount ‖ deadline)` — the bond gate's per-requirement key.
+    pub req_id: BytesN<32>,
+    /// The required bond token (SEP-41 / SAC). Display + self-description; the binding is via `req_id`.
+    pub token: Address,
+    /// The minimum bonded amount (base units). Display; the binding is via `req_id`.
+    pub min_amount: i128,
+    /// The deadline the bond must stay locked until (unix seconds). Display; the binding is via `req_id`.
+    pub deadline: u64,
+}
+
+#[contractevent]
+pub struct BondRequirementSet {
+    #[topic]
+    pub room_id: BytesN<32>,
+    #[topic]
+    pub doc_id: BytesN<32>,
+    pub gate: Address,
+    pub req_id: BytesN<32>,
+    pub min_amount: i128,
+    pub deadline: u64,
+    /// `false` when this is a per-room requirement (doc_id is the room's own id as a placeholder).
+    pub per_document: bool,
+}
+
 #[contractevent]
 pub struct RoomPolicySet {
     #[topic]
@@ -551,6 +600,15 @@ pub trait GateInterface {
     fn is_granted(env: Env, accessor: BytesN<32>) -> bool;
 }
 
+/// Minimal client for the BA1 bond gate — the 3-arg `is_granted_for(accessor, req_id, member_root)`. The
+/// DataRoom passes the room's CURRENT eligible_root as `member_root`, so the gate confirms the bond proof was
+/// checked against THIS room's member set (bond-implies-membership, Option A). `try_is_granted_for`
+/// (auto-generated) keeps the cross-call fail-closed (a reverting/foreign gate ⇒ not admitted).
+#[contractclient(name = "BondGateClient")]
+pub trait BondGateInterface {
+    fn is_granted_for(env: Env, accessor: BytesN<32>, req_id: BytesN<32>, member_root: BytesN<32>) -> bool;
+}
+
 fn be_u32(a: &[u8], o: usize) -> u32 {
     u32::from_be_bytes([a[o], a[o + 1], a[o + 2], a[o + 3]])
 }
@@ -576,6 +634,25 @@ fn load_config(env: &Env) -> Result<Config, DataRoomError> {
 
 fn bump_instance(env: &Env) {
     env.storage().instance().extend_ttl(THRESHOLD, BUMP);
+}
+
+/// The BA1 bond leg: true iff the room has a pinned eligible_root AND the bond gate grants `accessor` for
+/// `req.req_id` against THAT root. Because the bond proof's `member_root` is the room's eligible_root
+/// (Option A), a satisfied bond leg ALSO proves room membership, so it REPLACES the DR2 membership spine.
+/// Fail-closed: no eligible_root ⇒ false; a reverting / foreign / wrong-root gate ⇒ false (`try_*`).
+fn bond_leg_ok(env: &Env, room_id: &BytesN<32>, req: &BondRequirement, accessor: &BytesN<32>) -> bool {
+    let root: BytesN<32> = match env
+        .storage()
+        .persistent()
+        .get(&DataKey::EligibleRoot(room_id.clone()))
+    {
+        Some(r) => r,
+        None => return false,
+    };
+    matches!(
+        BondGateClient::new(env, &req.gate).try_is_granted_for(accessor, &req.req_id, &root),
+        Ok(Ok(true))
+    )
 }
 
 #[contract]
@@ -1278,6 +1355,146 @@ impl DataRoom {
         .publish(&env);
     }
 
+    // ---- BA1: anonymous Bonded Access (per-requirement bond gating) ----
+
+    /// Set (or replace) a room-level Bonded Access requirement (room-owner auth). When set, opening any of
+    /// the room's documents requires an anonymous bond proof for `req_id`, and that proof ALSO proves room
+    /// membership (Option A — the bond guest's `member_root` is the room's eligible_root), so the DR2
+    /// membership spine is not separately required. `req_id = sha256(token_id ‖ min_amount ‖ deadline)` is
+    /// precomputed off-chain (the backend's `reqId`, the SAME function the qual-root indexer uses, so they
+    /// agree); `token`/`min_amount`/`deadline` are stored for display. The room MUST have a pinned
+    /// eligible_root (the bond leg fails closed otherwise — see `is_doc_admitted`). Clear with
+    /// `clear_bond_requirement`.
+    pub fn set_bond_requirement(
+        env: Env,
+        room_id: BytesN<32>,
+        gate: Address,
+        req_id: BytesN<32>,
+        token: Address,
+        min_amount: i128,
+        deadline: u64,
+    ) {
+        load_config(&env).unwrap_or_else(|e| panic_with_error!(&env, e));
+        let pstore = env.storage().persistent();
+        let room: Room = pstore
+            .get(&DataKey::Room(room_id.clone()))
+            .unwrap_or_else(|| panic_with_error!(&env, DataRoomError::RoomNotFound));
+        room.owner.require_auth();
+        if min_amount <= 0 {
+            panic_with_error!(&env, DataRoomError::BadBondRequirement);
+        }
+        let req = BondRequirement {
+            gate: gate.clone(),
+            req_id: req_id.clone(),
+            token,
+            min_amount,
+            deadline,
+        };
+        pstore.set(&DataKey::BondReq(room_id.clone()), &req);
+        pstore.extend_ttl(&DataKey::BondReq(room_id.clone()), THRESHOLD, BUMP);
+        bump_instance(&env);
+
+        BondRequirementSet {
+            room_id: room_id.clone(),
+            doc_id: room_id,
+            gate,
+            req_id,
+            min_amount,
+            deadline,
+            per_document: false,
+        }
+        .publish(&env);
+    }
+
+    /// Set (or replace) a PER-DOCUMENT Bonded Access requirement (room-owner auth), overriding `BondReq(room)`
+    /// for this committee document. The committee document must already exist (`CommitteeDocNotFound`). Same
+    /// semantics as `set_bond_requirement`. Clear with `clear_doc_bond_requirement`.
+    pub fn set_doc_bond_requirement(
+        env: Env,
+        room_id: BytesN<32>,
+        doc_id: BytesN<32>,
+        gate: Address,
+        req_id: BytesN<32>,
+        token: Address,
+        min_amount: i128,
+        deadline: u64,
+    ) {
+        load_config(&env).unwrap_or_else(|e| panic_with_error!(&env, e));
+        let pstore = env.storage().persistent();
+        let room: Room = pstore
+            .get(&DataKey::Room(room_id.clone()))
+            .unwrap_or_else(|| panic_with_error!(&env, DataRoomError::RoomNotFound));
+        room.owner.require_auth();
+        if !pstore.has(&DataKey::CommitteeDoc(room_id.clone(), doc_id.clone())) {
+            panic_with_error!(&env, DataRoomError::CommitteeDocNotFound);
+        }
+        if min_amount <= 0 {
+            panic_with_error!(&env, DataRoomError::BadBondRequirement);
+        }
+        let req = BondRequirement {
+            gate: gate.clone(),
+            req_id: req_id.clone(),
+            token,
+            min_amount,
+            deadline,
+        };
+        pstore.set(&DataKey::BondReqDoc(room_id.clone(), doc_id.clone()), &req);
+        pstore.extend_ttl(&DataKey::BondReqDoc(room_id.clone(), doc_id.clone()), THRESHOLD, BUMP);
+        bump_instance(&env);
+
+        BondRequirementSet {
+            room_id,
+            doc_id,
+            gate,
+            req_id,
+            min_amount,
+            deadline,
+            per_document: true,
+        }
+        .publish(&env);
+    }
+
+    /// Remove a room-level Bonded Access requirement (room-owner auth). The room's documents fall back to
+    /// their per-document bond requirement (if any), else the policy / bare membership.
+    pub fn clear_bond_requirement(env: Env, room_id: BytesN<32>) {
+        load_config(&env).unwrap_or_else(|e| panic_with_error!(&env, e));
+        let pstore = env.storage().persistent();
+        let room: Room = pstore
+            .get(&DataKey::Room(room_id.clone()))
+            .unwrap_or_else(|| panic_with_error!(&env, DataRoomError::RoomNotFound));
+        room.owner.require_auth();
+        pstore.remove(&DataKey::BondReq(room_id));
+        bump_instance(&env);
+    }
+
+    /// Remove a per-document Bonded Access requirement (room-owner auth).
+    pub fn clear_doc_bond_requirement(env: Env, room_id: BytesN<32>, doc_id: BytesN<32>) {
+        load_config(&env).unwrap_or_else(|e| panic_with_error!(&env, e));
+        let pstore = env.storage().persistent();
+        let room: Room = pstore
+            .get(&DataKey::Room(room_id.clone()))
+            .unwrap_or_else(|| panic_with_error!(&env, DataRoomError::RoomNotFound));
+        room.owner.require_auth();
+        pstore.remove(&DataKey::BondReqDoc(room_id, doc_id));
+        bump_instance(&env);
+    }
+
+    /// A room-level Bonded Access requirement, if set (public config).
+    pub fn get_bond_requirement(env: Env, room_id: BytesN<32>) -> Option<BondRequirement> {
+        env.storage().persistent().get(&DataKey::BondReq(room_id))
+    }
+
+    /// A per-document Bonded Access requirement, if set (else the room requirement applies; public config).
+    pub fn get_doc_bond_requirement(
+        env: Env,
+        room_id: BytesN<32>,
+        doc_id: BytesN<32>,
+    ) -> Option<BondRequirement> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::BondReqDoc(room_id, doc_id))
+    }
+
     /// Admit `accessor` by enforcing the room's composite policy — the anonymous composite-policy AND. In
     /// order (all bound to the same pseudonymous accessor): policy set (else `RoomPolicyNotSet`); not revoked
     /// (else `AccessRevoked`); valid DR2 membership grant if required (else `MembershipRequired`); compliance
@@ -1711,53 +1928,73 @@ impl DataRoom {
         env.storage().persistent().get(&DataKey::RoomPolicy(room_id))
     }
 
-    /// The composed admission decision (live). True iff the room has a policy AND `accessor` currently
-    /// satisfies every enabled leg: not revoked, a valid DR2 membership grant (if required), and the
-    /// configured compliance/accredited gates each currently grant it (cross-called live, fail-closed). Drops
-    /// the moment any leg is revoked or expires; does NOT require a prior `request_room_admission`.
+    /// The composed admission decision (live). True iff the room has a policy and/or a Bonded Access
+    /// requirement AND `accessor` currently satisfies every enabled leg: not revoked; EITHER a satisfied bond
+    /// leg (which ALSO proves room membership — Option A) when a `BondReq` is set, OR a valid DR2 membership
+    /// grant (if the policy requires it); and the configured compliance/accredited gates each currently grant
+    /// it (cross-called live, fail-closed). Drops the moment any leg is revoked or expires; does NOT require a
+    /// prior `request_room_admission`.
     pub fn is_admitted(env: Env, room_id: BytesN<32>, accessor: BytesN<32>) -> bool {
         let pstore = env.storage().persistent();
-        let policy: RoomPolicy = match pstore.get(&DataKey::RoomPolicy(room_id.clone())) {
-            Some(p) => p,
-            None => return false,
-        };
-        // Revocation is enforced here regardless of the policy legs — so it still drops even for a
-        // membership-optional room (matches `request_room_admission`'s explicit `AccessRevoked` check).
+        let bond_req: Option<BondRequirement> = pstore.get(&DataKey::BondReq(room_id.clone()));
+        let policy: Option<RoomPolicy> = pstore.get(&DataKey::RoomPolicy(room_id.clone()));
+        // Nothing configured -> not admitted (unchanged: is_admitted requires explicit config).
+        if bond_req.is_none() && policy.is_none() {
+            return false;
+        }
+        // Revocation drops access regardless of the legs (matches `request_room_admission`).
         if pstore.has(&DataKey::Revoked(room_id.clone(), accessor.clone())) {
             return false;
         }
-        // Membership spine (is_granted is already revoke- and root-rotation-aware).
-        if policy.require_membership
-            && !Self::is_granted(env.clone(), room_id.clone(), accessor.clone())
-        {
-            return false;
-        }
-        if let Some(gate) = policy.compliance_gate {
-            if !matches!(
-                GateClient::new(&env, &gate).try_is_granted(&accessor),
-                Ok(Ok(true))
-            ) {
-                return false;
+        match &bond_req {
+            // Bond implies membership (Option A): the bond leg REPLACES the DR2 membership spine.
+            Some(req) => {
+                if !bond_leg_ok(&env, &room_id, req, &accessor) {
+                    return false;
+                }
+            }
+            // No bond requirement: the existing membership spine (if the policy requires it).
+            None => {
+                if let Some(p) = &policy {
+                    if p.require_membership
+                        && !Self::is_granted(env.clone(), room_id.clone(), accessor.clone())
+                    {
+                        return false;
+                    }
+                }
             }
         }
-        if let Some(gate) = policy.accredited_gate {
-            if !matches!(
-                GateClient::new(&env, &gate).try_is_granted(&accessor),
-                Ok(Ok(true))
-            ) {
-                return false;
+        // Additional compliance/accredited legs from the policy (if any), ANDed on top.
+        if let Some(p) = policy {
+            if let Some(gate) = p.compliance_gate {
+                if !matches!(
+                    GateClient::new(&env, &gate).try_is_granted(&accessor),
+                    Ok(Ok(true))
+                ) {
+                    return false;
+                }
+            }
+            if let Some(gate) = p.accredited_gate {
+                if !matches!(
+                    GateClient::new(&env, &gate).try_is_granted(&accessor),
+                    Ok(Ok(true))
+                ) {
+                    return false;
+                }
             }
         }
         true
     }
 
     /// The composed PER-DOCUMENT admission decision (live) — the Pattern-2 self-serve key-release gate the
-    /// DR3 keypers read. The effective policy is `DocPolicy(room, doc)` if set, else `RoomPolicy(room)` if
-    /// set, else a fallback to the bare DR2 membership grant (`is_granted`) so PRE-policy committee documents
-    /// keep their original membership-gated behavior (no migration needed). Then the same leg AND as
-    /// `is_admitted`: not revoked, a valid membership grant if the policy requires it, and each configured
-    /// gate currently grants the accessor (cross-called live, fail-closed via `try_is_granted`). Drops the
-    /// moment any leg is revoked or expires.
+    /// DR3 keypers read. The effective **Bonded Access requirement** is `BondReqDoc(room, doc)` if set, else
+    /// `BondReq(room)`; the effective **policy** is `DocPolicy(room, doc)` if set, else `RoomPolicy(room)`.
+    /// If a bond requirement is set, its bond leg REPLACES the DR2 membership spine (a satisfied bond proof
+    /// also proves membership — Option A); otherwise the policy's membership spine applies. If NEITHER a bond
+    /// requirement NOR a policy is set, access falls back to the bare DR2 membership grant (`is_granted`) so
+    /// PRE-Bonded committee documents keep their original behavior (no migration). Then the same compliance/
+    /// accredited AND as `is_admitted`. Not revoked is enforced first. Fail-closed throughout (`try_*`); drops
+    /// the moment any leg is revoked, expires, or the room's eligible_root is rotated away.
     pub fn is_doc_admitted(
         env: Env,
         room_id: BytesN<32>,
@@ -1765,38 +2002,61 @@ impl DataRoom {
         accessor: BytesN<32>,
     ) -> bool {
         let pstore = env.storage().persistent();
-        // Revocation drops access first, regardless of which legs the effective policy has (matches
-        // is_admitted) — so a surgically-revoked accessor is refused even by a gate-only doc policy.
+        // Revocation drops access first, regardless of which legs the effective config has.
         if pstore.has(&DataKey::Revoked(room_id.clone(), accessor.clone())) {
             return false;
         }
-        // Effective policy: per-document, else per-room, else the bare membership fallback (legacy docs).
-        let policy: RoomPolicy = match pstore.get(&DataKey::DocPolicy(room_id.clone(), doc_id)) {
-            Some(p) => p,
-            None => match pstore.get(&DataKey::RoomPolicy(room_id.clone())) {
-                Some(p) => p,
-                None => return Self::is_granted(env.clone(), room_id, accessor),
-            },
-        };
-        if policy.require_membership
-            && !Self::is_granted(env.clone(), room_id.clone(), accessor.clone())
-        {
-            return false;
+        // Effective bond requirement: per-document, else per-room.
+        let bond_req: Option<BondRequirement> =
+            match pstore.get(&DataKey::BondReqDoc(room_id.clone(), doc_id.clone())) {
+                Some(r) => Some(r),
+                None => pstore.get(&DataKey::BondReq(room_id.clone())),
+            };
+        // Effective policy: per-document, else per-room.
+        let policy: Option<RoomPolicy> =
+            match pstore.get(&DataKey::DocPolicy(room_id.clone(), doc_id.clone())) {
+                Some(p) => Some(p),
+                None => pstore.get(&DataKey::RoomPolicy(room_id.clone())),
+            };
+        // Neither configured -> the bare DR2 membership fallback (legacy docs unchanged).
+        if bond_req.is_none() && policy.is_none() {
+            return Self::is_granted(env.clone(), room_id, accessor);
         }
-        if let Some(gate) = policy.compliance_gate {
-            if !matches!(
-                GateClient::new(&env, &gate).try_is_granted(&accessor),
-                Ok(Ok(true))
-            ) {
-                return false;
+        match &bond_req {
+            // Bond implies membership (Option A): the bond leg REPLACES the DR2 membership spine.
+            Some(req) => {
+                if !bond_leg_ok(&env, &room_id, req, &accessor) {
+                    return false;
+                }
+            }
+            // No bond requirement: the existing membership spine (if the policy requires it).
+            None => {
+                if let Some(p) = &policy {
+                    if p.require_membership
+                        && !Self::is_granted(env.clone(), room_id.clone(), accessor.clone())
+                    {
+                        return false;
+                    }
+                }
             }
         }
-        if let Some(gate) = policy.accredited_gate {
-            if !matches!(
-                GateClient::new(&env, &gate).try_is_granted(&accessor),
-                Ok(Ok(true))
-            ) {
-                return false;
+        // Additional compliance/accredited legs from the policy (if any), ANDed on top.
+        if let Some(p) = policy {
+            if let Some(gate) = p.compliance_gate {
+                if !matches!(
+                    GateClient::new(&env, &gate).try_is_granted(&accessor),
+                    Ok(Ok(true))
+                ) {
+                    return false;
+                }
+            }
+            if let Some(gate) = p.accredited_gate {
+                if !matches!(
+                    GateClient::new(&env, &gate).try_is_granted(&accessor),
+                    Ok(Ok(true))
+                ) {
+                    return false;
+                }
             }
         }
         true

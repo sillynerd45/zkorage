@@ -16,6 +16,7 @@ HOST_MEMBERSHIP_BIN="${HOST_MEMBERSHIP_BIN:-/prover/target/release/host_membersh
 HOST_DOCAUTH_BIN="${HOST_DOCAUTH_BIN:-/prover/target/release/host_docauth}"                    # docauth (DR4)
 HOST_SOLVENCY_BIN="${HOST_SOLVENCY_BIN:-/prover/target/release/host_solvency}"                 # solvency (BP3)
 HOST_TIER_BIN="${HOST_TIER_BIN:-/prover/target/release/host_tier}"                             # tier (BP5)
+HOST_BOND_BIN="${HOST_BOND_BIN:-/prover/target/release/host_bond}"                             # bond (BA1)
 POLL="${POLL_SECONDS:-3}"
 AUTH=(); [ -n "$TOKEN" ] && AUTH=(-H "X-Worker-Token: $TOKEN")
 # Witness hygiene: keep the per-job witness file in RAM (tmpfs) when available, and remove it after every job
@@ -25,7 +26,7 @@ JOB="$WORK/zk.job"; OUT="$WORK/zk.out.json"; LOG="$WORK/zk.log"
 cleanup() { rm -f "$JOB" "$OUT" "$LOG" 2>/dev/null || true; }
 trap cleanup EXIT
 
-echo "zkorage worker -> $VM_URL (poll ${POLL}s, kinds: reserves/identity/compliance/payroll/accredited/dataroom_seal/membership/docauth/solvency/tier)"
+echo "zkorage worker -> $VM_URL (poll ${POLL}s, kinds: reserves/identity/compliance/payroll/accredited/dataroom_seal/membership/docauth/solvency/tier/bond)"
 while true; do
   RESP="$(curl -sf "${AUTH[@]}" "$VM_URL/jobs/next" || true)"
   JID="$(printf '%s' "$RESP" | jq -r '.job_id // empty' 2>/dev/null || true)"
@@ -46,6 +47,7 @@ while true; do
     docauth)       BIN="$HOST_DOCAUTH_BIN";       FIELDS=('.n_hex' '.sig_hex' '.statement_hex' '.threshold' '.room_id_hex') ;;
     solvency)      BIN="$HOST_SOLVENCY_BIN";      FIELDS=("${COMMON[@]}" '.threshold' '.escrow_hex' '.lock_id' '.min_amount' '.bond_token_hex' '.supply_token_hex') ;;
     tier)          BIN="$HOST_TIER_BIN";          FIELDS=('.sig_hex' '.pk_hex' '.accessor_hex' '.id_secret_hex' '.id_trapdoor_hex' '.context_hex' '.threshold' '.unlock_after' '.member_siblings_hex' '.member_leaf_index' '.qual_siblings_hex' '.qual_leaf_index') ;;
+    bond)          BIN="$HOST_BOND_BIN";          FIELDS=('.sig_hex' '.pk_hex' '.accessor_hex' '.id_secret_hex' '.id_trapdoor_hex' '.context_hex' '.token_hex' '.min_amount' '.deadline' '.member_siblings_hex' '.member_leaf_index' '.qual_siblings_hex' '.qual_leaf_index') ;;
     *)             BIN="$HOST_BIN";               FIELDS=("${COMMON[@]}" '.threshold') ;;
   esac
   # Build the job file, FAIL-CLOSED on any missing field: `jq -e` exits non-zero on null, so a field-list

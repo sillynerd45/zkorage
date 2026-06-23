@@ -84,6 +84,11 @@ import {
   buildTierJob, buildQualSet, freshTierIdentity,
   isTierGranted, getTierGrant, isTierNullifierUsed, getTierConfig, getTierMemberRoot, getTierQualRing, getTierGrantCount,
 } from "./tier.js";
+import {
+  BOND_GATE_ID, BOND_IMAGE_ID, BOND_MIN_ANON_SET,
+  buildBondJob, buildBondQualSet, reqIdHex as bondReqIdHex, qualCommitment as bondQualCommitment,
+  isBondGrantedFor, isBondGranted, getBondGrant, isBondNullifierUsed, getBondQualRing, getBondConfig, getBondGrantCount,
+} from "./bond.js";
 import { verifyBundle, cliRecipe, type AuditContext } from "./audit.js";
 
 const PORT = Number(process.env.PORT || 8787);
@@ -4576,6 +4581,196 @@ app.get("/bonded/tier/nullifier/:nullifier", async (req, res) => {
     const nullifierHex = toHex(hex32(req.params.nullifier, "nullifier"));
     const used = await isTierNullifierUsed(nullifierHex);
     res.json({ nullifier: nullifierHex, used, tierGateId: TIER_GATE_ID });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+// ───────────────────────────────────────────────────────────────────────────────────────────────
+// BA1 Bonded Access — anonymous per-requirement bond gate, generalized + wired into the Data Room.
+// Each requirement is req_id = sha256(token_id ‖ min_amount(i128) ‖ deadline(u64)); the qual root is keyed
+// by req_id (so rooms that share a requirement share the bonder crowd). The MEMBER set is the ROOM's eligible
+// set (Option A: the bond proof's member_root == the room's eligible_root proves membership too). Flow:
+// enroll in the room (DR2) → deposit a qualifying NON-revocable bond with commitment = sha256(0x03 ‖ id_secret
+// ‖ "escrow") (via /escrow/deposit) → /bonded/bond/prove (worker-first) → poll /prove-status → /bonded/bond/
+// submit → the DataRoom is_doc_admitted is now true → the keepers release the document key. All bond admin
+// writes share the SAME relay key as the tier writes, so they serialize through withTierAdminLock (a shared
+// sequence-number lock). id_secret/id_trapdoor are PRIVATE witness; they reach the self-hosted prover only.
+// ───────────────────────────────────────────────────────────────────────────────────────────────
+
+/** Parse + validate a bond requirement from query/body: token (C-address), min_amount (positive i128),
+ *  deadline (unix seconds). Throws on bad input; returns the parsed values + the derived req_id hex. */
+function parseBondReq(src: Record<string, unknown>): { token: string; minAmount: bigint; deadline: number; reqId: string } {
+  const token = String(src.token ?? "");
+  if (!/^C[A-Z2-7]{55}$/.test(token)) throw new Error("token must be a Soroban C-address (SEP-41/SAC)");
+  const minAmount = BigInt(String(src.min_amount ?? "0"));
+  if (minAmount <= 0n) throw new Error("min_amount (positive integer, base units) required");
+  const deadline = Number(src.deadline);
+  if (!Number.isInteger(deadline) || deadline <= 0) throw new Error("deadline (unix timestamp) required");
+  return { token, minAmount, deadline, reqId: bondReqIdHex(token, minAmount, deadline) };
+}
+
+app.get("/bonded/bond/info", async (_req, res) => {
+  try {
+    const config = BOND_GATE_ID ? await getBondConfig().catch(() => null) : null;
+    const grantCount = BOND_GATE_ID ? await getBondGrantCount().catch(() => 0) : 0;
+    res.json({ bondGateId: BOND_GATE_ID, imageId: BOND_IMAGE_ID, minAnonSet: BOND_MIN_ANON_SET, escrowId: ESCROW_ID, config, grantCount });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+// The qualifying-bond commitment to store in the escrow lock for "deposit for access" =
+// sha256(0x03 ‖ id_secret ‖ "escrow"). The frontend can also derive this client-side (it holds id_secret);
+// this helper keeps the demo/CLI path simple. id_secret reaches the (trusted) backend only here.
+app.get("/bonded/bond/commitment", (req, res) => {
+  try {
+    const idSecret = hex32(req.query.id_secret, "id_secret");
+    res.json({ commitment: toHex(bondQualCommitment(idSecret)) });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+// The qualifying set + the gate's ring for a requirement (token, min_amount, deadline). Read-only.
+app.get("/bonded/bond/qual-set", async (req, res) => {
+  try {
+    const { token, minAmount, deadline, reqId } = parseBondReq(req.query as Record<string, unknown>);
+    const qual = await buildBondQualSet(token, minAmount, deadline);
+    const ring = BOND_GATE_ID ? await getBondQualRing(reqId).catch(() => [] as string[]) : [];
+    res.json({
+      token, minAmount: minAmount.toString(), deadline, reqId,
+      anonSetSize: qual.size, minAnonSet: BOND_MIN_ANON_SET, belowMin: qual.size < BOND_MIN_ANON_SET,
+      computedRoot: qual.root, published: ring.includes(qual.root), ringLen: ring.length, locks: qual.locks,
+    });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+// Rebuild the qualifying root from the escrow's public state and publish it on the bond gate
+// (set_qual_root(req_id, root), admin relay). Refuses below the minimum anonymity-set size. Idempotent.
+app.post("/bonded/bond/qual-root", async (req, res) => {
+  if (!BOND_GATE_ID) return res.status(503).json({ error: "BOND_GATE_ID not configured" });
+  try {
+    const { token, minAmount, deadline, reqId } = parseBondReq(req.body ?? {});
+    const qual = await buildBondQualSet(token, minAmount, deadline);
+    if (qual.size < BOND_MIN_ANON_SET) {
+      return res.status(400).json({
+        error: `qualifying set too small (${qual.size} < ${BOND_MIN_ANON_SET}); publishing it would weaken anonymity`,
+        anonSetSize: qual.size, minAnonSet: BOND_MIN_ANON_SET,
+      });
+    }
+    const out = await withTierAdminLock(() => invokeContract(BOND_GATE_ID, "set_qual_root", [scBytes(reqId), scBytes(qual.root)]));
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, token, minAmount: minAmount.toString(), deadline, reqId, qualRoot: qual.root, anonSetSize: qual.size });
+  } catch (e) {
+    res.json({ ok: false, error: err(e) });
+  }
+});
+
+// Build the bond witness (the ROOM's enrolled-member path + the live qualifying-lock path for the
+// requirement) + the NEW-5 holder sig, auto-publish the qual root, and enqueue the bond proof (kind=bond)
+// worker-first. The member must already be enrolled in the room (DR2). Poll /prove-status/:id.
+app.post("/bonded/bond/prove", async (req, res) => {
+  if (!PROVER_URL) return res.status(503).json({ error: "PROVER_URL not configured" });
+  if (!BOND_GATE_ID) return res.status(503).json({ error: "BOND_GATE_ID not configured" });
+  let roomIdHex: string, idSecret: Uint8Array, idTrapdoor: Uint8Array, holderSeed: Uint8Array;
+  let token: string, minAmount: bigint, deadline: number, reqId: string;
+  try {
+    roomIdHex = toBytes32(req.body?.roomId);
+    idSecret = hex32(req.body?.idSecret, "idSecret");
+    idTrapdoor = hex32(req.body?.idTrapdoor, "idTrapdoor");
+    holderSeed = hex32(req.body?.holderSeed, "holderSeed");
+    ({ token, minAmount, deadline, reqId } = parseBondReq(req.body ?? {}));
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const memberCommitmentHex = toHex(idCommitment(idSecret, idTrapdoor));
+    const memberIndex = indexOfCommitment(roomIdHex, memberCommitmentHex);
+    if (memberIndex < 0) {
+      return res.status(400).json({ error: "not enrolled in this room — request membership first", roomId: roomIdHex, memberCommitment: memberCommitmentHex });
+    }
+    const memberCommitments = getEligible(roomIdHex).map((h) => fromHex(h));
+    const built = await buildBondJob({ idSecret, idTrapdoor, holderSeed, token, minAmount, deadline, memberCommitments, memberIndex });
+    // Auto-ensure the qual root is in the gate's ring for req_id (idempotent + serialized on the shared relay
+    // key). buildBondJob already refused below the min anon set, so the published root reflects a set >= N.
+    // (The member_root binding is enforced by the DataRoom passing the room's eligible_root to is_granted_for;
+    // the bond gate does NOT pin a member root, so there is nothing to publish for it here.)
+    const ring = await getBondQualRing(reqId).catch(() => [] as string[]);
+    if (!ring.includes(built.qualRoot)) {
+      await withTierAdminLock(() => invokeContract(BOND_GATE_ID, "set_qual_root", [scBytes(reqId), scBytes(built.qualRoot)]));
+    }
+    const r = await fetch(`${PROVER_URL}/prove`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(built.job),
+    });
+    const j = (await r.json()) as { job_id?: string; error?: string };
+    if (!r.ok || !j.job_id) return res.status(502).json({ error: j.error || "prover submit failed" });
+    res.json({
+      jobId: j.job_id, roomId: roomIdHex, reqId, memberRoot: built.memberRoot, qualRoot: built.qualRoot,
+      nullifier: built.nullifier, accessor: built.accessor, token, minAmount: minAmount.toString(), deadline,
+      anonSetSize: built.qualSize,
+      note: "poll /prove-status/<jobId>; on done, POST /bonded/bond/submit {seal,image_id,journal}",
+    });
+  } catch (e) {
+    res.status(502).json({ error: err(e) });
+  }
+});
+
+// Submit a bond proof to the gate: submit_bond_proof (PERMISSIONLESS — the in-guest NEW-5 holder sig carries
+// the accessor's consent; the server is the relayer/fee-payer). Grant or a contract error (#10 NullifierUsed
+// / #8 QualRootUnknown / etc.).
+app.post("/bonded/bond/submit", async (req, res) => {
+  if (!BOND_GATE_ID) return res.status(503).json({ error: "BOND_GATE_ID not configured" });
+  const b = req.body as Bundle;
+  if (!b?.seal || !b?.image_id || !b?.journal) {
+    return res.status(400).json({ error: "seal, image_id, journal (raw hex) required" });
+  }
+  const isHex = (s: string) => /^[0-9a-fA-F]*$/.test(s) && s.length % 2 === 0;
+  if (!isHex(b.seal) || !isHex(b.image_id) || !isHex(b.journal)) {
+    return res.status(400).json({ error: "seal/image_id/journal must be raw hex" });
+  }
+  if (b.journal.length !== 442) {
+    return res.status(400).json({ error: "journal must be the 221-byte bond journal (442 hex chars)" });
+  }
+  if (b.image_id.toLowerCase() !== BOND_IMAGE_ID.toLowerCase()) {
+    return res.status(400).json({ error: "image_id is not the pinned bond guest image" });
+  }
+  try {
+    const out = await invokeContract(BOND_GATE_ID, "submit_bond_proof", [scBytes(b.seal), scBytes(b.image_id), scBytes(b.journal)]);
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, grant: jsonSafe(out.returnValue), bondGateId: BOND_GATE_ID });
+  } catch (e) {
+    res.json({ ok: false, error: err(e), bondGateId: BOND_GATE_ID });
+  }
+});
+
+// The live bond decision for an accessor + requirement. With member_root (the room's eligible_root) it is
+// the room-binding decision the DataRoom mirrors; without it, the member-root-agnostic liveness read.
+app.get("/bonded/bond/status", async (req, res) => {
+  if (!BOND_GATE_ID) return res.status(503).json({ error: "BOND_GATE_ID not configured" });
+  try {
+    const accessorHex = toHex(hex32(req.query.accessor, "accessor"));
+    const reqId = toBytes32(req.query.req_id);
+    const memberRootHex = req.query.member_root ? toBytes32(req.query.member_root) : null;
+    const [granted, grant, grantedFor] = await Promise.all([
+      isBondGranted(accessorHex, reqId),
+      getBondGrant(accessorHex, reqId),
+      memberRootHex ? isBondGrantedFor(accessorHex, reqId, memberRootHex) : Promise.resolve(null),
+    ]);
+    res.json({ accessor: accessorHex, reqId, memberRoot: memberRootHex, is_granted: granted, is_granted_for: grantedFor, grant, bondGateId: BOND_GATE_ID });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+app.get("/bonded/bond/nullifier/:nullifier", async (req, res) => {
+  if (!BOND_GATE_ID) return res.status(503).json({ error: "BOND_GATE_ID not configured" });
+  try {
+    const nullifierHex = toHex(hex32(req.params.nullifier, "nullifier"));
+    const used = await isBondNullifierUsed(nullifierHex);
+    res.json({ nullifier: nullifierHex, used, bondGateId: BOND_GATE_ID });
   } catch (e) {
     res.status(400).json({ error: err(e) });
   }
