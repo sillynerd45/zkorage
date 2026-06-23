@@ -146,6 +146,9 @@ function isContractError(reason: unknown): boolean {
  * This root is publicly auditable (anyone reruns it from on-chain state). Commitments are deduped (a member
  * with two qualifying locks of the same commitment is one anonymity member) and ordered by lock id. Fails
  * loudly on a transient (network/RPC) read gap so an under-complete root is never published.
+ * CAVEAT (honest): the floor counts DISTINCT COMMITMENTS, not distinct depositors. One wallet could lock N
+ * bonds under N fabricated id_secrets to clear the floor without N real members, so the anonymity-set size is
+ * an upper bound on the real crowd. Recommend shared, well-populated requirements over bespoke ones.
  */
 export async function buildBondQualSet(
   token: string,

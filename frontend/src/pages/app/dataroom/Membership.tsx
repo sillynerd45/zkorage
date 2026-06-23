@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { DataRow, Verdict } from "@/components/app/blocks";
 import { Callout, CopyIconButton, SectionLabel } from "@/components/app/dataroom/kit";
+import { OwnerBondSection } from "@/components/app/dataroom/OwnerBondSection";
 
 // M5 — the discovery tiers an owner can set per room. Visibility is a discovery convenience, not the privacy
 // mechanism (that stays the membership proof + the k=5 floor + the keepers).
@@ -475,6 +476,9 @@ export default function Membership() {
                       </p>
                     )}
                   </div>
+
+                  {/* ── Bonded Access (BA4): require an anonymous bond to open this room's documents ── */}
+                  <OwnerBondSection roomId={e.ownerRoom} memberCount={e.memberCount} />
                 </div>
               )}
             </div>

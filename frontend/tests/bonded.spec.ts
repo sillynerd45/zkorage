@@ -58,7 +58,9 @@ test("bonded: my balances lists the wallet's locks with the right actions", asyn
   await expect(page.getByText(`Lock #${ACTIVE_LOCK}`)).toBeVisible({ timeout: 60_000 });
   await expect(page.getByTestId(`unbond-${ACTIVE_LOCK}`)).toBeVisible();
   await expect(page.getByTestId(`extend-${ACTIVE_LOCK}`)).toBeVisible();
-  await expect(page.getByText("Lock #1")).toBeVisible();
+  // Exact match: once the escrow holds double-digit lock ids (e.g. #10), a substring "Lock #1" would also
+  // match "Lock #10/#11/#12" and trip strict mode. #1 is the released lock with no actions.
+  await expect(page.getByText("Lock #1", { exact: true })).toBeVisible();
   await page.screenshot({ path: "tests/bonded-balances.png", fullPage: true });
 
   await page.addInitScript(DARK);

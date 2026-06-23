@@ -10,6 +10,7 @@ import {
   BASE_FEE,
   xdr,
   Address,
+  StrKey,
   nativeToScVal,
   scValToNative,
 } from "@stellar/stellar-sdk";
@@ -249,6 +250,79 @@ function merkleRootDepth20(leaves: Uint8Array[]): Uint8Array {
     level = next;
   }
   return level.get(0) ?? zero[DEPTH];
+}
+
+// ---- Bonded Access (BA1) helpers — byte-exact with the bond guest + gate + backend indexer ----
+
+/** i128 -> 16 big-endian bytes (two's complement; amounts are positive). Matches Rust `i128::to_be_bytes`. */
+function i128be(v: bigint): Uint8Array {
+  let x = v & ((1n << 128n) - 1n);
+  const out = new Uint8Array(16);
+  for (let i = 15; i >= 0; i--) { out[i] = Number(x & 0xffn); x >>= 8n; }
+  return out;
+}
+/** u64 -> 8 big-endian bytes. */
+function u64be(v: bigint | number): Uint8Array {
+  let x = BigInt(v) & ((1n << 64n) - 1n);
+  const out = new Uint8Array(8);
+  for (let i = 7; i >= 0; i--) { out[i] = Number(x & 0xffn); x >>= 8n; }
+  return out;
+}
+
+/**
+ * The Bonded Access requirement id (hex): `req_id = sha256(token_id(32) ‖ min_amount(i128 BE 16) ‖
+ * deadline(u64 BE 8))`. `token` is a SAC/SEP-41 C-address; `minAmount` base units; `deadline` unix seconds.
+ * Identical to the bond gate's on-chain `req_id` and the backend indexer's, so all three agree.
+ */
+export function bondReqId(token: string, minAmount: bigint | string | number, deadline: number): string {
+  const tokenId = StrKey.decodeContract(token); // the 32-byte contract id
+  const buf = new Uint8Array(32 + 16 + 8);
+  buf.set(tokenId, 0);
+  buf.set(i128be(BigInt(minAmount)), 32);
+  buf.set(u64be(deadline), 48);
+  return toHex(sha256(buf));
+}
+
+/**
+ * The qualifying-bond commitment a depositor stores in the escrow lock's `commitment` to make it count toward
+ * a Bonded Access requirement: `sha256(0x03 ‖ id_secret ‖ "escrow")`. Derived client-side from the member's
+ * PRIVATE `id_secret` (it never leaves the device), so the lock is tied to the member anonymously (the
+ * commitment reveals nothing). Byte-exact with the bond guest's qual leaf + the backend `qualCommitment`.
+ */
+export function bondAccessCommitment(idSecretHex: string): string {
+  const idSecret = fromHex(idSecretHex);
+  if (idSecret.length !== 32) throw new Error("id_secret must be 32 bytes (64 hex chars)");
+  const label = new TextEncoder().encode("escrow");
+  const buf = new Uint8Array(1 + 32 + label.length);
+  buf[0] = 0x03;
+  buf.set(idSecret, 1);
+  buf.set(label, 33);
+  return toHex(sha256(buf));
+}
+
+/** A Data Room Bonded Access requirement read from the DataRoom contract (room-level or per-doc). */
+export interface BondRequirementView {
+  gate: string;
+  reqId: string;
+  token: string;
+  minAmount: string;
+  deadline: number;
+  /** "room" or "doc" — which scope this requirement came from (per-doc overrides room). */
+  scope: "room" | "doc";
+}
+
+function normalizeBondRequirement(raw: unknown, scope: "room" | "doc"): BondRequirementView | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const token = String(r.token ?? "");
+  if (!token) return null;
+  const minAmount = String(r.min_amount ?? "0");
+  const deadline = Number(r.deadline ?? 0);
+  // The contract always stores req_id, but recompute it from (token, min, deadline) if absent so a consumer
+  // never silently gets an empty id (parity with the backend read).
+  let reqId = bytesToHex(r.req_id);
+  if (!reqId) { try { reqId = bondReqId(token, minAmount, deadline); } catch { /* leave empty */ } }
+  return { gate: String(r.gate ?? ""), reqId, token, minAmount, deadline, scope };
 }
 
 function normalizeInvestorAccess(raw: unknown): InvestorAccess | null {
@@ -1206,6 +1280,109 @@ export class ZkorageClient {
     } catch (e) { notes.push("verify: " + msg(e)); }
     cl.verdict = cl.journalWellFormed && cl.digestMatches && cl.imagePinned && cl.resultTrue && cl.claimTypeOk && cl.memberRootPinned && cl.qualRootAccepted && cl.deadlineFuture && cl.proofValidOnChain;
     return { verdict: cl.verdict, checklist: cl, decodedJournal: dj, recomputedDigest: recomputed, notes };
+  }
+
+  // ---- BA1: Bonded Access (anonymous per-requirement bond gate, wired into the Data Room) ----
+
+  /** The room-level Bonded Access requirement on the DataRoom, or null if none set. */
+  async getBondRequirement(roomIdHex: string): Promise<BondRequirementView | null> {
+    return normalizeBondRequirement(
+      await this.simRead(this.cfg.contracts.dataroom, "get_bond_requirement", [scBytes(roomIdHex)]),
+      "room",
+    );
+  }
+
+  /** The per-document Bonded Access requirement override on the DataRoom, or null if none set. */
+  async getDocBondRequirement(roomIdHex: string, docIdHex: string): Promise<BondRequirementView | null> {
+    return normalizeBondRequirement(
+      await this.simRead(this.cfg.contracts.dataroom, "get_doc_bond_requirement", [scBytes(roomIdHex), scBytes(docIdHex)]),
+      "doc",
+    );
+  }
+
+  /** The EFFECTIVE Bonded Access requirement for a document: the per-doc override if set, else the room-level
+   *  requirement, else null (the document is not bonded). Mirrors the contract's `is_doc_admitted` resolution. */
+  async getEffectiveBondRequirement(roomIdHex: string, docIdHex: string): Promise<BondRequirementView | null> {
+    const doc = await this.getDocBondRequirement(roomIdHex, docIdHex);
+    return doc ?? (await this.getBondRequirement(roomIdHex));
+  }
+
+  /** The bond gate's live decision for a (accessor, req_id, member_root): a grant exists, is unexpired, AND
+   *  was proven against `member_root` (the room's current eligible_root). The room-binding leg the DataRoom
+   *  mirrors. */
+  async isBondGrantedFor(accessorHex: string, reqIdHex: string, memberRootHex: string): Promise<boolean> {
+    return Boolean(await this.simRead(this.cfg.contracts.bondGate, "is_granted_for", [scBytes(accessorHex), scBytes(reqIdHex), scBytes(memberRootHex)]));
+  }
+
+  /** The bond gate's accepted `qual_root` ring (oldest first) for a requirement. */
+  async getBondQualRing(reqIdHex: string): Promise<string[]> {
+    const v = await this.simRead(this.cfg.contracts.bondGate, "get_qual_ring", [scBytes(reqIdHex)]);
+    return Array.isArray(v) ? (v as unknown[]).map((x) => bytesToHex(x)) : [];
+  }
+
+  /**
+   * The TRUSTLESS audit of a Bonded Access requirement's qualifying-set root. Independently rebuilds
+   * `qual_root` from the escrow's PUBLIC `get_lock` state for the requirement (token, minAmount, deadline) —
+   * no secrets, no trust in the indexer. Scans locks, keeps the non-revocable, still-locked locks of THIS
+   * token with amount >= minAmount ∧ unlock_time >= deadline ∧ a non-zero commitment, dedupes by commitment,
+   * and folds the depth-20 Merkle root. `accepted` says whether the recomputed root is in the gate's ring for
+   * `req_id`, so anyone can confirm the gate's published anonymity set is honest. Mirrors the tier
+   * `recomputeQualRoot`, but the token is a parameter (per-requirement) instead of the fixed bond token.
+   */
+  async recomputeBondQualRoot(
+    token: string,
+    minAmount: bigint | string | number,
+    deadline: number,
+    opts: { maxScan?: number } = {},
+  ): Promise<RecomputedQualRoot> {
+    const min = BigInt(minAmount);
+    const maxScan = opts.maxScan ?? 200;
+    const now = Math.floor(Date.now() / 1000);
+    const found: { id: number; commitment: string }[] = [];
+    const seen = new Set<string>();
+    const batchSize = 8;
+    let complete = false;
+    for (let start = 1; start <= maxScan; start += batchSize) {
+      const ids: number[] = [];
+      for (let i = 0; i < batchSize && start + i <= maxScan; i++) ids.push(start + i);
+      const settled = await Promise.allSettled(ids.map((id) => this.simRead(this.cfg.contracts.escrow, "get_lock", [scU64(id)])));
+      let anyFound = false;
+      let transient = false;
+      settled.forEach((r, i) => {
+        if (r.status === "rejected") {
+          if (!isContractError(r.reason)) transient = true;
+          return;
+        }
+        if (!r.value) return;
+        anyFound = true;
+        const l = r.value as Record<string, unknown>;
+        const commitment = bytesToHex(l.commitment).toLowerCase();
+        const isLocked = !Boolean(l.released) && now < Number(l.unlock_time);
+        if (
+          isLocked &&
+          !Boolean(l.revocable) &&
+          String(l.token) === token &&
+          BigInt(String(l.amount)) >= min &&
+          Number(l.unlock_time) >= deadline &&
+          !/^0*$/.test(commitment) &&
+          !seen.has(commitment)
+        ) {
+          seen.add(commitment);
+          found.push({ id: ids[i], commitment });
+        }
+      });
+      if (transient) throw new Error("could not reach the network while recomputing the qualifying set");
+      if (!anyFound) { complete = true; break; }
+    }
+    found.sort((a, b) => a.id - b.id);
+    const commitments = found.map((f) => f.commitment);
+    const root = toHex(merkleRootDepth20(commitments.map((h) => fromHex(h))));
+    let accepted = false;
+    try {
+      const ring = await this.getBondQualRing(bondReqId(token, min, deadline));
+      accepted = ring.includes(root);
+    } catch { /* gate not configured */ }
+    return { root, size: commitments.length, commitments, accepted, complete };
   }
 
   // ---- Week 8: full independent re-verification of the two legs ----

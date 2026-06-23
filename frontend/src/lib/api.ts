@@ -1261,3 +1261,108 @@ export const submitTier = (bundle: Bundle) =>
 
 export const getTierStatus = (accessor: string) =>
   fetch(`${BASE}/bonded/tier/status?accessor=${accessor}`).then(j<TierStatus>);
+
+// ── Bonded Access (BA4/BA5): anonymous per-requirement bond gating wired into the Data Room ──
+// The room owner sets ONE bond requirement (token, min amount, deadline); a reader opening any of the room's
+// documents proves a qualifying anonymous bond, which ALSO proves room membership (Option A). Owner writes are
+// wallet-signed (the contract requires room-owner auth); the reader's prove/submit mirrors the tier path.
+
+export interface BondRequirement {
+  found: boolean;
+  scope?: "room" | "doc" | null;
+  gate?: string;
+  reqId?: string;
+  token?: string;
+  minAmount?: string; // base units
+  deadline?: number; // unix seconds
+}
+
+export interface BondQualLockView {
+  id: number;
+  commitment: string;
+  amount: string;
+  unlock_time: number;
+  depositor: string;
+}
+
+export interface BondQualSet {
+  token: string;
+  minAmount: string;
+  deadline: number;
+  reqId: string;
+  anonSetSize: number;
+  minAnonSet: number;
+  belowMin: boolean;
+  computedRoot: string;
+  published: boolean;
+  ringLen: number;
+  locks: BondQualLockView[];
+}
+
+// Read the EFFECTIVE Bonded Access requirement for a room (or, with docId, the per-doc override falling back
+// to the room one). found:false means the room/document is not bonded.
+export const getBondRequirementApi = (roomId: string, docId?: string) =>
+  fetch(`${BASE}/dataroom/bond-requirement/${roomId}${docId ? `?doc=${encodeURIComponent(docId)}` : ""}`).then(
+    j<BondRequirement>,
+  );
+
+// Read the qualifying-bond set + the gate ring for a requirement (the reader's anonymity count + whether
+// their own commitment qualifies — `locks[].commitment`).
+export const getBondQualSet = (token: string, minAmount: string, deadline: number) =>
+  fetch(
+    `${BASE}/bonded/bond/qual-set?token=${encodeURIComponent(token)}&min_amount=${minAmount}&deadline=${deadline}`,
+  ).then(j<BondQualSet>);
+
+// Owner: set (or replace) the room-level bond requirement (wallet-signed; the contract requires room-owner
+// auth). Returns the derived req_id + the room's approved-member count (0 => the bond leg fails closed).
+export const setBondRequirement = (
+  roomId: string,
+  req: { token: string; minAmount: string; deadline: number },
+  signer: TxSigner,
+): Promise<WalletWriteResult & { reqId?: string; memberCount?: string }> =>
+  writeViaWallet(
+    "/dataroom/bond-requirement",
+    { roomId, token: req.token, min_amount: req.minAmount, deadline: req.deadline },
+    signer,
+  );
+
+// Owner: clear the room-level bond requirement (wallet-signed). The room falls back to plain membership.
+export const clearBondRequirement = (roomId: string, signer: TxSigner): Promise<WalletWriteResult> =>
+  writeViaWallet("/dataroom/bond-requirement/clear", { roomId }, signer);
+
+// Publish (or refresh) the qualifying-set root for a requirement on the bond gate (admin relay; refuses below
+// the anonymity floor). Best-effort after the owner sets a requirement or a reader deposits.
+export const publishBondQualRoot = (token: string, minAmount: string, deadline: number) =>
+  post<{ ok: boolean; txHash?: string; reqId?: string; qualRoot?: string; anonSetSize?: number; minAnonSet?: number; error?: string }>(
+    "/bonded/bond/qual-root",
+    { token, min_amount: minAmount, deadline },
+  );
+
+// Reader: build + enqueue the bond proof (kind=bond) worker-first. The witness (id_secret/id_trapdoor/holder
+// seed) reaches the self-hosted prover only. Poll getProveStatus(jobId), then submitBond(bundle).
+export const proveBond = (body: {
+  roomId: string;
+  idSecret: string;
+  idTrapdoor: string;
+  holderSeed: string;
+  token: string;
+  minAmount: string;
+  deadline: number;
+}) =>
+  post<{ jobId?: string; roomId?: string; reqId?: string; memberRoot?: string; qualRoot?: string; nullifier?: string; accessor?: string; anonSetSize?: number; error?: string }>(
+    "/bonded/bond/prove",
+    {
+      roomId: body.roomId,
+      idSecret: body.idSecret,
+      idTrapdoor: body.idTrapdoor,
+      holderSeed: body.holderSeed,
+      token: body.token,
+      min_amount: body.minAmount,
+      deadline: body.deadline,
+    },
+  );
+
+// Submit the bond proof to the gate. PERMISSIONLESS — the in-guest holder signature is the consent, so the
+// backend relays (the reader never reveals or pays from a funded wallet). Grant or a contract error.
+export const submitBond = (bundle: Bundle) =>
+  post<WalletWriteResult & { grant?: unknown }>("/bonded/bond/submit", { ...bundle });

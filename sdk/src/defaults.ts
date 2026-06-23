@@ -184,6 +184,8 @@ export const TESTNET: ZkorageConfig = {
     bondToken: "CCFHRZAP7GYUBNJ4RN7NBZL5GS7Q32F4CIXDTWTTIGPYEDWRIS2TUPA5",
     // BP5 tier-gate (deployment.testnet.json -> tier_gate_BP5). Overridable via config.
     tierGate: "CASSJSBMFDS3BCUBYKXG52SUS7GIHBCHDUM5FGQO4LY5VOWPUPPUFKZP",
+    // BA1 bond-gate (generalized per-requirement Bonded Access gate, claim_type 14). Overridable via config.
+    bondGate: "CCKX6B7QIE42YA27Y4KTB6CTXRB3OBGR5EW7N2BLAG4AB3V6CFDKXCZU",
   },
   // Any existing funded testnet account works as the read-only sim source (it never signs).
   readSource: "GDLECNXD76OZQROASQGWEP4KAMJWTJXZW2LN7OJGYPXIJDRXACWGXZY6",
@@ -238,6 +240,14 @@ export const TIER_IMAGE_ID =
 
 /** Anonymous bonded-tier claim_type (enrolled member ∧ qualifying bonded lock, expiring at X). */
 export const CLAIM_TYPE_TIER = 13;
+
+/** BA1 — Bonded Access bond gate: the canonical bond guest image_id the gate pins (per-requirement bond,
+ * generalized over (token, min amount, deadline); the member tree is the room's eligible set). */
+export const BOND_IMAGE_ID =
+  "dc4da02d887b3f388ffee26860a8416b393d4cfea982831183d15d5bfcf1f6c4";
+
+/** Bonded Access claim_type (enrolled room member ∧ qualifying bond for a requirement, anonymous). */
+export const CLAIM_TYPE_BOND = 14;
 
 /** A stable demo anonymous-tier GRANT anchored on testnet (gate `tier_gate_BP5`). The fixed demo member
  * (id 0x11/0x22, holder 0x03 -> accessor `ed4928c6`, the same demo member as DR2/DR3/DR6) proved the demo

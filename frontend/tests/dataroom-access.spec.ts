@@ -41,6 +41,9 @@ async function stubReads(
     document: { content_hash: "ab".repeat(32), k_commitment: "cd".repeat(32), pointer: "blob://x" }, dataroomId: "CID",
   })));
   await page.route("**/dataroom/enroll/status/**", (r) => r.fulfill(json({ state: enrollState })));
+  // No bond requirement on this demo room -> the open flow stays on the plain-membership path (BA5 adds a
+  // bond branch when found:true; stub found:false here so these tests don't depend on the live backend).
+  await page.route("**/dataroom/bond-requirement/**", (r) => r.fulfill(json({ found: false })));
   await page.route("**/dataroom/membership/eligible/**", (r) => r.fulfill(json({
     roomId: ROOM, memberCount, commitments: [], computedRoot: "00".repeat(32), pinnedRoot: "00".repeat(32), inSync: true,
   })));
