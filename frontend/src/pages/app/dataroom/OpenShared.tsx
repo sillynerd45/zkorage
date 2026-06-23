@@ -124,8 +124,8 @@ function OpenStatus({ s }: { s: ReturnType<typeof useSharedOpen> }) {
             You qualify. Prove access once (about a few minutes), then every document in this room opens right away.
           </p>
           <p className="text-xs text-muted-foreground">
-            This runs a one-time proof on our self-hosted prover that you hold a qualifying bond and are on the
-            room's list, without revealing which bond or which member.
+            This runs a one-time setup on our self-hosted prover that proves you hold a qualifying bond and are
+            on the room's list, without revealing which bond or which member.
           </p>
           <div className="flex flex-wrap gap-2">
             <Button size="sm" onClick={s.setupBondAccess} data-testid="access-bond-prove">Prove access</Button>
