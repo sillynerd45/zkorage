@@ -18,7 +18,7 @@ self-tested on Stellar testnet. The Data Room has since been redesigned into one
 **Model B**): a policy-gated committee document you open by proving anonymous membership, with keys derived
 from your wallet so you open on any device. It adds a public discovery directory and, in its load-bearing
 slice, a timing defense that batches and shuffles the on-chain access records, so the room sees that an
-approved member accessed in a window, not which member or exactly when. Frontend is **v0.12.18**. A new
+approved member accessed in a window, not which member or exactly when. Frontend is **v0.12.19**. A new
 **Bonded Proofs** pillar (a Soroban-native time-locked escrow plus two
 live ZK products: a **solvency proof that dies when you pull your collateral** and an **anonymous bonded
 tier**) is also live; see below. The whole stack
