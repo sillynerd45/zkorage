@@ -27,9 +27,12 @@ import { buildSparseTree, qualCommitment } from "./tier.js";
 (ed.etc as { sha512Sync?: (...m: Uint8Array[]) => Uint8Array }).sha512Sync = (...m) =>
   sha512(ed.etc.concatBytes(...m));
 
-// Deployed on testnet by the BA1 build. Override via env. Empty until the gate is deployed.
-export const BOND_GATE_ID = process.env.BOND_GATE_ID || "";
-export const BOND_IMAGE_ID = process.env.BOND_IMAGE_ID || "";
+// Deployed on testnet by the BA1 build. Override via env.
+export const BOND_GATE_ID =
+  process.env.BOND_GATE_ID || "CCKX6B7QIE42YA27Y4KTB6CTXRB3OBGR5EW7N2BLAG4AB3V6CFDKXCZU";
+export const BOND_IMAGE_ID =
+  process.env.BOND_IMAGE_ID ||
+  "dc4da02d887b3f388ffee26860a8416b393d4cfea982831183d15d5bfcf1f6c4";
 /** Minimum qualifying-set size before the backend will build a proof (anonymity guard; a set of 1
  *  de-anonymizes by elimination). Off-chain by necessity — a Merkle root carries no member count. */
 export const BOND_MIN_ANON_SET = Number(process.env.BOND_MIN_ANON_SET || 3);
