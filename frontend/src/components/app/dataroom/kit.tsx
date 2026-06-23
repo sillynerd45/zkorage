@@ -13,10 +13,12 @@ import {
 import { cn } from "@/lib/utils";
 import type { CommitteeInfoResp } from "@/lib/api";
 
-// Data-Room-scoped UI kit. These molecules are used ONLY by the Data Room pages, so the rest of the app
-// (Home + the five proof pages + the shared blocks.tsx) keeps its exact look. Nothing here restyles a
-// shared component; it adds new, route-local pieces: the header with the committee pill, the task cards
-// with their hover interaction, category chips, group labels, step strips, callouts, and a copy button.
+// Data-Room UI kit. These molecules drive the Data Room pages, plus TaskCard + GroupLabel are reused by the
+// Bonded Proofs Overview (both are route-agnostic launchers). The rest of the app (Home + the five proof
+// pages + the shared blocks.tsx) keeps its exact look. Nothing here restyles a shared component; it adds new
+// pieces: the header with the committee pill, the task cards with their hover interaction, category chips,
+// group labels, step strips, callouts, and a copy button. If a third surface needs TaskCard/GroupLabel,
+// promote them to a shared components/app kit instead of widening this one.
 //
 // The card hover (lift + deeper shadow + border + icon-tile inversion + corner arrow) all rides on the
 // parent `group`, and uses only Tailwind utilities + the existing tokens, so it works in light and dark and
@@ -141,7 +143,10 @@ export function Callout({
 }
 
 // The Overview task card. One component for the grid cards and the hero (the hero shares the look with
-// larger padding, a "Start here" chip, and a right-arrow that slides instead of a corner arrow).
+// larger padding, a chip, and a right-arrow that slides instead of a corner arrow). Used by the Data Room
+// Overview and the Bonded Proofs Overview. A featured card shows a "Start here" chip by default; pass `tag`
+// to label it differently (the Bonded Overview has two co-equal featured proofs, so both carry "ZK proof"
+// instead of a single "Start here"). `tag` only renders on a featured card; on a plain card it is a no-op.
 export function TaskCard({
   to,
   icon: Icon,
@@ -149,6 +154,7 @@ export function TaskCard({
   blurb,
   category,
   featured = false,
+  tag,
   star = false,
   testid,
 }: {
@@ -158,6 +164,7 @@ export function TaskCard({
   blurb: string;
   category?: DRCategory;
   featured?: boolean;
+  tag?: string;
   star?: boolean;
   testid?: string;
 }) {
@@ -192,7 +199,7 @@ export function TaskCard({
               )}
               {featured && (
                 <span className="ml-1 inline-flex shrink-0 items-center rounded-full bg-brand/10 px-2 py-0.5 text-[11px] font-medium text-brand">
-                  Start here
+                  {tag ?? "Start here"}
                 </span>
               )}
             </div>

@@ -19,7 +19,7 @@ const mock = (addr: string) => `
 `;
 const DARK = `localStorage.setItem("zkorage-theme","dark");`;
 
-test("bonded: overview renders, tabs present incl. Prove Solvency (light + dark)", async ({ page }) => {
+test("bonded: overview is action-first (two proof heroes + manage cards), tabs present (light + dark)", async ({ page }) => {
   const errs: string[] = [];
   page.on("console", (m) => {
     // Keep this assertion for real app/JS errors. Ignore transient network resource loads (e.g. the
@@ -28,6 +28,14 @@ test("bonded: overview renders, tabs present incl. Prove Solvency (light + dark)
   });
   await page.goto("/app/bonded");
   await expect(page.getByTestId("bonded-overview")).toBeVisible();
+  // the action-first cards: two flagship proofs lead, the two escrow utilities follow, each a real link
+  await expect(page.getByTestId("bonded-task-prove")).toHaveAttribute("href", "/app/bonded/prove");
+  await expect(page.getByTestId("bonded-task-tier")).toHaveAttribute("href", "/app/bonded/tier");
+  await expect(page.getByTestId("bonded-task-deposit")).toHaveAttribute("href", "/app/bonded/deposit");
+  await expect(page.getByTestId("bonded-task-balances")).toHaveAttribute("href", "/app/bonded/balances");
+  // the verify note linking to the public chain
+  await expect(page.getByTestId("bonded-verify-note")).toBeVisible();
+  // the tab bar still exposes the proof tabs (exact name = the tab only, the cards' names include the blurb)
   await expect(page.getByRole("link", { name: "Prove Solvency", exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "My Balances", exact: true })).toBeVisible();
   await page.screenshot({ path: "tests/bonded-overview.png", fullPage: true });
