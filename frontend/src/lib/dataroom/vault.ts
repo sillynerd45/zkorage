@@ -9,11 +9,12 @@ import { exportRoomsBackup, importRoomsBackup, mergeJoinRequests, deriveVaultHan
 import { readJoinRequests, writeJoinRequests, type JoinRequest } from "./requests";
 import { getRoomsVault, putRoomsVault, deleteRoomsVault } from "@/lib/api";
 
-// Per-wallet sync preference (this browser). Default ON; "0" means the user turned it off.
+// Per-wallet sync preference (this browser). Default OFF; only an explicit "1" (the user turned it on) enables
+// it, so cross-device sync is opt-in and we never sign on page load unless the user asked for sync before.
 export const vaultSyncKey = (addr: string) => `zkorage.dr.vaultSync.${addr}`;
 export function isVaultSyncOn(addr: string | null | undefined): boolean {
-  if (!addr || typeof localStorage === "undefined") return true;
-  return localStorage.getItem(vaultSyncKey(addr)) !== "0";
+  if (!addr || typeof localStorage === "undefined") return false;
+  return localStorage.getItem(vaultSyncKey(addr)) === "1";
 }
 export function setVaultSyncOn(addr: string, on: boolean): void {
   try {

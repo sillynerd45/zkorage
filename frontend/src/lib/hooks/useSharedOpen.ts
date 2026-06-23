@@ -79,9 +79,10 @@ export function useSharedOpen() {
   }, []);
   useEffect(() => { reloadOpenable(connected ? address : null); }, [connected, address, reloadOpenable]);
 
-  // Automatic cross-device sync via the encrypted vault. Default ON. "locked" = sync is on but the wallet has
-  // not signed this session yet, so we wait for a one-tap unlock rather than pop the wallet on page load.
-  const [syncOn, setSyncOn] = useState(true);
+  // Cross-device sync via the encrypted vault. Default OFF (opt-in). "locked" = sync was turned on before but
+  // the wallet has not signed THIS session (a page reload), so we wait for a one-tap sign-in rather than pop the
+  // wallet on load. Turning the switch on (an explicit action) signs right away, so the happy path syncs at once.
+  const [syncOn, setSyncOn] = useState(false);
   const [syncState, setSyncState] = useState<SyncState>("off");
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
   useEffect(() => { setSyncOn(isVaultSyncOn(connected ? address : null)); }, [connected, address]);
@@ -174,7 +175,8 @@ export function useSharedOpen() {
     }
   }, [address, ident, reloadOpenable]);
 
-  // Turn sync on (sync now if already signed, else show the unlock) or off (delete the server copy).
+  // Turn sync on or off. Turning it ON is an explicit opt-in, so sign + pull right away (no separate Unlock
+  // step); a declined signature lands in the "error" state with a retry. Turning it OFF deletes the server copy.
   const setSync = useCallback(
     async (on: boolean) => {
       if (!address) return;
@@ -182,8 +184,7 @@ export function useSharedOpen() {
       setSyncOn(on);
       setSyncMsg(null);
       if (on) {
-        if (ident.hasSignature(address)) await unlockSync();
-        else setSyncState("locked");
+        await unlockSync();
       } else {
         setSyncState("off");
         syncedFor.current = null;
