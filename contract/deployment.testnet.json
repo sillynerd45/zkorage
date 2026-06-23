@@ -618,5 +618,28 @@
     "reproducible": "ed25519 + sha256 only (no x25519) -> canonical image_id reproduces cross-machine; same Cargo.lock pins as guest-tier. Built on the WSL2 box (risc0 5.0.0-rc.1, ~/zkorage-r5). EXEC segments=1.",
     "prover_kind": "bond (gateway + worker, 11th canonical bin host_bond); fields sig/pk/accessor/id_secret/id_trapdoor/context/token/min_amount/deadline/member-siblings+index/qual-siblings+index; worker-first.",
     "byte_exact_journal_demo": "010000000e8be678722c84e8bf478cd0c2a8e257bcc599f80d56ad2839e0188a1cace651da75c7de57b1536d37bdbc48033e4d01f5a8bd116005be8eb637c1325f45d11c2a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a0000000000000000000000003b9aca0000000002540be3ffb7f9f4bf6703f0485332cbda64a3a9ec257d288ca0413a30d2d60368b2484633af600e12af4552510da3a16da7277b557ec8164ed6e51f3d46e4ac4f4b8d7102ed4928c628d1c2c6eae90338905995612959273a5c63f93636c14614ac8737d1 (host_bond EXEC_ONLY == backend ba1-bond-selftest)."
+  },
+  "dataroom_BA1_bond_leg": {
+    "name": "DataRoom contract - BA1 Bonded Access leg (in-place upgrade): bond requirement cross-call in is_doc_admitted / is_admitted",
+    "contract_id": "CDUQITRVJOPJNVWBUINLZFI2LHPOLVFW2I7354WEFDG2W3VIG627HLNN",
+    "upgrade_wasm_hash": "034091be72fd5ded06ba3dbd21426b60b98a5e1686b143312459c66875338a72",
+    "wasm_size_bytes": 81462,
+    "bond_gate": "CCKX6B7QIE42YA27Y4KTB6CTXRB3OBGR5EW7N2BLAG4AB3V6CFDKXCZU",
+    "new_storage": "DataKeys added in place (existing storage untouched - no retype): BondReq(room), BondReqDoc(room,doc) -> a NEW BondRequirement struct {gate:Address, req_id:BytesN<32>, token:Address, min_amount:i128, deadline:u64}. NOT new fields on the stored RoomPolicy (a retype would break existing on-chain records). New error BadBondRequirement=28. New 3-arg #[contractclient] BondGateClient (is_granted_for(accessor,req_id,member_root)->bool).",
+    "binds": "set_bond_requirement / set_doc_bond_requirement (room-owner auth, min_amount>0) store the requirement; is_doc_admitted / is_admitted: effective bond req (doc>room). When set, the bond leg READS the room's EligibleRoot and cross-calls bond_gate.try_is_granted_for(accessor, req.req_id, room_eligible_root) -> bond-implies-membership (Option A): a satisfied bond leg REPLACES the DR2 membership spine (the bond proof's member_root IS the room's eligible_root). Compliance/accredited policy legs still AND on top. Neither bond nor policy set -> the unchanged bare-membership fallback (legacy committee docs preserved). Fail-closed: no eligible_root or a reverting/wrong-root gate -> false; a root rotation drops access (mirrors DR2).",
+    "new_methods": [
+      "set_bond_requirement",
+      "set_doc_bond_requirement",
+      "clear_bond_requirement",
+      "clear_doc_bond_requirement",
+      "get_bond_requirement",
+      "get_doc_bond_requirement"
+    ],
+    "contract_tests": "cargo 110/110 (10 BA1: bond admits WITHOUT a DR2 grant; wrong member_root denies; fail-closed without eligible_root; root rotation drops; doc req overrides room; bond AND compliance; revoked denied; clear falls back; zero min_amount #28; owner-auth). All DR1-DR6 tests still green (storage-preserving, behavior-identical for non-bond rooms).",
+    "acceptance_testnet": {
+      "note": "LIVE composition e2e GREEN. In-place upgrade (wasm 034091be) preserved storage (room_count 42, config intact). Test room ba01..ba01 (index 42): set_eligible_root = the demo member root 8be67872 + set_bond_requirement(gate CCKX6B7Q, req_id b7f9f4bf, min 1e9, deadline 9999999999) -> is_doc_admitted(room, doc, accessor ed4928c6) = true (the DataRoom cross-called the bond gate with the room's eligible_root). Negative: rotate eligible_root -> WRONG -> is_doc_admitted = false (the grant's member_root no longer matches); restore -> true.",
+      "upgrade_tx": "in-place update_current_contract_wasm via scripts/upgrade_dataroom_bond.sh (admin = deployer)."
+    },
+    "plan": "development/Build-Plan/dataroom/BONDED-ACCESS-PLAN.md (BA1+BA3 done + live; next BA2 backend /bonded/bond/* endpoints + a deposit-for-access helper, then BA4/BA5 frontend, BA6 polish/demo seed)."
   }
 }
