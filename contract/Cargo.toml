@@ -13,6 +13,7 @@ members = [
     "contracts/escrow",
     "contracts/solvency-gate",
     "contracts/tier-gate",
+    "contracts/bond-gate",
     "tools/build-utils",
 ]
 resolver = "3"
