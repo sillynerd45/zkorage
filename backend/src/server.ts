@@ -4085,6 +4085,29 @@ app.get("/escrow/balance", async (req, res) => {
   }
 });
 
+// Read any SEP-41 token's balance + decimals + symbol for an owner. Used by the Deposit token picker for a
+// pasted contract address (the wallet's classic assets are read client-side from Horizon). `decimals` is the
+// "is this a token" probe: if it fails, the contract is not a deployed SEP-41 token, so return 400 (not 5xx,
+// so Cloudflare does not mask it).
+app.get("/escrow/token-balance", async (req, res) => {
+  const owner = String(req.query.owner ?? "");
+  const token = String(req.query.token ?? "");
+  if (!StrKey.isValidEd25519PublicKey(owner)) return res.status(400).json({ error: "owner (G-address) required" });
+  if (!StrKey.isValidContract(token)) return res.status(400).json({ error: "token (C-address) required" });
+  let decimals: number;
+  try {
+    decimals = Number((await readContract(token, "decimals")).value);
+  } catch {
+    return res.status(400).json({ error: "token contract not found, or not a SEP-41 token" });
+  }
+  if (!Number.isFinite(decimals)) decimals = 7;
+  const [balance, symbol] = await Promise.all([
+    readContract(token, "balance", [scAddress(owner)]).then((r) => String(r.value ?? "0")).catch(() => "0"),
+    readContract(token, "symbol").then((r) => String(r.value ?? "")).catch(() => ""),
+  ]);
+  res.json({ owner, token, balance, decimals, symbol });
+});
+
 app.post("/escrow/faucet", async (req, res) => {
   const to = String((req.body as { to?: string })?.to ?? "");
   if (!StrKey.isValidEd25519PublicKey(to)) return res.status(400).json({ error: "to (G-address) required" });

@@ -1,12 +1,14 @@
-import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { Wallet } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { Wallet, Eye } from "lucide-react";
 import { useBonded } from "@/lib/hooks/useBonded";
 import { Panel } from "@/components/app/blocks";
+import { Callout } from "@/components/app/dataroom/kit";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { fmtAmount, toBaseUnits } from "@/lib/api";
+import { fmtAmount, toBaseUnits, getEscrowInfo, getBondBalance, getTokenBalance } from "@/lib/api";
+import { loadWalletTokens, plainAmount, type TokenOption } from "@/lib/bonded/tokens";
 import { cn } from "@/lib/utils";
 
 // now + 1 hour, formatted for a datetime-local input (local time, minute precision).
@@ -16,9 +18,18 @@ function defaultUnlock(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+const PASTE = "__paste__";
+
 export default function BondedDeposit() {
   const b = useBonded();
   const nav = useNavigate();
+  const [tokens, setTokens] = useState<TokenOption[]>([]);
+  const [loadingTokens, setLoadingTokens] = useState(false);
+  const [selectedKey, setSelectedKey] = useState("");
+  const [pasteValue, setPasteValue] = useState("");
+  const [pasteToken, setPasteToken] = useState<TokenOption | null>(null);
+  const [pasteErr, setPasteErr] = useState<string | null>(null);
+  const [pasteBusy, setPasteBusy] = useState(false);
   const [amount, setAmount] = useState("100");
   const [unlockAt, setUnlockAt] = useState(defaultUnlock);
   const [mode, setMode] = useState<"bond" | "send">("bond");
@@ -28,6 +39,55 @@ export default function BondedDeposit() {
   const [ok, setOk] = useState<string | null>(null);
 
   const unlockUnix = useMemo(() => Math.floor(new Date(unlockAt).getTime() / 1000), [unlockAt]);
+
+  const reloadTokens = useCallback(async () => {
+    if (!b.address) return;
+    setLoadingTokens(true);
+    try {
+      const [info, bal] = await Promise.all([
+        getEscrowInfo(),
+        getBondBalance(b.address).catch(() => ({ balance: "0" })),
+      ]);
+      const list = await loadWalletTokens(b.address, info.bondTokenId, bal.balance);
+      setTokens(list);
+      setSelectedKey((prev) => prev || list[0]?.key || "");
+    } finally {
+      setLoadingTokens(false);
+    }
+  }, [b.address]);
+
+  useEffect(() => {
+    void reloadTokens();
+  }, [reloadTokens]);
+
+  const isPaste = selectedKey === PASTE;
+  const selected: TokenOption | null = isPaste ? pasteToken : tokens.find((t) => t.key === selectedKey) ?? null;
+
+  const resolvePaste = async () => {
+    setPasteErr(null);
+    setPasteToken(null);
+    const c = pasteValue.trim().toUpperCase();
+    if (!/^C[A-Z2-7]{55}$/.test(c)) {
+      setPasteErr("Enter a valid contract address (C…).");
+      return;
+    }
+    setPasteBusy(true);
+    try {
+      const t = await getTokenBalance(b.address!, c);
+      setPasteToken({
+        key: PASTE,
+        symbol: t.symbol || "token",
+        contractId: c,
+        decimals: t.decimals,
+        balanceBase: t.balance,
+        kind: "custom",
+      });
+    } catch (e) {
+      setPasteErr((e as Error)?.message ?? "Could not read that token.");
+    } finally {
+      setPasteBusy(false);
+    }
+  };
 
   if (!b.connected) {
     return (
@@ -45,14 +105,16 @@ export default function BondedDeposit() {
   const submit = async () => {
     setErr(null);
     setOk(null);
-    const base = toBaseUnits(amount);
-    if (!base) return setErr("Enter a valid amount (up to 7 decimals).");
-    if (BigInt(base) > BigInt(b.balance)) return setErr(`You only have ${fmtAmount(b.balance)} zkUSD. Get more from the faucet.`);
+    if (!selected) return setErr("Pick a token to lock.");
+    const base = toBaseUnits(amount, selected.decimals);
+    if (!base) return setErr(`Enter a valid amount (up to ${selected.decimals} decimals).`);
+    if (BigInt(base) > BigInt(selected.balanceBase || "0"))
+      return setErr(`You only have ${fmtAmount(selected.balanceBase, selected.decimals)} ${selected.symbol}.`);
     if (!unlockUnix || unlockUnix <= Math.floor(Date.now() / 1000)) return setErr("Pick an unlock time in the future.");
     const claimant = mode === "send" ? recipient.trim() : b.address!;
     const rev = mode === "send" ? false : revocable;
     if (mode === "send" && !/^G[A-Z2-7]{55}$/.test(claimant)) return setErr("Enter a valid recipient address (G…).");
-    const r = await b.deposit({ amount: base, unlock_time: unlockUnix, revocable: rev, claimant });
+    const r = await b.deposit({ amount: base, unlock_time: unlockUnix, revocable: rev, claimant, token: selected.contractId });
     if (r.ok) {
       setOk(`Locked. tx ${r.txHash ?? ""}`);
       setTimeout(() => nav("/app/bonded/balances"), 900);
@@ -62,30 +124,103 @@ export default function BondedDeposit() {
   };
 
   const busy = b.busy === "deposit";
+  const selectCls =
+    "mt-1 h-10 w-full max-w-xs rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring";
 
   return (
     <Panel title="Lock tokens" className="max-w-xl">
       <div className="grid gap-4" data-testid="bonded-deposit">
+        {/* Token: pick any token your wallet holds (the escrow holds any SEP-41 token). */}
+        <div>
+          <Label htmlFor="token">Token</Label>
+          <select
+            id="token"
+            value={selectedKey}
+            onChange={(e) => setSelectedKey(e.target.value)}
+            className={selectCls}
+            data-testid="deposit-token"
+            disabled={loadingTokens && tokens.length === 0}
+          >
+            {tokens.length === 0 && <option value="">Loading your tokens…</option>}
+            {tokens.map((t) => (
+              <option key={t.key} value={t.key}>
+                {t.symbol} · {plainAmount(t.balanceBase, t.decimals)}
+              </option>
+            ))}
+            <option value={PASTE}>Paste a contract address…</option>
+          </select>
+
+          {isPaste && (
+            <div className="mt-2 flex flex-wrap items-end gap-2">
+              <Input
+                value={pasteValue}
+                onChange={(e) => {
+                  // Editing the address invalidates a previously loaded token, so clear it. The submit button
+                  // disables on !selected, which forces a fresh Load before a deposit (no stale-token lock).
+                  setPasteValue(e.target.value);
+                  setPasteToken(null);
+                  setPasteErr(null);
+                }}
+                placeholder="C…"
+                className="w-72 font-mono text-[13px]"
+                data-testid="deposit-token-paste"
+              />
+              <Button type="button" variant="outline" size="sm" disabled={pasteBusy} onClick={() => void resolvePaste()} data-testid="deposit-token-load">
+                {pasteBusy ? "Loading…" : "Load token"}
+              </Button>
+            </div>
+          )}
+          {isPaste && pasteErr && <p className="mt-1 text-[12px] text-destructive">{pasteErr}</p>}
+
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <span className="text-[12px] text-muted-foreground" data-testid="deposit-balance">
+              Balance: {selected ? `${fmtAmount(selected.balanceBase, selected.decimals)} ${selected.symbol}` : "…"}
+            </span>
+            {selected?.kind === "zkusd" && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={b.busy === "faucet"}
+                onClick={async () => {
+                  await b.fundFaucet();
+                  await reloadTokens();
+                }}
+                data-testid="bonded-faucet"
+              >
+                {b.busy === "faucet" ? "Minting…" : "Get 1,000 test zkUSD"}
+              </Button>
+            )}
+          </div>
+          <p className="mt-1 text-[12px] text-muted-foreground">
+            Any token your wallet holds. The escrow locks it the same way, whatever the token.
+          </p>
+        </div>
+
         <div>
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <Label htmlFor="amt">Amount (zkUSD)</Label>
-            <span className="text-[12px] text-muted-foreground" data-testid="deposit-balance">
-              Balance: {fmtAmount(b.balance)} zkUSD
-            </span>
+            <Label htmlFor="amt">Amount ({selected?.symbol ?? "token"})</Label>
+            {selected && BigInt(selected.balanceBase || "0") > 0n && (
+              <button
+                type="button"
+                className="text-[12px] text-brand hover:underline"
+                onClick={() => setAmount(plainAmount(selected.balanceBase, selected.decimals))}
+                data-testid="deposit-max"
+              >
+                Max
+              </button>
+            )}
           </div>
           <Input id="amt" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} className="mt-1 w-48" data-testid="deposit-amount" />
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <Button type="button" variant="outline" size="sm" disabled={b.busy === "faucet"} onClick={() => void b.fundFaucet()} data-testid="bonded-faucet">
-              {b.busy === "faucet" ? "Minting…" : "Get 1,000 test zkUSD"}
-            </Button>
-            <span className="text-[12px] text-muted-foreground">A demo bond token, minted to your wallet.</span>
-          </div>
         </div>
 
         <div>
           <Label htmlFor="unlock">Unlock time</Label>
           <Input id="unlock" type="datetime-local" value={unlockAt} onChange={(e) => setUnlockAt(e.target.value)} className="mt-1 w-64" data-testid="deposit-unlock" />
-          <p className="mt-1 text-[12px] text-muted-foreground">Funds free up at this time. You can extend it later, never shorten it.</p>
+          <p className="mt-1 text-[12px] text-muted-foreground">
+            Funds free up at this time. You can extend it later on{" "}
+            <Link to="/app/bonded/balances" className="text-brand hover:underline">My Balances</Link>. You cannot shorten it.
+          </p>
         </div>
 
         <div>
@@ -127,10 +262,16 @@ export default function BondedDeposit() {
         {ok && <p className="break-all text-[13px] text-success" data-testid="deposit-ok">{ok}</p>}
 
         <div>
-          <Button variant="brand" disabled={busy} onClick={() => void submit()} data-testid="deposit-submit">
+          <Button variant="brand" disabled={busy || !selected} onClick={() => void submit()} data-testid="deposit-submit">
             {busy ? "Confirm in Freighter…" : "Lock tokens"}
           </Button>
         </div>
+
+        <Callout icon={Eye} testId="deposit-privacy">
+          This lock is public. The chain shows your wallet, the token, the amount, and the unlock time. To hide
+          which wallet holds a tier, use the{" "}
+          <Link to="/app/bonded/tier" className="text-brand hover:underline">Anonymous Tier proof</Link>.
+        </Callout>
       </div>
     </Panel>
   );

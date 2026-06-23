@@ -65,18 +65,56 @@ test("bonded: my balances lists the wallet's locks with the right actions", asyn
   await page.screenshot({ path: "tests/bonded-balances-dark.png", fullPage: true });
 });
 
-test("bonded: deposit form, mode switcher reveals the recipient", async ({ page }) => {
+// A real testnet issuer so the client-side SAC computation has a valid asset to hash. The deposit pipeline
+// is multi-token (proven on-chain separately); this test covers the picker UI deterministically by stubbing
+// the wallet's Horizon balances.
+const TUSD_ISSUER = "GDFEJBM6RGK2IL2PIMGVNTGSO7O2NOVILFQUMIC55YMFKSGACA5IO2PM";
+
+test("bonded: deposit form, token picker + mode switcher", async ({ page }) => {
   await page.addInitScript(mock(DEPLOYER));
+  // Stub the wallet's on-chain balances so the picker is deterministic (no live Horizon dependency).
+  await page.route("**/horizon-testnet.stellar.org/accounts/**", (route) =>
+    route.fulfill({
+      json: {
+        balances: [
+          { asset_type: "credit_alphanum4", asset_code: "TUSD", asset_issuer: TUSD_ISSUER, balance: "207116.0000000" },
+          { asset_type: "native", balance: "10000.0000000" },
+        ],
+      },
+    }),
+  );
   await page.goto("/app/bonded/deposit");
   await expect(page.getByTestId("bonded-deposit")).toBeVisible();
-  await expect(page.getByTestId("deposit-amount")).toBeVisible();
-  // the async balance read must land (value drifts with demos, so don't pin a number)
-  await expect(page.getByTestId("deposit-balance")).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByTestId("bonded-faucet")).toBeVisible(); // demo faucet
-  await expect(page.getByTestId("deposit-unlock")).toBeVisible();
-  await expect(page.getByTestId("deposit-revocable")).toBeVisible(); // bond mode default
-  await expect(page.getByTestId("deposit-submit")).toBeVisible();
 
+  // The token picker lists zkUSD (default, with faucet) + the wallet's tokens (XLM + TUSD).
+  const picker = page.getByTestId("deposit-token");
+  await expect(picker).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("option", { name: /XLM/ })).toBeAttached();
+  await expect(page.getByRole("option", { name: /TUSD/ })).toBeAttached();
+  await expect(page.getByTestId("deposit-amount")).toBeVisible();
+  await expect(page.getByTestId("deposit-balance")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("bonded-faucet")).toBeVisible(); // faucet shows only for zkUSD (the default)
+  await expect(page.getByText("Amount (zkUSD)")).toBeVisible();
+
+  // Switch to TUSD: the amount label + balance follow the token, and the zkUSD faucet hides.
+  await picker.selectOption(`TUSD:${TUSD_ISSUER}`);
+  await expect(page.getByText("Amount (TUSD)")).toBeVisible();
+  await expect(page.getByTestId("deposit-balance")).toContainText("TUSD");
+  await expect(page.getByTestId("bonded-faucet")).toHaveCount(0);
+
+  // The "paste a contract address" advanced path reveals an input, and submit stays disabled until a token
+  // is loaded (so a half-typed or edited address can never be deposited).
+  await picker.selectOption("__paste__");
+  await expect(page.getByTestId("deposit-token-paste")).toBeVisible();
+  await expect(page.getByTestId("deposit-submit")).toBeDisabled();
+  await page.getByTestId("deposit-token-paste").fill("CABC");
+  await expect(page.getByTestId("deposit-submit")).toBeDisabled();
+
+  await expect(page.getByTestId("deposit-unlock")).toBeVisible();
+  await expect(page.getByTestId("deposit-submit")).toBeVisible();
+  await expect(page.getByTestId("deposit-privacy")).toBeVisible(); // honest "this lock is public" note
+
+  // Mode switcher: send reveals the recipient, bond reveals the revocable checkbox.
   await page.getByTestId("mode-send").click();
   await expect(page.getByTestId("deposit-recipient")).toBeVisible();
   await page.getByTestId("mode-bond").click();
