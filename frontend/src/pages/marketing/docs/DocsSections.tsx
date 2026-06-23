@@ -113,6 +113,22 @@ export function DocsCapabilities() {
           A time-locked escrow on Stellar, plus the proofs built on it. You lock tokens until a time you
           choose, then prove a fact that stays valid only while the bond stays locked.
         </p>
+
+        <h3 className="mb-2 mt-5 text-sm font-semibold text-foreground">How the escrow works</h3>
+        <ol className="mb-1 space-y-2 text-sm leading-relaxed text-muted-foreground">
+          <li>1. Lock tokens in escrow until a time you set. The funds cannot move before then.</li>
+          <li>2. Choose a self-bond you can withdraw once it unlocks, or a one-way send to a named recipient.</li>
+          <li>3. After the unlock time, release the tokens.</li>
+        </ol>
+
+        <h3 className="mb-2 mt-5 text-sm font-semibold text-foreground">Why it is called a bond</h3>
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          A bond is a stake you post to back a claim. The proof counts only while the tokens stay locked. If
+          the bond is revocable, the moment you pull your collateral the proof goes void. The lock is what
+          makes the claim trustworthy, not our word for it.
+        </p>
+
+        <h3 className="mb-2 mt-5 text-sm font-semibold text-foreground">In the app</h3>
         <ul className="divide-y divide-border/70">
           {bonded.map((t) => (
             <li key={t.slug} className="py-2.5 first:pt-0 last:pb-0">

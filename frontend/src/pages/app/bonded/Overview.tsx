@@ -1,75 +1,97 @@
 import { Link } from "react-router-dom";
-import { Clock, Coins, KeyRound } from "lucide-react";
-import { Panel } from "@/components/app/blocks";
-import { buttonVariants } from "@/components/ui/button";
+import { ShieldCheck, Users, Coins, Wallet, type LucideIcon } from "lucide-react";
+import { TaskCard, GroupLabel } from "@/components/app/dataroom/kit";
 
-const STEPS = [
+// Action-first landing, mirroring the Data Room Overview. The two flagship proofs lead as co-equal featured
+// cards, then the two utility actions (lock, view) sit below. Each card maps to a real Bonded Proofs tab, so
+// this page is a launcher, not an explainer. The header (title + one-line lead) lives in the layout, and the
+// escrow concept + "why it is called a bond" text moved to the public Docs > Capabilities > Bonded Proofs.
+interface Task {
+  to: string;
+  label: string;
+  blurb: string;
+  testid: string;
+  icon: LucideIcon;
+}
+
+// The two ZK products built on the escrow. They lead the page.
+const PROOFS: Task[] = [
   {
-    icon: Clock,
-    title: "Choose an unlock time",
-    body: "Lock an amount of the test token until a future moment. You can extend the lock later, but never shorten it.",
+    to: "/app/bonded/prove",
+    label: "Prove Solvency",
+    blurb: "Prove your reserves cover supply, tied to a lock you can pull anytime.",
+    testid: "bonded-task-prove",
+    icon: ShieldCheck,
   },
   {
+    to: "/app/bonded/tier",
+    label: "Anonymous Tier",
+    blurb: "Prove you bonded enough for a tier, without showing which wallet or how much.",
+    testid: "bonded-task-tier",
+    icon: Users,
+  },
+];
+
+// The escrow itself: lock tokens, then read the locks you can act on.
+const MANAGE: Task[] = [
+  {
+    to: "/app/bonded/deposit",
+    label: "Lock tokens",
+    blurb: "Lock tokens in escrow until a time you choose.",
+    testid: "bonded-task-deposit",
     icon: Coins,
-    title: "Funds stay locked",
-    body: "Until the unlock time, the tokens cannot move. If you mark the lock revocable, you can pull them back early.",
   },
   {
-    icon: KeyRound,
-    title: "Release when it unlocks",
-    body: "After the unlock time, withdraw a self-bond, or let a named recipient claim a one-way send.",
+    to: "/app/bonded/balances",
+    label: "My Balances",
+    blurb: "The locks your connected wallet can act on.",
+    testid: "bonded-task-balances",
+    icon: Wallet,
   },
 ];
 
 export default function BondedOverview() {
   return (
-    <div className="grid gap-4" data-testid="bonded-overview">
-      <Panel title="What this is">
-        <p className="max-w-3xl text-[14px] leading-relaxed text-muted-foreground">
-          A time-locked escrow on Stellar, plus the first proof built on it. You lock tokens until a time you
-          choose, and until then the funds cannot move. On the Prove Solvency tab you can prove that your
-          reserves are at least the circulating supply, without revealing the reserve figure, bonded to one of those
-          locks. The gate reads the lock on every check, so the proof counts as live only while the bond stays
-          locked, and goes void the instant you pull it.
-        </p>
-        <div className="mt-5 flex flex-wrap gap-3">
-          <Link to="/app/bonded/prove" className={buttonVariants({ variant: "brand" })}>
-            Prove solvency
-          </Link>
-          <Link to="/app/bonded/deposit" className={buttonVariants({ variant: "outline" })}>
-            Lock tokens
-          </Link>
-          <Link to="/app/bonded/balances" className={buttonVariants({ variant: "outline" })}>
-            View my balances
-          </Link>
-        </div>
-      </Panel>
-
-      <div className="grid gap-4 sm:grid-cols-3">
-        {STEPS.map((s, i) => (
-          <Panel key={s.title}>
-            <div className="flex items-start gap-3">
-              <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-brand/10 text-brand">
-                <s.icon className="size-4" />
-              </span>
-              <div>
-                <h3 className="text-[13px] font-semibold">
-                  {i + 1}. {s.title}
-                </h3>
-                <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">{s.body}</p>
-              </div>
-            </div>
-          </Panel>
+    <div data-testid="bonded-overview" className="space-y-6">
+      {/* Two flagship proofs, co-equal. */}
+      <div className="grid gap-3 sm:grid-cols-2">
+        {PROOFS.map((t) => (
+          <TaskCard
+            key={t.to}
+            to={t.to}
+            icon={t.icon}
+            title={t.label}
+            blurb={t.blurb}
+            testid={t.testid}
+            featured
+            tag="ZK proof"
+          />
         ))}
       </div>
 
-      <Panel title="A note on the name">
-        <p className="max-w-3xl text-[13px] leading-relaxed text-muted-foreground">
-          A bond is the opposite of most locks you know. Here the proof built on a lock is valid while the
-          balance stays locked, and stops being valid the moment the balance frees up. So a lock that is
-          still locked is the useful state, not the finished one.
-        </p>
-      </Panel>
+      <div className="space-y-3">
+        <GroupLabel>Manage your bond</GroupLabel>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {MANAGE.map((t) => (
+            <TaskCard
+              key={t.to}
+              to={t.to}
+              icon={t.icon}
+              title={t.label}
+              blurb={t.blurb}
+              testid={t.testid}
+            />
+          ))}
+        </div>
+      </div>
+
+      <p className="text-sm text-muted-foreground" data-testid="bonded-verify-note">
+        Every proof and lock here is recorded on the public chain, <b className="text-foreground">checkable
+        by anyone</b>.{" "}
+        <Link to="/verify" className="text-brand hover:underline">
+          Check it yourself →
+        </Link>
+      </p>
     </div>
   );
 }

@@ -10,7 +10,7 @@ export default function BondedLayout() {
       <PageHeader
         icon={Lock}
         title="Bonded Proofs"
-        lead="Lock tokens until a time you choose. This is the escrow behind upcoming time-bound proofs: a proof that stays valid only while the funds stay locked, and stops the moment you pull them."
+        lead="Lock tokens until a time you choose, then prove a fact that holds only while the bond stays locked. Pull the bond and the proof goes void."
       />
 
       {/* Segmented tab bar, matching the Data Room. w-fit hugs the tabs; overflow-x-auto keeps it usable when narrow. */}
