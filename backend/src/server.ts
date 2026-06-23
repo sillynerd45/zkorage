@@ -4776,6 +4776,118 @@ app.get("/bonded/bond/nullifier/:nullifier", async (req, res) => {
   }
 });
 
+// BA4/BA5 — the Data Room's Bonded Access requirement (room-owner config). The room owner sets ONE bond
+// requirement per room (token, min amount, deadline); a reader opening any of the room's documents must then
+// prove a qualifying anonymous bond (which ALSO proves room membership — Option A), so the bond leg REPLACES
+// the plain-membership spine. These endpoints read/set/clear `BondReq(room)` on the DataRoom; the qual-root
+// indexer + the bond gate (above) do the anonymity + verification. Owner writes use the same wallet-XDR path
+// as enroll/approve (verify on-chain ownership, then return unsigned XDR for the owner to sign).
+// ───────────────────────────────────────────────────────────────────────────────────────────────
+
+// Read the EFFECTIVE Bonded Access requirement for a room (or, with ?doc=, the per-document override falling
+// back to the room one). Returns the human params + the derived req_id, so the owner UI shows what is set and
+// the reader UI detects a bonded document. Public read.
+app.get("/dataroom/bond-requirement/:roomId", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  let roomIdHex: string;
+  let docIdHex: string | null = null;
+  try {
+    roomIdHex = toBytes32(req.params.roomId);
+    if (req.query.doc) docIdHex = toBytes32(req.query.doc);
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    let value: unknown = null;
+    let scope: "doc" | "room" | null = null;
+    if (docIdHex) {
+      ({ value } = await readContract(DATAROOM_ID, "get_doc_bond_requirement", [scBytes(roomIdHex), scBytes(docIdHex)]));
+      if (value) scope = "doc";
+    }
+    if (!value) {
+      ({ value } = await readContract(DATAROOM_ID, "get_bond_requirement", [scBytes(roomIdHex)]));
+      if (value) scope = "room";
+    }
+    if (!value) return res.json({ found: false, roomId: roomIdHex, doc: docIdHex });
+    const r = jsonSafe(value) as { gate?: string; req_id?: string; token?: string; min_amount?: string; deadline?: string };
+    const token = String(r.token ?? "");
+    const minAmount = String(r.min_amount ?? "0");
+    const deadline = Number(r.deadline ?? 0);
+    res.json({
+      found: true, roomId: roomIdHex, doc: docIdHex, scope,
+      gate: r.gate ?? BOND_GATE_ID,
+      reqId: r.req_id ?? bondReqIdHex(token, BigInt(minAmount), deadline),
+      token, minAmount, deadline,
+    });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+// Owner: set (or replace) the room-level Bonded Access requirement. Verifies room ownership on-chain, then
+// (with a wallet `source`) returns the unsigned set_bond_requirement XDR for the owner to sign; otherwise the
+// relay signs (demo rooms it owns). req_id is precomputed with the SAME function the qual-root indexer uses,
+// so they agree. NOTE: the room must have a pinned eligible_root (>= 1 approved member) for the bond leg to
+// admit anyone — it fails closed otherwise; the response carries memberCount so the UI can warn.
+app.post("/dataroom/bond-requirement", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  if (!BOND_GATE_ID) return res.status(503).json({ error: "BOND_GATE_ID not configured" });
+  let roomIdHex: string, token: string, minAmount: bigint, deadline: number, reqId: string;
+  try {
+    roomIdHex = toBytes32(req.body?.roomId);
+    ({ token, minAmount, deadline, reqId } = parseBondReq(req.body ?? {}));
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const source = userSource(req);
+    const owner = source ?? ADMIN_ADDRESS;
+    const { value: roomVal } = await readContract(DATAROOM_ID, "get_room", [scBytes(roomIdHex)]);
+    const room = roomVal ? (jsonSafe(roomVal) as { owner?: string }) : null;
+    if (!room) return res.status(404).json({ error: "room not found" });
+    if (room.owner !== owner) return res.status(403).json({ error: "only the room owner may set a bond requirement" });
+    const memberCount = getEligible(roomIdHex).length;
+    const idField = { roomId: roomIdHex, gate: BOND_GATE_ID, reqId, token, minAmount: minAmount.toString(), deadline: String(deadline), memberCount: String(memberCount) };
+    const args = [scBytes(roomIdHex), scAddress(BOND_GATE_ID), scBytes(reqId), scAddress(token), scI128(minAmount), scU64(deadline)];
+    if (source) {
+      if (await maybeXdr(req, res, DATAROOM_ID, "set_bond_requirement", args, idField)) return;
+    }
+    const out = await invokeContract(DATAROOM_ID, "set_bond_requirement", args);
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, ...idField });
+  } catch (e) {
+    res.json({ ok: false, error: err(e), roomId: roomIdHex });
+  }
+});
+
+// Owner: clear the room-level Bonded Access requirement (the room's documents fall back to the policy / bare
+// membership). Same ownership check + wallet-XDR path as set.
+app.post("/dataroom/bond-requirement/clear", async (req, res) => {
+  if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  let roomIdHex: string;
+  try {
+    roomIdHex = toBytes32(req.body?.roomId);
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const source = userSource(req);
+    const owner = source ?? ADMIN_ADDRESS;
+    const { value: roomVal } = await readContract(DATAROOM_ID, "get_room", [scBytes(roomIdHex)]);
+    const room = roomVal ? (jsonSafe(roomVal) as { owner?: string }) : null;
+    if (!room) return res.status(404).json({ error: "room not found" });
+    if (room.owner !== owner) return res.status(403).json({ error: "only the room owner may clear a bond requirement" });
+    const idField = { roomId: roomIdHex };
+    const args = [scBytes(roomIdHex)];
+    if (source) {
+      if (await maybeXdr(req, res, DATAROOM_ID, "clear_bond_requirement", args, idField)) return;
+    }
+    const out = await invokeContract(DATAROOM_ID, "clear_bond_requirement", args);
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, ...idField });
+  } catch (e) {
+    res.json({ ok: false, error: err(e), roomId: roomIdHex });
+  }
+});
+
 // M7 — the fixed-interval batch flusher. Flushes the access queue at epoch-aligned boundaries every
 // DR_BATCH_WINDOW_MS, regardless of when bundles arrived (arrival-independent = the on-chain time reveals the
 // window, not the action). Self-rescheduling to the next exact boundary so it does not drift. A flush with an

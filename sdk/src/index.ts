@@ -46,7 +46,11 @@ export {
   TIER_IMAGE_ID,
   CLAIM_TYPE_TIER,
   DEMO_TIER,
+  BOND_IMAGE_ID,
+  CLAIM_TYPE_BOND,
 } from "./defaults.js";
+export { bondReqId, bondAccessCommitment } from "./client.js";
+export type { BondRequirementView } from "./client.js";
 export {
   decodeJournal,
   decodeIdentityJournal,

@@ -94,7 +94,7 @@ export interface AuditBundle {
 export interface ZkorageConfig {
   rpcUrl: string;
   networkPassphrase: string;
-  contracts: { verifier: string; token: string; policy: string; gate: string; compliance: string; payroll: string; accredited: string; fundraise: string; dataroom: string; solvencyGate: string; escrow: string; bondToken: string; tierGate: string };
+  contracts: { verifier: string; token: string; policy: string; gate: string; compliance: string; payroll: string; accredited: string; fundraise: string; dataroom: string; solvencyGate: string; escrow: string; bondToken: string; tierGate: string; bondGate: string };
   /** A funded account used only as the read-only simulation source (never signs). */
   readSource: string;
   /** Optional REST base URL — only needed for `getAuditBundle` (the proof bundle isn't on-chain). */
