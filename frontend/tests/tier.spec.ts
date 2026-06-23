@@ -9,7 +9,7 @@ const DARK = `localStorage.setItem("zkorage-theme","dark");`;
 test("tier: the Anonymous Tier tab is present in the bonded group", async ({ page }) => {
   await page.goto("/app/bonded");
   await expect(page.getByTestId("bonded-overview")).toBeVisible();
-  await expect(page.getByRole("link", { name: "Anonymous Tier", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Bonded Access", exact: true })).toBeVisible();
 });
 
 test("tier: page renders, identity mints, anonymity-set size + state (light + dark)", async ({ page }) => {

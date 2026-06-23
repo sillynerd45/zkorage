@@ -19,7 +19,7 @@ const mock = (addr: string) => `
 `;
 const DARK = `localStorage.setItem("zkorage-theme","dark");`;
 
-test("bonded: overview is action-first (two proof heroes + manage cards), tabs present (light + dark)", async ({ page }) => {
+test("bonded: overview is action-first (Bonded Access hero + manage cards), tabs present (light + dark)", async ({ page }) => {
   const errs: string[] = [];
   page.on("console", (m) => {
     // Keep this assertion for real app/JS errors. Ignore transient network resource loads (e.g. the
@@ -28,15 +28,17 @@ test("bonded: overview is action-first (two proof heroes + manage cards), tabs p
   });
   await page.goto("/app/bonded");
   await expect(page.getByTestId("bonded-overview")).toBeVisible();
-  // the action-first cards: two flagship proofs lead, the two escrow utilities follow, each a real link
-  await expect(page.getByTestId("bonded-task-prove")).toHaveAttribute("href", "/app/bonded/prove");
+  // the action-first cards: Bonded Access leads, the two escrow utilities follow, each a real link
   await expect(page.getByTestId("bonded-task-tier")).toHaveAttribute("href", "/app/bonded/tier");
   await expect(page.getByTestId("bonded-task-deposit")).toHaveAttribute("href", "/app/bonded/deposit");
   await expect(page.getByTestId("bonded-task-balances")).toHaveAttribute("href", "/app/bonded/balances");
+  // Prove Solvency is dropped from the pillar (route stays, but no card/tab)
+  await expect(page.getByTestId("bonded-task-prove")).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Prove Solvency", exact: true })).toHaveCount(0);
   // the verify note linking to the public chain
   await expect(page.getByTestId("bonded-verify-note")).toBeVisible();
-  // the tab bar still exposes the proof tabs (exact name = the tab only, the cards' names include the blurb)
-  await expect(page.getByRole("link", { name: "Prove Solvency", exact: true })).toBeVisible();
+  // the tab bar exposes the renamed Bonded Access tab + My Balances (exact name = the tab, not the card)
+  await expect(page.getByRole("link", { name: "Bonded Access", exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "My Balances", exact: true })).toBeVisible();
   await page.screenshot({ path: "tests/bonded-overview.png", fullPage: true });
 
@@ -86,21 +88,23 @@ test("bonded: deposit form, token picker + mode switcher", async ({ page }) => {
   await page.goto("/app/bonded/deposit");
   await expect(page.getByTestId("bonded-deposit")).toBeVisible();
 
-  // The token picker lists zkUSD (default, with faucet) + the wallet's tokens (XLM + TUSD).
+  // The token picker lists the wallet's real tokens (TUSD + XLM); zkUSD + the faucet are gone. TUSD is the
+  // first balance, so it is the default selection.
   const picker = page.getByTestId("deposit-token");
   await expect(picker).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole("option", { name: /XLM/ })).toBeAttached();
   await expect(page.getByRole("option", { name: /TUSD/ })).toBeAttached();
+  await expect(page.getByRole("option", { name: /zkUSD/ })).toHaveCount(0); // dropped
+  await expect(page.getByTestId("bonded-faucet")).toHaveCount(0); // faucet dropped
   await expect(page.getByTestId("deposit-amount")).toBeVisible();
   await expect(page.getByTestId("deposit-balance")).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByTestId("bonded-faucet")).toBeVisible(); // faucet shows only for zkUSD (the default)
-  await expect(page.getByText("Amount (zkUSD)")).toBeVisible();
-
-  // Switch to TUSD: the amount label + balance follow the token, and the zkUSD faucet hides.
-  await picker.selectOption(`TUSD:${TUSD_ISSUER}`);
-  await expect(page.getByText("Amount (TUSD)")).toBeVisible();
+  await expect(page.getByText("Amount (TUSD)")).toBeVisible(); // TUSD is the default
   await expect(page.getByTestId("deposit-balance")).toContainText("TUSD");
-  await expect(page.getByTestId("bonded-faucet")).toHaveCount(0);
+
+  // Switch to XLM: the amount label + balance follow the token.
+  await picker.selectOption("native");
+  await expect(page.getByText("Amount (XLM)")).toBeVisible();
+  await expect(page.getByTestId("deposit-balance")).toContainText("XLM");
 
   // The "paste a contract address" advanced path reveals an input, and submit stays disabled until a token
   // is loaded (so a half-typed or edited address can never be deposited).

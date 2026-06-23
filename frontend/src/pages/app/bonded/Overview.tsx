@@ -1,11 +1,10 @@
 import { Link } from "react-router-dom";
-import { ShieldCheck, Users, Coins, Wallet, type LucideIcon } from "lucide-react";
+import { KeyRound, Coins, Wallet, type LucideIcon } from "lucide-react";
 import { TaskCard, GroupLabel } from "@/components/app/dataroom/kit";
 
-// Action-first landing, mirroring the Data Room Overview. The two flagship proofs lead as co-equal featured
-// cards, then the two utility actions (lock, view) sit below. Each card maps to a real Bonded Proofs tab, so
-// this page is a launcher, not an explainer. The header (title + one-line lead) lives in the layout, and the
-// escrow concept + "why it is called a bond" text moved to the public Docs > Capabilities > Bonded Proofs.
+// Action-first landing, mirroring the Data Room Overview. Bonded Access (the anonymous bond proof) leads as
+// the single featured card; the two escrow utilities (lock, view) sit below. Prove Solvency is dropped from
+// the pillar (it needs an off-chain attester, out of scope for the no-attester focus); its route stays live.
 interface Task {
   to: string;
   label: string;
@@ -14,23 +13,14 @@ interface Task {
   icon: LucideIcon;
 }
 
-// The two ZK products built on the escrow. They lead the page.
-const PROOFS: Task[] = [
-  {
-    to: "/app/bonded/prove",
-    label: "Prove Solvency",
-    blurb: "Prove your reserves cover supply, tied to a lock you can pull anytime.",
-    testid: "bonded-task-prove",
-    icon: ShieldCheck,
-  },
-  {
-    to: "/app/bonded/tier",
-    label: "Anonymous Tier",
-    blurb: "Prove you bonded enough for a tier, without showing which wallet or how much.",
-    testid: "bonded-task-tier",
-    icon: Users,
-  },
-];
+// The flagship proof: lock a bond, prove access anonymously.
+const HERO: Task = {
+  to: "/app/bonded/tier",
+  label: "Bonded Access",
+  blurb: "Lock a bond to gain access, then prove it without revealing which wallet or how much.",
+  testid: "bonded-task-tier",
+  icon: KeyRound,
+};
 
 // The escrow itself: lock tokens, then read the locks you can act on.
 const MANAGE: Task[] = [
@@ -53,21 +43,16 @@ const MANAGE: Task[] = [
 export default function BondedOverview() {
   return (
     <div data-testid="bonded-overview" className="space-y-6">
-      {/* Two flagship proofs, co-equal. */}
-      <div className="grid gap-3 sm:grid-cols-2">
-        {PROOFS.map((t) => (
-          <TaskCard
-            key={t.to}
-            to={t.to}
-            icon={t.icon}
-            title={t.label}
-            blurb={t.blurb}
-            testid={t.testid}
-            featured
-            tag="ZK proof"
-          />
-        ))}
-      </div>
+      {/* The flagship proof, full width. */}
+      <TaskCard
+        to={HERO.to}
+        icon={HERO.icon}
+        title={HERO.label}
+        blurb={HERO.blurb}
+        testid={HERO.testid}
+        featured
+        tag="ZK proof"
+      />
 
       <div className="space-y-3">
         <GroupLabel>Manage your bond</GroupLabel>
