@@ -149,6 +149,29 @@ test("BA5: locking a bond advances from deposit to the prove step", async ({ pag
   await expect(page.getByTestId("access-bond-prove")).toBeVisible();
 });
 
+test("BA5: Prove access runs BOTH the membership proof (for the key) and the bond proof (for admission)", async ({ page }) => {
+  await page.addInitScript(mock);
+  await stubReaderCommon(page, "eligible");
+  await page.route("**/dataroom/bond-requirement/**", (r) => (r.request().method() === "GET" ? r.fulfill(bondReqFound) : r.continue()));
+  await page.route("**/bonded/bond/qual-set**", (r) => r.fulfill(json(qualSet(3, [mine(1), decoy(2), decoy(3)]))));
+  let memberProve = 0, bondProve = 0, memberSubmit = 0, bondSubmit = 0;
+  await page.route("**/dataroom/membership/prove-access", (r) => { memberProve++; return r.fulfill(json({ jobId: "mem-job", roomId: ROOM, eligibleRoot: "00".repeat(32), nullifier: "ab".repeat(32), accessor: "cd".repeat(32), recipientPub: "ef".repeat(32) })); });
+  await page.route("**/bonded/bond/prove", (r) => { bondProve++; return r.fulfill(json({ jobId: "bond-job", roomId: ROOM, reqId: "ab".repeat(32), memberRoot: "00".repeat(32), qualRoot: "11".repeat(32), nullifier: "22".repeat(32), accessor: "cd".repeat(32), anonSetSize: 3 })); });
+  await page.route("**/prove-status/**", (r) => r.fulfill(json({ status: "done", bundle: { seal: "00".repeat(8), image_id: "11".repeat(32), journal: "22".repeat(32) } })));
+  await page.route("**/dataroom/membership/request-access", (r) => { memberSubmit++; return r.fulfill(json({ ok: true, txHash: "aa".repeat(8), dataroomId: "CID" })); });
+  await page.route("**/bonded/bond/submit", (r) => { bondSubmit++; return r.fulfill(json({ ok: true, txHash: "bb".repeat(8) })); });
+
+  await openTheDoc(page);
+  await expect(page.getByTestId("access-status")).toHaveAttribute("data-phase", "bond-ready", { timeout: 30_000 });
+  await page.getByTestId("access-bond-prove").click();
+  // The fix: a bonded room needs BOTH a membership grant (recipient_pub -> the keepers seal to it) and a bond
+  // grant (is_doc_admitted). Assert both proofs fire and both are recorded directly.
+  await expect.poll(() => memberProve, { timeout: 30_000 }).toBeGreaterThan(0);
+  await expect.poll(() => bondProve, { timeout: 30_000 }).toBeGreaterThan(0);
+  await expect.poll(() => memberSubmit, { timeout: 30_000 }).toBeGreaterThan(0);
+  await expect.poll(() => bondSubmit, { timeout: 30_000 }).toBeGreaterThan(0);
+});
+
 test("BA5: a bonded doc whose deadline has passed surfaces a clear message, not a failing deposit", async ({ page }) => {
   await page.addInitScript(mock);
   await stubReaderCommon(page, "eligible");

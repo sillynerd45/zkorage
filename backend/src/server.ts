@@ -4836,6 +4836,11 @@ app.post("/dataroom/bond-requirement", async (req, res) => {
   try {
     roomIdHex = toBytes32(req.body?.roomId);
     ({ token, minAmount, deadline, reqId } = parseBondReq(req.body ?? {}));
+    // A past deadline can never be satisfied (a qualifying lock needs unlock_time >= deadline AND
+    // now < unlock_time), so a requirement set in the past would be silently un-openable. Reject it.
+    if (deadline <= Math.floor(Date.now() / 1000)) {
+      return res.status(400).json({ error: "deadline must be in the future" });
+    }
   } catch (e) {
     return res.status(400).json({ error: err(e) });
   }

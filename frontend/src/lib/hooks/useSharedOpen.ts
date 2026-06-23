@@ -5,6 +5,7 @@ import {
   getEnrollStatus,
   getEligible,
   proveAccess,
+  requestAccess,
   queueAccess,
   getQueueStatus,
   getProveStatus,
@@ -294,12 +295,15 @@ export function useSharedOpen() {
 
   // ── the orchestrated open ──────────────────────────────────────────────────────────────────────
   // Get the key from the keepers and decrypt in the browser. Only reached once the on-chain grant exists.
-  const doOpen = useCallback(async (docId: string, id: DataRoomIdentity) => {
+  // `minAnonSet` is the eligible-set floor the share aggregator enforces: ANON_FLOOR (5) on the plain
+  // membership path, BOND_FLOOR (3) on a bonded room (a bonded room is sized to the bond floor, so 5 would
+  // wrongly refuse a 3-member room).
+  const doOpen = useCallback(async (docId: string, id: DataRoomIdentity, minAnonSet: number = ANON_FLOOR) => {
     setPhase("opening");
     setFlowErr(null);
     try {
       const out = await sdk.openCommitteeDocument(room.trim(), docId.trim(), id.accessor, id.recipientSecret, {
-        minAnonSet: ANON_FLOOR,
+        minAnonSet,
       });
       if (cancelled.current) return;
       setOpened(out);
@@ -484,10 +488,28 @@ export function useSharedOpen() {
     [identity, bondReq, signer, refreshBond],
   );
 
-  // Run the one-time bond proof (member ∧ qualifying bond, anonymous), submit it to the gate, then auto-open.
-  // The witness reaches the self-hosted prover only. Unlike the membership path, the bond submit is direct
-  // (not M7-batched): the accessor is already unlinkable within the bonder crowd, so the on-chain timestamp
-  // reveals "someone in the set proved", never which member.
+  // Poll a prover job until its bundle is ready (or it errors / times out). Shared by the two concurrent
+  // proofs the bonded setup runs. Throws on cancel/error/timeout; the caller bails silently on cancel.
+  const pollProveBundle = useCallback(async (jobId: string): Promise<Bundle> => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < 12 * 60 * 1000) {
+      if (cancelled.current) throw new Error("cancelled");
+      const s = await getProveStatus(jobId);
+      setProveBy(s.by ?? null);
+      if (s.status === "done" && s.bundle) return s.bundle;
+      if (s.status === "error") throw new Error(s.error || "proving failed");
+      await new Promise((r) => setTimeout(r, 4000));
+    }
+    throw new Error("the proof timed out");
+  }, []);
+
+  // Run the one-time bonded setup, then auto-open. A bonded room needs TWO grants for the same identity:
+  //  - the MEMBERSHIP proof records a proof-bound recipient_pub (the DR3 keepers seal the document key to it),
+  //  - the BOND proof grants admission (is_doc_admitted).
+  // The bond leg REPLACES the membership spine for ADMISSION (Option A), but the key release still needs the
+  // membership grant's recipient_pub, so we record both. Both submit DIRECTLY (the bond submit is direct
+  // anyway, so batching membership would add no timing cover; the accessor is a per-room key unlinkable to the
+  // wallet). Both proofs run concurrently on the self-hosted prover; the witness reaches it only.
   const setupBondAccess = useCallback(async () => {
     if (!identity || !openDocId || !bondReq?.token || !bondReq.minAmount || !bondReq.deadline) return;
     if (bondBelowFloor) { setPhase("bond-below-floor"); return; }
@@ -497,39 +519,60 @@ export function useSharedOpen() {
     setPhase("proving");
     setProveStep("Setting up your access on the self-hosted prover. This runs once for the room and can take a few minutes.");
     try {
-      const pa = await proveBond({
-        roomId: room.trim(),
-        idSecret: identity.idSecret,
-        idTrapdoor: identity.idTrapdoor,
-        holderSeed: identity.accessorSeed,
-        token: bondReq.token,
-        minAmount: bondReq.minAmount,
-        deadline: bondReq.deadline,
-      });
-      if (!pa.jobId) throw new Error(pa.error || "could not start the bond proof");
-      let bundle: Bundle | null = null;
-      const t0 = Date.now();
-      while (Date.now() - t0 < 12 * 60 * 1000) {
-        if (cancelled.current) return;
-        const s = await getProveStatus(pa.jobId);
-        setProveBy(s.by ?? null);
-        if (s.status === "done" && s.bundle) { bundle = s.bundle; break; }
-        if (s.status === "error") throw new Error(s.error || "proving failed");
-        await new Promise((r) => setTimeout(r, 4000));
-      }
-      if (!bundle) throw new Error("the proof timed out");
+      // The key leg: the keepers seal the document key to the recipient_pub recorded by a MEMBERSHIP grant. If
+      // this identity already has one (it opened a doc in this room before the bond requirement), skip the
+      // membership proof; the nullifier is per-room, so re-proving would be rejected anyway.
+      const existing = await sdk.getGrant(room.trim(), identity.accessor).catch(() => null);
+      const needMembership = !(existing && existing.recipient_pub);
+      const holderSig = signDataRoomAccess(identity);
+      // Start the needed proofs together (the prover queues them).
+      const [mp, bp] = await Promise.all([
+        needMembership
+          ? proveAccess({
+              roomId: room.trim(),
+              idSecret: identity.idSecret,
+              idTrapdoor: identity.idTrapdoor,
+              accessor: identity.accessor,
+              holderSig,
+              recipientPub: identity.recipientPub,
+              minAnonSet: BOND_FLOOR,
+            })
+          : Promise.resolve(null),
+        proveBond({
+          roomId: room.trim(),
+          idSecret: identity.idSecret,
+          idTrapdoor: identity.idTrapdoor,
+          holderSeed: identity.accessorSeed,
+          token: bondReq.token,
+          minAmount: bondReq.minAmount,
+          deadline: bondReq.deadline,
+        }),
+      ]);
+      if (!bp.jobId) throw new Error(bp.error || "could not start the bond proof");
+      if (needMembership && !mp?.jobId) throw new Error(mp?.error || "could not start the membership proof");
+      const [memberBundle, bondBundle] = await Promise.all([
+        needMembership && mp?.jobId ? pollProveBundle(mp.jobId) : Promise.resolve(null),
+        pollProveBundle(bp.jobId),
+      ]);
+      if (cancelled.current) return;
       setPhase("queuing");
       setProveStep("Recording your access on-chain.");
-      const sub = await submitBond(bundle);
+      // Record both grants. The membership grant carries the recipient_pub the keepers seal to; the bond grant
+      // satisfies is_doc_admitted. Both must exist before the keepers will release the key.
+      const submits: Promise<{ ok: boolean; error?: string }>[] = [submitBond(bondBundle)];
+      if (memberBundle) submits.unshift(requestAccess(memberBundle));
+      const results = await Promise.all(submits);
       if (cancelled.current) return;
-      if (!sub.ok) throw new Error(sub.error || "could not record your access on-chain");
-      await doOpen(openDocId, identity);
+      for (const r of results) {
+        if (!r.ok) throw new Error(r.error || "could not record your access on-chain");
+      }
+      await doOpen(openDocId, identity, BOND_FLOOR);
     } catch (e) {
       if (cancelled.current) return;
       setFlowErr(String((e as Error).message ?? e));
       setPhase("error");
     }
-  }, [identity, openDocId, bondReq, bondBelowFloor, room, doOpen]);
+  }, [identity, openDocId, bondReq, bondBelowFloor, room, doOpen, pollProveBundle]);
 
   // The single Open action for a document: derive identity, read live status, branch.
   const open = useCallback(
@@ -557,10 +600,11 @@ export function useSharedOpen() {
         if (elig) setAnonCount(elig.memberCount);
 
         if (acc.revoked) { setPhase("revoked"); return; }
-        if (acc.admitted) { await doOpen(docId, id); return; } // already set up (bond or membership) -> open
+        if (acc.admitted) { await doOpen(docId, id, req.found ? BOND_FLOOR : ANON_FLOOR); return; } // already set up -> open
 
-        // Bonded document: the bond proof replaces the plain-membership spine.
+        // Bonded document: the bond proof grants admission; a membership proof provides the key (recipient_pub).
         if (req.found && req.token && req.minAmount && req.deadline) {
+          setBondReq(req);
           setPhase("bond-detecting");
           await resolveBondPhase(req, id, st.state);
           return;
