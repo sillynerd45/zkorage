@@ -351,4 +351,7 @@ export async function getBondGrantCount(): Promise<number> {
   return Number(value ?? 0);
 }
 
+// Re-export the bond/qual commitment (= sha256(0x03 ‖ id_secret ‖ "escrow")) the depositor stores in the
+// lock for "deposit for access". Identical to the tier commitment by design (a lock can qualify for both).
+export { qualCommitment };
 export { toHex, fromHex };
