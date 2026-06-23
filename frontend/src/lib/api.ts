@@ -1061,6 +1061,8 @@ export interface LockView {
   released: boolean;
   is_locked: boolean;
   role: "depositor" | "claimant" | "self";
+  tokenSymbol: string; // the lock's token symbol (so a multi-token lock renders the right unit)
+  tokenDecimals: number; // the lock's token decimals (defaults to 7)
 }
 
 export interface EscrowInfo {
@@ -1106,6 +1108,13 @@ export const escrowSetTimelock = (
 export const getBondBalance = (owner: string) =>
   fetch(`${BASE}/escrow/balance?owner=${owner}`).then(
     j<{ owner: string; balance: string; bondTokenId: string }>,
+  );
+
+// Read any SEP-41 token's balance + decimals + symbol for an owner (used by the Deposit picker's
+// "paste a contract address" path). Throws (4xx) if the contract is not a deployed SEP-41 token.
+export const getTokenBalance = (owner: string, token: string) =>
+  fetch(`${BASE}/escrow/token-balance?owner=${encodeURIComponent(owner)}&token=${encodeURIComponent(token)}`).then(
+    j<{ owner: string; token: string; balance: string; decimals: number; symbol: string }>,
   );
 
 // Demo faucet: server-relayed mint of test zkUSD (the relay signer is the token admin), so a fresh wallet

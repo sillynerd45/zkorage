@@ -27,9 +27,28 @@ export interface LockView {
   is_locked: boolean;
   /** This wallet's relationship to the lock. */
   role: "depositor" | "claimant" | "self";
+  /** The lock's token symbol + decimals (resolved from the SEP-41 token), so a multi-token lock renders the
+   *  right unit. Defaults to 7 decimals / empty symbol if the token does not implement those methods. */
+  tokenSymbol: string;
+  tokenDecimals: number;
 }
 
 type LockRecord = Record<string, unknown>;
+
+// Token symbol/decimals are immutable per contract, so cache them process-wide (a wallet's locks often share
+// a token, and distinct tokens repeat across requests).
+const tokenMetaCache = new Map<string, { symbol: string; decimals: number }>();
+export async function tokenMeta(token: string): Promise<{ symbol: string; decimals: number }> {
+  const hit = tokenMetaCache.get(token);
+  if (hit) return hit;
+  const [symbol, decimals] = await Promise.all([
+    readContract(token, "symbol").then((r) => String(r.value)).catch(() => ""),
+    readContract(token, "decimals").then((r) => Number(r.value)).catch(() => 7),
+  ]);
+  const meta = { symbol, decimals: Number.isFinite(decimals) ? decimals : 7 };
+  tokenMetaCache.set(token, meta);
+  return meta;
+}
 
 /** Live read of a single lock's current record (errors with LockNotFound for unknown ids). */
 export async function getLock(id: number): Promise<LockRecord | null> {
@@ -49,7 +68,13 @@ export async function bondBalance(owner: string): Promise<string> {
   return value != null ? String(value) : "0";
 }
 
-function toView(id: number, l: LockRecord, owner: string, isLockedVal: boolean): LockView {
+function toView(
+  id: number,
+  l: LockRecord,
+  owner: string,
+  isLockedVal: boolean,
+  meta: { symbol: string; decimals: number },
+): LockView {
   const depositor = String(l.depositor);
   const claimant = String(l.claimant);
   return {
@@ -64,6 +89,8 @@ function toView(id: number, l: LockRecord, owner: string, isLockedVal: boolean):
     released: Boolean(l.released),
     is_locked: isLockedVal,
     role: depositor === claimant ? "self" : depositor === owner ? "depositor" : "claimant",
+    tokenSymbol: meta.symbol,
+    tokenDecimals: meta.decimals,
   };
 }
 
@@ -99,11 +126,15 @@ export async function listLocks(owner: string): Promise<LockView[]> {
     if (transient && !anyFound) throw new Error("could not reach the network while loading your locks");
     if (!anyFound) break; // a fully not-found batch => we are past the highest lock id
   }
-  // Authoritative is_locked from the contract (ledger time), only for the owner's locks (few).
+  // Authoritative is_locked from the contract (ledger time), only for the owner's locks (few). Token meta is
+  // cached, so distinct tokens are read at most once.
   return Promise.all(
     owned.map(async ({ id, rec }) => {
-      const locked = await isLocked(id).catch(() => false);
-      return toView(id, rec, owner, locked);
+      const [locked, meta] = await Promise.all([
+        isLocked(id).catch(() => false),
+        tokenMeta(String(rec.token)),
+      ]);
+      return toView(id, rec, owner, locked, meta);
     }),
   );
 }

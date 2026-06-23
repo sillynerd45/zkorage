@@ -11,6 +11,14 @@ import { cn } from "@/lib/utils";
 
 const fmtDate = (unix: number) => new Date(unix * 1000).toLocaleString();
 
+// The token unit to show for a lock. The native SAC reports "native"; show "XLM". Fall back to a short
+// contract id for a token that does not expose a symbol.
+const tokenLabel = (l: LockView): string => {
+  const s = l.tokenSymbol?.trim();
+  if (!s || s === "native") return s === "native" ? "XLM" : short(l.token, 4);
+  return s;
+};
+
 function statusOf(l: LockView): { label: string; cls: string } {
   if (l.released) return { label: "Released", cls: "bg-muted text-muted-foreground" };
   if (l.is_locked) return { label: `Locked until ${fmtDate(l.unlock_time)}`, cls: "bg-brand/10 text-brand" };
@@ -76,8 +84,26 @@ export default function BondedBalances() {
 
       {!b.loading && b.locks.length === 0 && !b.error && (
         <Panel>
-          <div className="flex flex-col items-start gap-3 py-2" data-testid="bonded-empty">
-            <p className="text-[14px] text-muted-foreground">No locks on this address yet.</p>
+          <div className="flex flex-col items-start gap-4 py-2" data-testid="bonded-empty">
+            <div>
+              <p className="text-[14px] text-muted-foreground">
+                Your locks and their actions appear here. Here is the lifecycle.
+              </p>
+              <ol className="mt-3 space-y-2 text-[13px] leading-relaxed text-muted-foreground">
+                <li>
+                  <b className="text-foreground">1. Lock.</b> Pick a token and an unlock time on the Deposit
+                  page. The tokens move into escrow.
+                </li>
+                <li>
+                  <b className="text-foreground">2. While locked.</b> Extend the unlock time here anytime. If
+                  you marked the bond revocable, you can release it early.
+                </li>
+                <li>
+                  <b className="text-foreground">3. After unlock.</b> Withdraw your tokens here. For a one-way
+                  send, the recipient claims them.
+                </li>
+              </ol>
+            </div>
             <Link to="/app/bonded/deposit" className={buttonVariants({ variant: "brand" })}>
               Lock your first tokens
             </Link>
@@ -102,7 +128,7 @@ export default function BondedBalances() {
             aside={<span className={cn("rounded-full px-2.5 py-1 text-[11px] font-medium", st.cls)}>{st.label}</span>}
           >
             <div className="grid gap-0.5">
-              <DataRow k="Amount">{fmtAmount(l.amount)} zkUSD</DataRow>
+              <DataRow k="Amount">{fmtAmount(l.amount, l.tokenDecimals || 7)} {tokenLabel(l)}</DataRow>
               <DataRow k="Unlocks">{fmtDate(l.unlock_time)}</DataRow>
               <DataRow k="You are" mono={false}>
                 {l.role === "self" ? "depositor (self-bond)" : l.role}
