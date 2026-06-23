@@ -7,7 +7,7 @@ import { Callout } from "@/components/app/dataroom/kit";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { fmtAmount, toBaseUnits, getEscrowInfo, getBondBalance, getTokenBalance } from "@/lib/api";
+import { fmtAmount, toBaseUnits, getTokenBalance } from "@/lib/api";
 import { loadWalletTokens, plainAmount, type TokenOption } from "@/lib/bonded/tokens";
 import { cn } from "@/lib/utils";
 
@@ -44,11 +44,7 @@ export default function BondedDeposit() {
     if (!b.address) return;
     setLoadingTokens(true);
     try {
-      const [info, bal] = await Promise.all([
-        getEscrowInfo(),
-        getBondBalance(b.address).catch(() => ({ balance: "0" })),
-      ]);
-      const list = await loadWalletTokens(b.address, info.bondTokenId, bal.balance);
+      const list = await loadWalletTokens(b.address);
       setTokens(list);
       setSelectedKey((prev) => prev || list[0]?.key || "");
     } finally {
@@ -176,21 +172,6 @@ export default function BondedDeposit() {
             <span className="text-[12px] text-muted-foreground" data-testid="deposit-balance">
               Balance: {selected ? `${fmtAmount(selected.balanceBase, selected.decimals)} ${selected.symbol}` : "…"}
             </span>
-            {selected?.kind === "zkusd" && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={b.busy === "faucet"}
-                onClick={async () => {
-                  await b.fundFaucet();
-                  await reloadTokens();
-                }}
-                data-testid="bonded-faucet"
-              >
-                {b.busy === "faucet" ? "Minting…" : "Get 1,000 test zkUSD"}
-              </Button>
-            )}
           </div>
           <p className="mt-1 text-[12px] text-muted-foreground">
             Any token your wallet holds. The escrow locks it the same way, whatever the token.
@@ -269,8 +250,8 @@ export default function BondedDeposit() {
 
         <Callout icon={Eye} testId="deposit-privacy">
           This lock is public. The chain shows your wallet, the token, the amount, and the unlock time. To hide
-          which wallet holds a tier, use the{" "}
-          <Link to="/app/bonded/tier" className="text-brand hover:underline">Anonymous Tier proof</Link>.
+          which wallet holds a bond, use the{" "}
+          <Link to="/app/bonded/tier" className="text-brand hover:underline">Bonded Access proof</Link>.
         </Callout>
       </div>
     </Panel>

@@ -46,7 +46,7 @@ test("contracts page lists the Data Room + Bonded Proofs contracts with explorer
   await expect(bonded).toContainText("Escrow");
   await expect(bonded).toContainText("Bond token");
   await expect(bonded).toContainText("Solvency gate");
-  await expect(bonded).toContainText("Anonymous tier gate");
+  await expect(bonded).toContainText("Bonded Access gate");
   await expect(bonded).toContainText("Supply token");
 
   // each contract id links out to the public explorer; assert the DataRoom contract resolves to its id

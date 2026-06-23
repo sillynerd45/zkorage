@@ -189,12 +189,14 @@ export interface BondedTab {
   blurb: string;
 }
 
+// Prove Solvency is intentionally NOT listed here: it needs an off-chain auditor signature on the reserve
+// figure, which is out of scope for the no-attester focus. Its route (/app/bonded/prove) stays live and the
+// hide is reversible (re-add the entry to re-show the tab).
 export const BONDED_TABS: BondedTab[] = [
-  { slug: "", label: "Overview", blurb: "What you can do here, and what comes next." },
+  { slug: "", label: "Overview", blurb: "What you can do here." },
   { slug: "balances", label: "My Balances", blurb: "The locks your connected wallet can act on." },
   { slug: "deposit", label: "Deposit", blurb: "Lock tokens until a time you choose." },
-  { slug: "prove", label: "Prove Solvency", blurb: "Prove reserves cover supply, bonded to a lock that you can pull at any time." },
-  { slug: "tier", label: "Anonymous Tier", blurb: "Prove you bonded enough to qualify for a tier, without revealing which wallet or how much." },
+  { slug: "tier", label: "Bonded Access", blurb: "Lock a bond to gain access, and prove it without revealing which wallet or how much." },
 ];
 
 export const bondedTab = (slug: string) => BONDED_TABS.find((t) => t.slug === slug);

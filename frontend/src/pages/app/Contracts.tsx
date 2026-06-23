@@ -99,7 +99,7 @@ export default function Contracts() {
           { label: "Escrow", id: c.escrowId },
           { label: "Bond token (zUSD)", id: c.bondTokenId },
           { label: "Solvency gate", id: c.solvencyGateId },
-          { label: "Anonymous tier gate", id: c.tierGateId },
+          { label: "Bonded Access gate", id: c.tierGateId },
           { label: "Supply token", id: c.supplyTokenId },
         ]}
       />
