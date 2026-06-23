@@ -316,14 +316,13 @@ function normalizeBondRequirement(raw: unknown, scope: "room" | "doc"): BondRequ
   const r = raw as Record<string, unknown>;
   const token = String(r.token ?? "");
   if (!token) return null;
-  return {
-    gate: String(r.gate ?? ""),
-    reqId: bytesToHex(r.req_id),
-    token,
-    minAmount: String(r.min_amount ?? "0"),
-    deadline: Number(r.deadline ?? 0),
-    scope,
-  };
+  const minAmount = String(r.min_amount ?? "0");
+  const deadline = Number(r.deadline ?? 0);
+  // The contract always stores req_id, but recompute it from (token, min, deadline) if absent so a consumer
+  // never silently gets an empty id (parity with the backend read).
+  let reqId = bytesToHex(r.req_id);
+  if (!reqId) { try { reqId = bondReqId(token, minAmount, deadline); } catch { /* leave empty */ } }
+  return { gate: String(r.gate ?? ""), reqId, token, minAmount, deadline, scope };
 }
 
 function normalizeInvestorAccess(raw: unknown): InvestorAccess | null {

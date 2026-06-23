@@ -452,13 +452,22 @@ function SyncToggle({ checked, onChange }: { checked: boolean; onChange: (on: bo
 // typing doesn't churn the hook.
 function BondDeposit({ s }: { s: ReturnType<typeof useSharedOpen> }) {
   const req = s.bondReq;
-  const decimals = s.bondTokenMeta?.decimals ?? 7;
-  const symbol = s.bondTokenMeta?.symbol ?? "token";
+  const meta = s.bondTokenMeta;
   const minBase = req?.minAmount ?? "0";
-  const [amount, setAmount] = useState(() => plainAmount(minBase, decimals));
-  // Once the token's decimals are known (meta loads async), prefill the field to the minimum.
-  useEffect(() => { setAmount(plainAmount(minBase, decimals)); }, [minBase, decimals]);
+  const [amount, setAmount] = useState("");
+  // Prefill the field to the minimum once the token's decimals are known (meta loads async). Until then the
+  // step shows a loading state and the lock is blocked, so the human->base conversion never guesses a scale.
+  useEffect(() => { if (meta) setAmount(plainAmount(minBase, meta.decimals)); }, [minBase, meta]);
   if (!req || !req.token || !req.deadline) return null;
+  if (!meta) {
+    return (
+      <p className="flex items-center gap-2 text-sm text-muted-foreground" data-testid="access-bond-deposit">
+        <Loader2 className="size-4 animate-spin" aria-hidden="true" /> Reading the token details…
+      </p>
+    );
+  }
+  const decimals = meta.decimals;
+  const symbol = meta.symbol;
   const base = toBaseUnits(amount, decimals);
   const enough = !!base && BigInt(base) >= BigInt(minBase);
   const below = s.bondCount !== null && s.bondCount < BOND_FLOOR;

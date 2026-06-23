@@ -46,7 +46,9 @@ export function BondTokenPicker({
       .then((list) => {
         if (!live) return;
         setWallet(list);
-        setWalletKey((k) => k || list[0]?.key || "");
+        // Pick the new wallet's first token. Set unconditionally (not `k || ...`) so an account switch can't
+        // leave a stale selection from the previous wallet whose token count happens to match.
+        setWalletKey(list[0]?.key ?? "");
       })
       .finally(() => live && setLoadingWallet(false));
     return () => { live = false; };

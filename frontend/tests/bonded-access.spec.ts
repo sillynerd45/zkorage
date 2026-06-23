@@ -149,6 +149,20 @@ test("BA5: locking a bond advances from deposit to the prove step", async ({ pag
   await expect(page.getByTestId("access-bond-prove")).toBeVisible();
 });
 
+test("BA5: a bonded doc whose deadline has passed surfaces a clear message, not a failing deposit", async ({ page }) => {
+  await page.addInitScript(mock);
+  await stubReaderCommon(page, "eligible");
+  const past = Math.floor(Date.now() / 1000) - 3600; // an hour ago
+  await page.route("**/dataroom/bond-requirement/**", (r) => (r.request().method() === "GET"
+    ? r.fulfill(json({ found: true, scope: "room", gate: "C".repeat(56), reqId: "ab".repeat(32), token: TOKEN, minAmount: MIN, deadline: past }))
+    : r.continue()));
+  await page.route("**/bonded/bond/qual-set**", (r) => r.fulfill(json(qualSet(0, []))));
+
+  await openTheDoc(page);
+  await expect(page.getByTestId("access-status")).toHaveAttribute("data-phase", "error", { timeout: 30_000 });
+  await expect(page.getByTestId("access-error")).toContainText("bond deadline has passed");
+});
+
 // ── BA4 owner ──
 async function stubOwnerCommon(page: import("@playwright/test").Page, memberCount: number) {
   await page.route("**/dataroom/rooms?owner=**", (r) => r.fulfill(json({

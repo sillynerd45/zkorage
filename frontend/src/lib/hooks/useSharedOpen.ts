@@ -410,12 +410,24 @@ export function useSharedOpen() {
   const resolveBondPhase = useCallback(
     async (req: BondRequirement, id: DataRoomIdentity, memberState: "none" | "pending" | "eligible") => {
       setBondReq(req);
+      // Resolve the token's decimals/symbol for the deposit input. Leave it NULL until the read returns (and
+      // null on failure), so the deposit step blocks rather than guessing 7 decimals: a wrong scale would
+      // mis-size the human->base amount conversion. The on-chain minimum is in base units, so a reader can
+      // never lock below the minimum, but a wrong decimals could over-lock.
+      setBondTokenMeta(null);
       if (address && req.token) {
         getTokenBalance(address, req.token)
-          .then((t) => setBondTokenMeta({ symbol: t.symbol, decimals: t.decimals }))
-          .catch(() => setBondTokenMeta({ symbol: "token", decimals: 7 }));
-      } else {
-        setBondTokenMeta({ symbol: "token", decimals: 7 });
+          .then((t) => { if (!cancelled.current) setBondTokenMeta({ symbol: t.symbol, decimals: t.decimals }); })
+          .catch(() => { /* leave null; BondDeposit shows a "reading the token" state + blocks the lock */ });
+      }
+      // A lapsed deadline can never be satisfied (a qualifying lock needs unlock_time >= deadline AND
+      // now < unlock_time), so the room is silently un-openable. Surface it instead of routing the reader to
+      // a deposit that the escrow will reject.
+      const now = Math.floor(Date.now() / 1000);
+      if (req.deadline && req.deadline <= now) {
+        setFlowErr("This room's bond deadline has passed. Ask the room owner to update the requirement.");
+        setPhase("error");
+        return;
       }
       const qual = await getBondQualSet(req.token!, req.minAmount!, req.deadline!).catch(() => null);
       if (cancelled.current) return;
