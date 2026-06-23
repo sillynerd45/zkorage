@@ -132,9 +132,13 @@ export function useSharedOpen() {
   // A new object is returned by useDataRoomIdentity each render, so a once-guard keyed by address prevents the
   // unstable deps from re-pulling every render.
   const syncedFor = useRef<string | null>(null);
+  // True while a manual turn-on/unlock is signing, so this effect (re-run when syncOn flips on) does not
+  // clobber the "syncing" state with "locked" while the wallet signature dialog is still open.
+  const unlocking = useRef(false);
   useEffect(() => {
     if (!connected || !address) { setSyncState("off"); return; }
     if (!syncOn) { setSyncState("off"); return; }
+    if (unlocking.current) return; // a manual unlock is in flight; it owns syncState
     if (!ident.hasSignature(address)) { setSyncState("locked"); return; } // wait for a one-tap unlock
     if (syncedFor.current === address) return;
     syncedFor.current = address;
@@ -161,6 +165,7 @@ export function useSharedOpen() {
   const unlockSync = useCallback(async () => {
     if (!address) return;
     setSyncMsg(null);
+    unlocking.current = true;
     setSyncState("syncing");
     try {
       const sig = await ident.getSignature();
@@ -172,6 +177,8 @@ export function useSharedOpen() {
     } catch (e) {
       setSyncState("error");
       setSyncMsg(String((e as Error).message ?? e));
+    } finally {
+      unlocking.current = false;
     }
   }, [address, ident, reloadOpenable]);
 

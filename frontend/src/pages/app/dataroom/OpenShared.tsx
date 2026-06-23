@@ -276,9 +276,14 @@ export default function OpenShared() {
                 <Button variant="outline" size="sm" onClick={s.unlockSync} data-testid="access-sync-retry">Retry</Button>
               )}
             </div>
-            <div className="mt-1.5 min-h-[2.5rem] text-xs leading-relaxed text-muted-foreground">
+            {/* min-h reserves two helper lines so the box keeps a steady height across off/locked/syncing/
+                synced (the longest line wraps to two on a narrow card); the message only renders on
+                error/info, a distinct state where a little growth is fine. */}
+            <div className="mt-1.5 min-h-[2.75rem] text-xs leading-relaxed text-muted-foreground">
               <p>{SYNC_HELP[s.syncState]}</p>
-              <p className="mt-0.5 text-[11px]" data-testid="access-sync-msg">{s.syncMsg ?? " "}</p>
+              {s.syncMsg && (
+                <p className="mt-0.5 text-[11px]" data-testid="access-sync-msg">{s.syncMsg}</p>
+              )}
             </div>
           </div>
         </Card>
