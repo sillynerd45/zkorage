@@ -54,19 +54,39 @@ test("bonded: my balances lists the wallet's locks with the right actions", asyn
   await page.addInitScript(mock(DEPLOYER));
   await page.goto("/app/bonded/balances");
   await expect(page.getByTestId("bonded-balances")).toBeVisible({ timeout: 60_000 });
-  // lock #4 is active (revocable self-bond) → Release + Extend; lock #1 is released (no actions).
-  await expect(page.getByText(`Lock #${ACTIVE_LOCK}`)).toBeVisible({ timeout: 60_000 });
+  // The card is amount-led now; the on-chain escrow id is demoted to a per-lock testid (`lock-<id>`), so
+  // assert by testid instead of the old "Lock #N" title text. lock #4 is the active revocable self-bond →
+  // Release + Extend; lock #1 is the released lock with no actions.
+  await expect(page.getByTestId(`lock-${ACTIVE_LOCK}`)).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByTestId(`lock-${ACTIVE_LOCK}`)).toContainText(`#${ACTIVE_LOCK}`);
   await expect(page.getByTestId(`unbond-${ACTIVE_LOCK}`)).toBeVisible();
   await expect(page.getByTestId(`extend-${ACTIVE_LOCK}`)).toBeVisible();
-  // Exact match: once the escrow holds double-digit lock ids (e.g. #10), a substring "Lock #1" would also
-  // match "Lock #10/#11/#12" and trip strict mode. #1 is the released lock with no actions.
-  await expect(page.getByText("Lock #1", { exact: true })).toBeVisible();
+  // A testid is exact, so this never collides with a double-digit id (e.g. #10/#11) the way a "Lock #1"
+  // substring would.
+  await expect(page.getByTestId("lock-1")).toBeVisible();
   await page.screenshot({ path: "tests/bonded-balances.png", fullPage: true });
 
   await page.addInitScript(DARK);
   await page.reload();
-  await expect(page.getByText(`Lock #${ACTIVE_LOCK}`)).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByTestId(`lock-${ACTIVE_LOCK}`)).toBeVisible({ timeout: 60_000 });
   await page.screenshot({ path: "tests/bonded-balances-dark.png", fullPage: true });
+});
+
+test("bonded: my balances redisplays cached locks instantly on a return visit (no reload flash)", async ({ page }) => {
+  await page.addInitScript(mock(DEPLOYER));
+  await page.goto("/app/bonded/balances");
+  // First load fills the in-memory snapshot cache (this is the slow one that hits testnet).
+  await expect(page.getByTestId(`lock-${ACTIVE_LOCK}`)).toBeVisible({ timeout: 60_000 });
+
+  // Leave to another bonded tab, then come back. The cache should paint the lock at once and the
+  // first-load "Loading your locks…" panel must never appear.
+  await page.getByRole("link", { name: "Deposit", exact: true }).click();
+  await expect(page).toHaveURL(/\/app\/bonded\/deposit/);
+  // The deposit page body also links to "My Balances"; the tab bar renders first in DOM, so target it.
+  await page.getByRole("link", { name: "My Balances", exact: true }).first().click();
+  await expect(page).toHaveURL(/\/app\/bonded\/balances/);
+  await expect(page.getByTestId(`lock-${ACTIVE_LOCK}`)).toBeVisible({ timeout: 3_000 });
+  await expect(page.getByText(/Loading your locks/)).toHaveCount(0);
 });
 
 // A real testnet issuer so the client-side SAC computation has a valid asset to hash. The deposit pipeline
