@@ -240,7 +240,7 @@ export default function BondedTier() {
       if (!res.found || !res.blob) {
         if (alive.current) {
           setSync("idle");
-          if (userInitiated) setSyncMsg("No saved handle for this wallet yet. Create one below.");
+          if (userInitiated) setSyncMsg("No saved handle for this wallet yet. Use Create a handle to make one.");
         }
         return;
       }
@@ -473,8 +473,8 @@ export default function BondedTier() {
             </div>
             {sync === "error" && syncMsg && <p className="text-[12px] text-destructive" data-testid="tier-sync-msg">{syncMsg}</p>}
             <p className="pt-2 text-[12px] text-muted-foreground">
-              Demo only. The secret is held in your browser. When backed up, it is also stored encrypted under
-              your wallet, so only your wallet can restore it on another device.
+              Your handle's secret stays in your browser. When you back it up, it is encrypted under your
+              wallet and stored as an opaque blob, so only your wallet can restore it on another device.
             </p>
           </div>
         ) : (
