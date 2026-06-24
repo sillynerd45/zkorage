@@ -1366,3 +1366,60 @@ export const proveBond = (body: {
 // backend relays (the reader never reveals or pays from a funded wallet). Grant or a contract error.
 export const submitBond = (bundle: Bundle) =>
   post<WalletWriteResult & { grant?: unknown }>("/bonded/bond/submit", { ...bundle });
+
+// ── Bonded Access (standalone): the same per-requirement bond gate as the Data Room, but with its OWN member
+// context, so a user can pick ANY token + amount + deadline, bond, and prove anonymously without a room. The
+// anonymity set is still per req_id (everyone who bonded the same requirement), so it grows with adoption and
+// the backend refuses to prove below the floor. enroll -> bond a qualifying lock -> prove -> submit -> status.
+
+export interface BondInfo {
+  bondGateId: string | null;
+  imageId: string;
+  minAnonSet: number;
+  escrowId: string;
+  standaloneSetId: string;
+  standaloneEnrolledCount: number;
+  standaloneMemberRoot: string | null;
+  grantCount: number;
+}
+
+/** A demo bond identity minted by the backend (in production the member holds these client-side). Same shape
+ *  + scheme as a tier identity. */
+export interface BondIdentity {
+  idSecret: string;
+  idTrapdoor: string;
+  holderSeed: string;
+  accessor: string;
+  qualCommitment: string;
+}
+
+export interface BondGrant {
+  index: number;
+  accessor: string;
+  req_id: string;
+  deadline: string;
+  nullifier: string;
+  member_root: string;
+  qual_root: string;
+  ledger: number;
+  timestamp: string;
+}
+
+export interface BondStatus {
+  accessor: string;
+  reqId: string;
+  is_granted: boolean;
+  grant: BondGrant | null;
+  bondGateId: string;
+}
+
+export const getBondInfo = () => fetch(`${BASE}/bonded/bond/info`).then(j<BondInfo>);
+
+export const enrollBond = () =>
+  post<{ ok: boolean; setId: string; memberIndex: number; memberCount: number; memberRoot: string; minted?: BondIdentity }>(
+    "/bonded/bond/enroll",
+    { mint: true },
+  );
+
+export const getBondStatus = (accessor: string, reqId: string) =>
+  fetch(`${BASE}/bonded/bond/status?accessor=${accessor}&req_id=${reqId}`).then(j<BondStatus>);
