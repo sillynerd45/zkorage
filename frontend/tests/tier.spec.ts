@@ -98,6 +98,141 @@ test("tier: multi-token requirement, handle mints, anonymity-set gating (light +
   expect(errs, errs.join("\n")).toHaveLength(0);
 });
 
+// A qualifying bond the wallet already holds, plus matching backend reads, so the "use a bond you hold"
+// loader + the "already held" detection can be exercised without an on-chain deposit. The lock's token is a
+// valid C-address that is NOT in the wallet picker, so loading it also exercises the synthetic-token path.
+const LOCK_TOKEN = "CCFHRZAP7GYUBNJ4RN7NBZL5GS7Q32F4CIXDTWTTIGPYEDWRIS2TUPA5";
+const FIXED_COMMIT = "ab".repeat(32);
+const LOCK_AMOUNT = "25000000000"; // 2500 with 7 decimals
+const LOCK_UNLOCK = Math.floor(Date.UTC(2030, 6, 1, 12, 0, 0) / 1000); // 2030-07-01 12:00 UTC, minute-aligned
+const HEX32 = (b: number) => b.toString(16).padStart(2, "0").repeat(32);
+
+function stubBond(page: import("@playwright/test").Page) {
+  page.route("**/escrow/locks**", (route) =>
+    route.fulfill({
+      json: {
+        owner: DEPLOYER,
+        count: 1,
+        escrowId: "ESCROW",
+        locks: [
+          {
+            id: 99,
+            depositor: DEPLOYER,
+            claimant: DEPLOYER,
+            token: LOCK_TOKEN,
+            amount: LOCK_AMOUNT,
+            unlock_time: LOCK_UNLOCK,
+            commitment: FIXED_COMMIT,
+            revocable: false,
+            released: false,
+            is_locked: true,
+            role: "self",
+            tokenSymbol: "TUSD",
+            tokenDecimals: 7,
+          },
+        ],
+      },
+    }),
+  );
+  page.route("**/escrow/balance**", (route) => route.fulfill({ json: { owner: DEPLOYER, balance: "0", bondTokenId: "" } }));
+  page.route("**/bonded/bond/info", (route) =>
+    route.fulfill({
+      json: {
+        bondGateId: "GATE",
+        imageId: HEX32(0xaa),
+        minAnonSet: 3,
+        escrowId: "ESCROW",
+        standaloneSetId: HEX32(0x11),
+        standaloneEnrolledCount: 1,
+        standaloneMemberRoot: null,
+        grantCount: 0,
+      },
+    }),
+  );
+  page.route("**/bonded/bond/qual-set**", (route) =>
+    route.fulfill({
+      json: {
+        token: LOCK_TOKEN,
+        minAmount: LOCK_AMOUNT,
+        deadline: LOCK_UNLOCK,
+        reqId: HEX32(0xcd),
+        anonSetSize: 3,
+        minAnonSet: 3,
+        belowMin: false,
+        computedRoot: HEX32(0xef),
+        published: true,
+        ringLen: 3,
+        locks: [{ id: 99, commitment: FIXED_COMMIT, amount: LOCK_AMOUNT, unlock_time: LOCK_UNLOCK, depositor: DEPLOYER }],
+      },
+    }),
+  );
+  page.route("**/bonded/bond/status**", (route) =>
+    route.fulfill({ json: { accessor: HEX32(0x04), reqId: HEX32(0xcd), is_granted: false, grant: null, bondGateId: "GATE" } }),
+  );
+  page.route("**/bonded/bond/enroll", (route) =>
+    route.fulfill({
+      json: {
+        ok: true,
+        setId: HEX32(0x11),
+        memberIndex: 0,
+        memberCount: 1,
+        memberRoot: HEX32(0x00),
+        minted: {
+          idSecret: HEX32(0x01),
+          idTrapdoor: HEX32(0x02),
+          holderSeed: HEX32(0x03),
+          accessor: HEX32(0x04),
+          qualCommitment: FIXED_COMMIT,
+        },
+      },
+    }),
+  );
+  page.route("**/bonded/bond/handle-vault/**", (route) =>
+    route.request().method() === "PUT"
+      ? route.fulfill({ json: { ok: true } })
+      : route.fulfill({ json: { found: false, blob: null } }),
+  );
+}
+
+test("tier: load a bond you already hold, and the already-held detection", async ({ page }) => {
+  const errs: string[] = [];
+  page.on("console", (m) => {
+    if (m.type() === "error" && !/Failed to load resource/i.test(m.text())) errs.push(m.text());
+  });
+  await page.addInitScript(mock(DEPLOYER));
+  await stubHorizon(page);
+  stubBond(page);
+
+  await page.goto("/app/bonded/tier");
+  await expect(page.getByTestId("bonded-tier")).toBeVisible();
+
+  // The requirement starts at the default (100 of the first wallet token). The existing bond is offered as a
+  // chip but not yet loaded, so it is not marked active.
+  await expect(page.getByTestId("tier-amount")).toHaveValue("100");
+  const chip = page.getByTestId("tier-mybond-99");
+  await expect(chip).toBeVisible({ timeout: 30_000 });
+  await expect(chip).toHaveAttribute("aria-pressed", "false");
+
+  // Load the bond: its token, amount, and deadline populate the requirement, and the chip marks active.
+  await chip.click();
+  await expect(page.getByTestId("tier-amount")).toHaveValue("2500");
+  await expect(page.getByTestId("tier-deadline-trigger")).toContainText("2030");
+  await expect(chip).toHaveAttribute("aria-pressed", "true");
+
+  // Mint the handle whose tag matches the bond, so the page recognizes the bond is already held.
+  await page.getByTestId("tier-create-identity").click();
+  await expect(page.getByTestId("tier-identity")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("tier-bond-have")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("tier-bond-have")).toContainText("lock #99");
+  // The primary "Lock 2500" is replaced by the "Lock another" secondary.
+  await expect(page.getByTestId("tier-bond")).toHaveCount(0);
+  await expect(page.getByTestId("tier-bond-again")).toBeVisible();
+  // The stubbed set is at the floor (3), so proving is enabled.
+  await expect(page.getByTestId("tier-prove")).toBeEnabled({ timeout: 30_000 });
+
+  expect(errs, errs.join("\n")).toHaveLength(0);
+});
+
 test("tier: the handle backs up to the wallet and restores on another device", async ({ page }) => {
   await page.addInitScript(mock(DEPLOYER));
   await stubHorizon(page);

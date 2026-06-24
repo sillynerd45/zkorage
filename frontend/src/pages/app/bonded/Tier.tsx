@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Wallet, ShieldCheck, Loader2, AlertTriangle, RefreshCw, UserPlus, Lock, Users, CalendarClock } from "lucide-react";
+import { Wallet, ShieldCheck, Loader2, AlertTriangle, RefreshCw, UserPlus, Lock, Users, CalendarClock, Check } from "lucide-react";
 import { useBonded } from "@/lib/hooks/useBonded";
 import { useWallet } from "@/lib/wallet/WalletContext";
 import { Panel, DataRow } from "@/components/app/blocks";
@@ -24,6 +24,7 @@ import {
   type BondQualSet,
   type BondStatus,
   type Bundle,
+  type LockView,
 } from "@/lib/api";
 import { loadWalletTokens, plainAmount, type TokenOption } from "@/lib/bonded/tokens";
 import { encryptBondHandle, decryptBondHandle, deriveBondHandleVaultId, BOND_HANDLE_VAULT_MESSAGE, type BondHandle } from "@/lib/bonded/handleVault";
@@ -63,6 +64,19 @@ function fmtDeadline(local: string): string {
   if (Number.isNaN(d.getTime())) return "Pick a deadline";
   return d.toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
 }
+
+// The display symbol for a lock's token: the native SAC reports "native" (show "XLM"); fall back to a short
+// contract id for a token that does not expose a symbol.
+const bondSymbol = (l: LockView): string =>
+  l.tokenSymbol === "native" ? "XLM" : l.tokenSymbol?.trim() || short(l.token, 4);
+
+// A short calendar date, e.g. "Jan 15, 2027", for a bond chip.
+const fmtShortDate = (unix: number): string =>
+  new Date(unix * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+
+// Normalize a 32-byte hex commitment for comparison (lowercase, strip an optional 0x).
+const normCommit = (h: string): string => h.toLowerCase().replace(/^0x/, "");
+const isZeroCommit = (h: string): boolean => /^0*$/.test(normCommit(h));
 
 function loadIdentity(): BondIdentity | null {
   try {
@@ -187,6 +201,59 @@ export default function BondedTier() {
   const hasIdentity = Boolean(identity?.accessor);
   const busyFlow = phase === "proving" || phase === "submitting";
   const expired = deadlineUnix > 0 && Date.now() >= deadlineUnix * 1000;
+
+  // The wallet's own bonds that can serve as a qualifying bond for some requirement: still locked,
+  // non-revocable, with a real (non-zero) commitment. These are the bonds you can load to check their set.
+  const myBonds = b.locks.filter(
+    (l) => !l.released && l.is_locked && !l.revocable && !isZeroCommit(l.commitment),
+  );
+
+  // True when the form's requirement already equals this bond's (token, amount, deadline), so the chip can
+  // show which bond is loaded. The deadline round-trips through the minute-precision picker, so compare the
+  // bond's unlock at minute precision too.
+  const bondReqEq = (l: LockView): boolean =>
+    Boolean(selected) &&
+    minAmountBase !== null &&
+    selected!.contractId === l.token &&
+    safeBig(minAmountBase) === safeBig(l.amount) &&
+    deadlineUnix === Math.floor(new Date(toLocalInput(l.unlock_time)).getTime() / 1000);
+
+  // Load a bond you already hold into the requirement, so the anonymity set, the already-held check, and
+  // proving all target it. If the bond's token is not in the wallet picker (e.g. the trustline is gone), add
+  // a synthetic option so it stays selectable.
+  const loadBond = (l: LockView) => {
+    const dec = l.tokenDecimals || 7;
+    let key = tokens.find((t) => t.contractId === l.token)?.key;
+    if (!key) {
+      key = `lock:${l.token}`;
+      const synth: TokenOption = { key, symbol: bondSymbol(l), contractId: l.token, decimals: dec, balanceBase: "0", kind: "custom" };
+      setTokens((prev) => (prev.some((t) => t.contractId === l.token) ? prev : [...prev, synth]));
+    }
+    setTokenKey(key);
+    setAmount(plainAmount(l.amount, dec));
+    setDeadlineAt(toLocalInput(l.unlock_time));
+  };
+
+  // A bond the wallet holds that satisfies the CURRENT requirement AND is tagged with the current handle, so
+  // it is provable now. This mirrors the prover's qualifying check (token + amount >= min + unlock >= deadline
+  // + non-revocable + still locked + commitment == this handle's qual tag), so we only claim "already held"
+  // when proving would actually succeed. `unlock_time > now` is checked live (not via the cached is_locked
+  // snapshot) so the claim never outlives the lock; `!expired` is required because the gate rejects a past
+  // requirement deadline, so a provable claim would be false once it passes.
+  const nowUnix = Math.floor(Date.now() / 1000);
+  const myQualBond =
+    identity && selected && minAmountBase && !expired
+      ? b.locks.find(
+          (l) =>
+            !l.released &&
+            l.unlock_time > nowUnix &&
+            !l.revocable &&
+            l.token === selected.contractId &&
+            safeBig(l.amount) >= safeBig(minAmountBase) &&
+            l.unlock_time >= deadlineUnix &&
+            normCommit(l.commitment) === normCommit(identity.qualCommitment),
+        )
+      : undefined;
 
   const openDeadlinePicker = () => {
     const el = deadlineRef.current;
@@ -374,6 +441,36 @@ export default function BondedTier() {
           </div>
         ) : (
           <div className="grid gap-4">
+            {myBonds.length > 0 && (
+              <div data-testid="tier-mybonds">
+                <div className="mb-1.5 text-sm font-medium">Use a bond you already hold</div>
+                <div className="flex flex-wrap gap-2">
+                  {myBonds.map((l) => {
+                    const active = bondReqEq(l);
+                    return (
+                      <button
+                        key={l.id}
+                        type="button"
+                        onClick={() => loadBond(l)}
+                        aria-pressed={active}
+                        data-testid={`tier-mybond-${l.id}`}
+                        className={cn(
+                          "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[12px] transition-colors",
+                          active ? "border-brand bg-brand/10 text-brand" : "border-input bg-background hover:bg-muted",
+                        )}
+                      >
+                        {active && <Check className="size-3.5 shrink-0" aria-hidden="true" />}
+                        <span className="tabular-nums font-medium">{fmtAmount(l.amount, l.tokenDecimals || 7)}</span> {bondSymbol(l)}
+                        <span className="text-muted-foreground">· until {fmtShortDate(l.unlock_time)}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="mt-1.5 text-[12px] text-muted-foreground">
+                  Loads that bond's token, amount, and deadline below, so the anonymity set reflects it.
+                </p>
+              </div>
+            )}
             <div>
               <Label htmlFor="tier-token" className="mb-1.5 block">Token</Label>
               <select
@@ -502,6 +599,29 @@ export default function BondedTier() {
       <Panel title="2. Lock a qualifying bond">
         {!b.connected ? (
           <p className="text-[13px] text-muted-foreground">Connect your wallet above to lock a qualifying bond.</p>
+        ) : myQualBond ? (
+          <div className="flex flex-col items-start gap-3 py-1" data-testid="tier-bond-have">
+            <p className="text-[13px] text-success">
+              You already hold a qualifying bond for this requirement (escrow lock #{myQualBond.id},{" "}
+              {fmtAmount(myQualBond.amount, myQualBond.tokenDecimals || 7)} {bondSymbol(myQualBond)} until{" "}
+              {fmtShortDate(myQualBond.unlock_time)}). You do not need to lock another to prove.
+            </p>
+            <p className="text-[13px] text-muted-foreground">
+              Locking another adds one more bond to the set.
+            </p>
+            <Button
+              variant="outline"
+              disabled={!reqValid || expired || b.busy === "deposit"}
+              onClick={() => void bondQualifying()}
+              data-testid="tier-bond-again"
+            >
+              {b.busy === "deposit" ? <Loader2 className="size-4 animate-spin" /> : <Lock className="size-4" />}
+              Lock another {amount} {tokenSym}
+            </Button>
+            <Link to="/app/bonded/balances" className="text-[12px] text-brand hover:underline">
+              See it in My Balances
+            </Link>
+          </div>
         ) : (
           <div className="flex flex-col items-start gap-3 py-1">
             <p className="text-[13px] text-muted-foreground">
