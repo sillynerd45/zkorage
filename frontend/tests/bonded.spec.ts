@@ -138,7 +138,14 @@ test("bonded: deposit form, token picker + mode switcher", async ({ page }) => {
   await page.getByTestId("deposit-token-paste").fill("CABC");
   await expect(page.getByTestId("deposit-submit")).toBeDisabled();
 
-  await expect(page.getByTestId("deposit-unlock")).toBeVisible();
+  // The unlock field is now a picker-only trigger (the real datetime-local input is hidden, opened via
+  // showPicker). Assert the visible trigger carries a formatted value, and that setting the hidden input's
+  // value (what the native picker does) updates the trigger label. force: bypasses the hidden input's
+  // visibility/pointer-events actionability checks.
+  await expect(page.getByTestId("deposit-unlock-trigger")).toBeVisible();
+  await expect(page.getByTestId("deposit-unlock-trigger")).not.toBeEmpty();
+  await page.getByTestId("deposit-unlock").fill("2026-09-01T15:30", { force: true });
+  await expect(page.getByTestId("deposit-unlock-trigger")).toContainText("Sep 1, 2026");
   await expect(page.getByTestId("deposit-submit")).toBeVisible();
   await expect(page.getByTestId("deposit-privacy")).toBeVisible(); // honest "this lock is public" note
 

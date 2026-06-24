@@ -13,6 +13,8 @@ const fmtDay = (unix: number) =>
   new Date(unix * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 const fmtClock = (unix: number) =>
   new Date(unix * 1000).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+// Date and clock on one line, e.g. "Jun 25, 2026 · 3:31 PM".
+const fmtWhen = (unix: number) => `${fmtDay(unix)} · ${fmtClock(unix)}`;
 
 // Compact relative time, e.g. "in 3 days", "in 5 hours", "2 days ago". Coarsens to the largest sensible unit.
 function relTime(unix: number): string {
@@ -50,13 +52,11 @@ function statusOf(l: LockView): { label: string; cls: string } {
 }
 
 // The highlighted unlock block's tint, matched to the status pill: Locked = brand, Unlocked = success,
-// Released = muted. `verb` fits the state ("Unlocks" while locked, "Unlocked" once it has passed).
-function unlockTone(l: LockView): { wrap: string; eyebrow: string; rel: string; verb: string } {
-  if (l.released)
-    return { wrap: "border-border/70 bg-muted/40", eyebrow: "text-muted-foreground", rel: "text-muted-foreground", verb: "Unlocked" };
-  if (l.is_locked)
-    return { wrap: "border-brand/20 bg-brand/5", eyebrow: "text-brand", rel: "text-brand", verb: "Unlocks" };
-  return { wrap: "border-success/20 bg-success/5", eyebrow: "text-success", rel: "text-success", verb: "Unlocked" };
+// Released = muted. The status pill carries the state word, so the block has no verb of its own.
+function unlockTone(l: LockView): { wrap: string; rel: string } {
+  if (l.released) return { wrap: "border-border/70 bg-muted/40", rel: "text-muted-foreground" };
+  if (l.is_locked) return { wrap: "border-brand/20 bg-brand/5", rel: "text-brand" };
+  return { wrap: "border-success/20 bg-success/5", rel: "text-success" };
 }
 
 // Your relationship to the lock, in one or two words for the compact meta line.
@@ -175,62 +175,63 @@ export default function BondedBalances() {
             }
             aside={<span className={cn("rounded-full px-2.5 py-1 text-[11px] font-medium", st.cls)}>{st.label}</span>}
           >
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-4">
-              {/* Left: the escrow meta + the actions you can take on this lock. */}
-              <div className="min-w-0 flex-1">
+            {/* items-stretch makes both columns the same height so the action row can bottom-align. */}
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-stretch sm:gap-4">
+              {/* Left: escrow meta at the top, actions pinned to the bottom via mt-auto. */}
+              <div className="flex min-w-0 flex-1 flex-col">
                 <p className="text-[12px] text-muted-foreground" data-testid={`lock-${l.id}`}>
                   Escrow lock #{l.id} · {roleLabel(l)} · {l.revocable ? "revocable" : "one-way"}
                 </p>
 
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  {canWithdraw && (
-                    <Button size="sm" variant="brand" disabled={busyKey(`withdraw-${l.id}`)} onClick={() => void act(l.id, b.withdraw(l.id))} data-testid={`withdraw-${l.id}`}>
-                      Withdraw
-                    </Button>
-                  )}
-                  {canClaim && (
-                    <Button size="sm" variant="brand" disabled={busyKey(`claim-${l.id}`)} onClick={() => void act(l.id, b.claim(l.id))} data-testid={`claim-${l.id}`}>
-                      Claim
-                    </Button>
-                  )}
-                  {canUnbond && (
-                    <Button size="sm" variant="destructive" disabled={busyKey(`unbond-${l.id}`)} onClick={() => void act(l.id, b.unbond(l.id))} data-testid={`unbond-${l.id}`}>
-                      Release collateral now
-                    </Button>
-                  )}
-                  {canExtend && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => {
-                        setExtendId(extendId === l.id ? null : l.id);
-                        setExtendAt("");
-                      }}
-                      data-testid={`extend-${l.id}`}
-                    >
-                      Extend
-                    </Button>
-                  )}
-                  {awaiting && <span className="text-[13px] text-muted-foreground">Claimable by {short(l.claimant, 4)}</span>}
-                  {l.released && <span className="text-[13px] text-muted-foreground">This lock has been released.</span>}
-                </div>
+                <div className="mt-auto pt-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {canWithdraw && (
+                      <Button size="sm" variant="brand" disabled={busyKey(`withdraw-${l.id}`)} onClick={() => void act(l.id, b.withdraw(l.id))} data-testid={`withdraw-${l.id}`}>
+                        Withdraw
+                      </Button>
+                    )}
+                    {canClaim && (
+                      <Button size="sm" variant="brand" disabled={busyKey(`claim-${l.id}`)} onClick={() => void act(l.id, b.claim(l.id))} data-testid={`claim-${l.id}`}>
+                        Claim
+                      </Button>
+                    )}
+                    {canUnbond && (
+                      <Button size="sm" variant="destructive" disabled={busyKey(`unbond-${l.id}`)} onClick={() => void act(l.id, b.unbond(l.id))} data-testid={`unbond-${l.id}`}>
+                        Release collateral now
+                      </Button>
+                    )}
+                    {canExtend && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setExtendId(extendId === l.id ? null : l.id);
+                          setExtendAt("");
+                        }}
+                        data-testid={`extend-${l.id}`}
+                      >
+                        Extend
+                      </Button>
+                    )}
+                    {awaiting && <span className="text-[13px] text-muted-foreground">Claimable by {short(l.claimant, 4)}</span>}
+                    {l.released && <span className="text-[13px] text-muted-foreground">This lock has been released.</span>}
+                  </div>
 
-                {canUnbond && (
-                  <p className="mt-2 inline-flex items-center gap-1.5 text-[12px] text-muted-foreground">
-                    <AlertTriangle className="size-3.5" /> Releasing now returns the funds and voids any proof backed by this lock.
-                  </p>
-                )}
+                  {canUnbond && (
+                    <p className="mt-2 inline-flex items-center gap-1.5 text-[12px] text-muted-foreground">
+                      <AlertTriangle className="size-3.5" /> Releasing now returns the funds and voids any proof backed by this lock.
+                    </p>
+                  )}
+                </div>
               </div>
 
-              {/* Right: the highlighted unlock block, filling the space under the status pill. */}
+              {/* Right: the unlock block. Two lines: "date · time" then the highlighted relative time. */}
               <div
-                className={cn("shrink-0 rounded-xl border px-3.5 py-2.5 sm:min-w-[148px] sm:text-right", ut.wrap)}
+                className={cn("flex shrink-0 flex-col justify-center rounded-xl border px-3.5 py-2.5 sm:min-w-[170px] sm:text-right", ut.wrap)}
                 data-testid={`unlock-${l.id}`}
               >
-                <p className={cn("text-[10px] font-medium uppercase tracking-wider", ut.eyebrow)}>{ut.verb}</p>
-                <p className="mt-1 text-[13px] font-semibold tabular-nums text-foreground">{fmtDay(l.unlock_time)}</p>
-                <p className="text-[12px] tabular-nums text-muted-foreground">{fmtClock(l.unlock_time)}</p>
-                <p className={cn("mt-1 text-[11px] font-medium tabular-nums", ut.rel)}>{relTime(l.unlock_time)}</p>
+                <p className="text-[13px] font-semibold tabular-nums text-foreground">{fmtWhen(l.unlock_time)}</p>
+                <p className={cn("mt-0.5 text-[12px] font-medium tabular-nums", ut.rel)}>{relTime(l.unlock_time)}</p>
               </div>
             </div>
 
