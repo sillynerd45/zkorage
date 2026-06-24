@@ -22,7 +22,9 @@ approved member accessed in a window, not which member or exactly when. The Data
 **Bonded Access**: a room owner can require readers to lock an anonymous on-chain bond (a token, a minimum
 amount, a deadline) before opening the room's documents. A reader who locked a qualifying non-revocable bond
 proves it without revealing which wallet, which lock, or the exact amount, and the bond proof also proves room
-membership. Privacy needs at least three qualifying bonders for a requirement. Frontend is **v0.12.21**. A new
+membership. Privacy needs at least three qualifying bonders for a requirement. A reader records two grants on
+open (a membership grant provides the proof-bound key the keepers seal to, the bond grant provides admission),
+and the document is released by the 2-of-3 keeper committee. Frontend is **v0.12.22**. A new
 **Bonded Proofs** pillar (a Soroban-native time-locked escrow plus two
 live ZK products: a **solvency proof that dies when you pull your collateral** and an **anonymous bonded
 tier**) is also live; see below. The whole stack
