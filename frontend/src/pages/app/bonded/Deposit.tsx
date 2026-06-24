@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Wallet, Eye } from "lucide-react";
+import { Wallet, Eye, CalendarClock } from "lucide-react";
 import { useBonded } from "@/lib/hooks/useBonded";
 import { Panel } from "@/components/app/blocks";
 import { Callout } from "@/components/app/dataroom/kit";
@@ -16,6 +16,14 @@ function defaultUnlock(): string {
   const d = new Date(Date.now() + 3_600_000);
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// Format a datetime-local value ("2026-06-24T12:05", parsed as local time) for the trigger button.
+function fmtUnlock(local: string): string {
+  if (!local) return "Pick a time";
+  const d = new Date(local);
+  if (Number.isNaN(d.getTime())) return "Pick a time";
+  return d.toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
 const PASTE = "__paste__";
@@ -40,6 +48,7 @@ export default function BondedDeposit() {
   const [pasteBusy, setPasteBusy] = useState(false);
   const [amount, setAmount] = useState("100");
   const [unlockAt, setUnlockAt] = useState(defaultUnlock);
+  const unlockRef = useRef<HTMLInputElement>(null);
   const [mode, setMode] = useState<"bond" | "send">("bond");
   const [revocable, setRevocable] = useState(true);
   const [recipient, setRecipient] = useState("");
@@ -47,6 +56,18 @@ export default function BondedDeposit() {
   const [ok, setOk] = useState<string | null>(null);
 
   const unlockUnix = useMemo(() => Math.floor(new Date(unlockAt).getTime() / 1000), [unlockAt]);
+
+  // Open the native date-time picker. showPicker() is the modern path; some engines throw (no support, or
+  // no user gesture), so fall back to focusing the real input. The user never types into a spinner.
+  const openUnlockPicker = () => {
+    const el = unlockRef.current;
+    if (!el) return;
+    try {
+      el.showPicker();
+    } catch {
+      el.focus();
+    }
+  };
 
   const reloadTokens = useCallback(async () => {
     if (!b.address) return;
@@ -201,7 +222,6 @@ export default function BondedDeposit() {
               Balance: {selected ? `${fmtAmount(selected.balanceBase, selected.decimals)} ${selected.symbol}` : "…"}
             </span>
           </div>
-          <p className="mt-1 text-[12px] text-muted-foreground">Any token your wallet holds works.</p>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">
@@ -223,8 +243,40 @@ export default function BondedDeposit() {
           </div>
 
           <div>
-            <Label htmlFor="unlock" className="mb-1.5 block">Unlock time</Label>
-            <Input id="unlock" type="datetime-local" value={unlockAt} onChange={(e) => setUnlockAt(e.target.value)} className="w-full" data-testid="deposit-unlock" />
+            <Label id="unlock-label" className="mb-1.5 block">Unlock time</Label>
+            <div className="relative">
+              {/* Visible control, styled like Input. Opens the picker on click; the user never types into a
+                  spinner. justify-between pins the calendar icon to the right edge. A label cannot associate
+                  with a button via htmlFor, so name it via aria-labelledby (the label + the button's value). */}
+              <button
+                id="unlock-trigger"
+                type="button"
+                onClick={openUnlockPicker}
+                aria-labelledby="unlock-label unlock-trigger"
+                data-testid="deposit-unlock-trigger"
+                className={cn(
+                  "flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-left text-sm shadow-sm transition-colors",
+                  "focus-visible:border-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+                )}
+              >
+                <span className={cn("tabular-nums", !unlockAt && "text-muted-foreground")}>{fmtUnlock(unlockAt)}</span>
+                <CalendarClock className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+              </button>
+
+              {/* The real value holder: off-tab, non-interactive, visually collapsed, but still in the render
+                  tree so showPicker()/focus() work. Keeps the value + testid the deposit flow relies on. */}
+              <input
+                ref={unlockRef}
+                id="unlock"
+                type="datetime-local"
+                value={unlockAt}
+                onChange={(e) => setUnlockAt(e.target.value)}
+                data-testid="deposit-unlock"
+                tabIndex={-1}
+                aria-hidden="true"
+                className="pointer-events-none absolute left-0 top-0 h-0 w-0 overflow-hidden opacity-0"
+              />
+            </div>
           </div>
         </div>
         <p className="text-[12px] text-muted-foreground">
