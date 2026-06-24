@@ -6,6 +6,8 @@ import { test, expect } from "@playwright/test";
 // backend e2e. A fresh requirement (the stubbed TUSD here) has no qualifying bonds yet, so proving is gated.
 const DEPLOYER = "GDLECNXD76OZQROASQGWEP4KAMJWTJXZW2LN7OJGYPXIJDRXACWGXZY6";
 const TUSD_ISSUER = "GDFEJBM6RGK2IL2PIMGVNTGSO7O2NOVILFQUMIC55YMFKSGACA5IO2PM";
+// A fixed wallet signature (SEP-53) so the handle-vault key + id are deterministic across "devices" in tests.
+const SIG_B64 = Buffer.from(new Uint8Array(64).fill(0x07)).toString("base64");
 const mock = (addr: string) => `
   localStorage.setItem("zkorage.wallet.connected", "1");
   window.__freighterMock = {
@@ -15,6 +17,7 @@ const mock = (addr: string) => `
     getAddress: async () => ({ address: "${addr}" }),
     getNetwork: async () => ({ network: "TESTNET", networkPassphrase: "Test SDF Network ; September 2015" }),
     signTransaction: async (xdr) => ({ signedTxXdr: xdr, signerAddress: "${addr}" }),
+    signMessage: async () => ({ signedMessage: "${SIG_B64}", signerAddress: "${addr}" }),
   };
 `;
 const DARK = `localStorage.setItem("zkorage-theme","dark");`;
@@ -93,4 +96,30 @@ test("tier: multi-token requirement, handle mints, anonymity-set gating (light +
   await page.screenshot({ path: "tests/bonded-tier-dark.png", fullPage: true });
 
   expect(errs, errs.join("\n")).toHaveLength(0);
+});
+
+test("tier: the handle backs up to the wallet and restores on another device", async ({ page }) => {
+  await page.addInitScript(mock(DEPLOYER));
+  await stubHorizon(page);
+  await page.goto("/app/bonded/tier");
+  await expect(page.getByTestId("bonded-tier")).toBeVisible();
+
+  // Create a handle: it mints + auto-backs-up (sign once -> encrypt -> store the opaque blob in the vault).
+  await page.getByTestId("tier-create-identity").click();
+  await expect(page.getByTestId("tier-identity")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("tier-sync")).toContainText("Backed up to your wallet", { timeout: 15_000 });
+  const handle = (await page.getByTestId("tier-identity").innerText()).match(/[0-9a-f]{6}…[0-9a-f]{6}/)?.[0] ?? "";
+  expect(handle).not.toBe("");
+
+  // Simulate a fresh device: drop the local handle + the in-memory signature, reload.
+  await page.evaluate(() => localStorage.removeItem("zkorage-bond-identity"));
+  await page.reload();
+  await expect(page.getByTestId("tier-create-identity")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("tier-identity")).toHaveCount(0);
+
+  // Restore from the wallet: same signature -> same vault id -> pull + decrypt -> the SAME handle is back.
+  await page.getByTestId("tier-restore").click();
+  await expect(page.getByTestId("tier-identity")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("tier-identity")).toContainText(handle);
+  await expect(page.getByTestId("tier-sync")).toContainText("Backed up to your wallet", { timeout: 15_000 });
 });

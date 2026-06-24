@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Wallet, ShieldCheck, Loader2, AlertTriangle, RefreshCw, UserPlus, Lock, Users, CalendarClock } from "lucide-react";
 import { useBonded } from "@/lib/hooks/useBonded";
+import { useWallet } from "@/lib/wallet/WalletContext";
 import { Panel, DataRow } from "@/components/app/blocks";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +15,8 @@ import {
   submitBond,
   getBondStatus,
   getProveStatus,
+  getBondHandleVault,
+  putBondHandleVault,
   fmtAmount,
   toBaseUnits,
   type BondInfo,
@@ -23,8 +26,13 @@ import {
   type Bundle,
 } from "@/lib/api";
 import { loadWalletTokens, plainAmount, type TokenOption } from "@/lib/bonded/tokens";
+import { encryptBondHandle, decryptBondHandle, deriveBondHandleVaultId, BOND_HANDLE_VAULT_MESSAGE, type BondHandle } from "@/lib/bonded/handleVault";
 import { short } from "@/lib/format";
 import { cn } from "@/lib/utils";
+
+// One-signature-per-session cache for the bond-handle vault key (the wallet signature is the HKDF input). Held
+// only in memory, never persisted, so a page reload re-prompts once.
+const bondSigCache = new Map<string, Uint8Array>();
 
 // A standalone Bonded Access tier is one requirement: a token, a minimum amount, and a deadline. Anyone who
 // locks a non-revocable bond that meets it joins the same anonymity set, so the more people who bond the same
@@ -82,6 +90,9 @@ export default function BondedTier() {
   const [status, setStatus] = useState<BondStatus | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
   const [msg, setMsg] = useState("");
+  const { signMessage } = useWallet();
+  const [sync, setSync] = useState<"idle" | "syncing" | "synced" | "error">("idle");
+  const [syncMsg, setSyncMsg] = useState("");
   const alive = useRef(true);
   // Bumped whenever the requirement changes, so a read started for an OLD requirement that resolves late is
   // ignored (it would otherwise re-show a stale anon-set / grant for a different requirement).
@@ -187,14 +198,84 @@ export default function BondedTier() {
     }
   };
 
+  // The wallet signature that keys the handle vault (one prompt per session, cached, never persisted).
+  const getBondSig = useCallback(async (): Promise<Uint8Array> => {
+    const addr = b.address;
+    if (!addr) throw new Error("Connect your wallet first.");
+    let sig = bondSigCache.get(addr);
+    if (!sig) {
+      sig = await signMessage(BOND_HANDLE_VAULT_MESSAGE);
+      bondSigCache.set(addr, sig);
+    }
+    return sig;
+  }, [b.address, signMessage]);
+
+  // Encrypt the handle under the wallet signature and store the opaque blob in the vault, so it follows the
+  // wallet to other devices. Non-fatal: a decline or error leaves the local handle usable; the user can retry.
+  const backupHandle = useCallback(async (h: BondHandle) => {
+    if (!alive.current) return;
+    setSync("syncing");
+    setSyncMsg("");
+    try {
+      const sig = await getBondSig();
+      const blob = await encryptBondHandle(sig, h);
+      await putBondHandleVault(await deriveBondHandleVaultId(sig), blob);
+      if (alive.current) setSync("synced");
+    } catch (e) {
+      if (alive.current) {
+        setSync("error");
+        setSyncMsg((e as Error)?.message ?? "could not back up the handle");
+      }
+    }
+  }, [getBondSig]);
+
+  // Restore a handle saved by THIS wallet on another device: sign, derive the vault id, pull + decrypt.
+  // `userInitiated` is false for the silent auto-restore, so a returning user is not shown an unsolicited hint.
+  const restoreHandle = useCallback(async (userInitiated = true) => {
+    setSync("syncing");
+    setSyncMsg("");
+    try {
+      const sig = await getBondSig();
+      const res = await getBondHandleVault(await deriveBondHandleVaultId(sig));
+      if (!res.found || !res.blob) {
+        if (alive.current) {
+          setSync("idle");
+          if (userInitiated) setSyncMsg("No saved handle for this wallet yet. Create one below.");
+        }
+        return;
+      }
+      const h = await decryptBondHandle(sig, res.blob);
+      localStorage.setItem(IDENTITY_KEY, JSON.stringify(h));
+      if (alive.current) {
+        setIdentity(h);
+        setSync("synced");
+      }
+    } catch (e) {
+      if (alive.current) {
+        setSync("error");
+        setSyncMsg((e as Error)?.message ?? "could not restore the handle");
+      }
+    }
+  }, [getBondSig]);
+
+  // No local handle but the wallet already signed this session: restore silently (no extra prompt, no hint).
+  useEffect(() => {
+    if (!b.connected || identity || !b.address || !bondSigCache.has(b.address)) return;
+    void restoreHandle(false);
+  }, [b.connected, b.address, identity, restoreHandle]);
+
   const createIdentity = async () => {
     setPhase("idle");
     setMsg("");
+    setSync("idle");
+    setSyncMsg("");
     try {
       const r = await enrollBond();
       if (!r.minted) throw new Error("enroll did not return an identity");
       localStorage.setItem(IDENTITY_KEY, JSON.stringify(r.minted));
       setIdentity(r.minted);
+      // Back it up to the wallet so it follows you to other devices (one signature). Best-effort.
+      if (b.connected) void backupHandle(r.minted);
     } catch (e) {
       setPhase("error");
       setMsg((e as Error)?.message ?? "could not create an identity");
@@ -368,28 +449,51 @@ export default function BondedTier() {
             <DataRow k="Bond tag">
               <span className="font-mono text-[12px]">{short(identity!.qualCommitment, 6)}</span>
             </DataRow>
+            {/* Backup status: the handle is encrypted under your wallet and stored as an opaque blob, so it
+                follows your wallet to other devices. */}
+            <div className="flex flex-wrap items-center gap-3 pt-2" data-testid="tier-sync">
+              {sync === "synced" ? (
+                <span className="inline-flex items-center gap-1.5 text-[12px] text-success">
+                  <ShieldCheck className="size-3.5" /> Backed up to your wallet
+                </span>
+              ) : sync === "syncing" ? (
+                <span className="inline-flex items-center gap-1.5 text-[12px] text-muted-foreground">
+                  <Loader2 className="size-3.5 animate-spin" /> Backing up…
+                </span>
+              ) : b.connected ? (
+                <button type="button" onClick={() => identity && void backupHandle(identity)} className="text-[12px] text-brand hover:underline" data-testid="tier-backup">
+                  Back up to your wallet
+                </button>
+              ) : (
+                <span className="text-[12px] text-muted-foreground">Connect your wallet to back this handle up.</span>
+              )}
+              <button type="button" onClick={() => void createIdentity()} className="text-[12px] text-brand hover:underline" data-testid="tier-regen-identity">
+                Regenerate handle
+              </button>
+            </div>
+            {sync === "error" && syncMsg && <p className="text-[12px] text-destructive" data-testid="tier-sync-msg">{syncMsg}</p>}
             <p className="pt-2 text-[12px] text-muted-foreground">
-              Demo only. The secret for this handle stays in your browser. In a real setup you would keep it
-              yourself and register only the public tag.
+              Demo only. The secret is held in your browser. When backed up, it is also stored encrypted under
+              your wallet, so only your wallet can restore it on another device.
             </p>
-            <button
-              type="button"
-              onClick={() => void createIdentity()}
-              className="mt-1 w-fit text-[12px] text-brand hover:underline"
-              data-testid="tier-regen-identity"
-            >
-              Regenerate handle
-            </button>
           </div>
         ) : (
           <div className="flex flex-col items-start gap-3 py-1">
             <p className="text-[13px] text-muted-foreground">
-              Make an anonymous handle. It is not tied to your wallet, so the grant it earns cannot be traced to
-              you.
+              Make an anonymous handle, or restore the one this wallet already saved. It is not tied to your
+              wallet address, so the grant it earns cannot be traced to you.
             </p>
-            <Button variant="brand" onClick={() => void createIdentity()} data-testid="tier-create-identity">
-              <UserPlus className="size-4" /> Create a handle
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="brand" onClick={() => void createIdentity()} data-testid="tier-create-identity">
+                <UserPlus className="size-4" /> Create a handle
+              </Button>
+              {b.connected && (
+                <Button variant="outline" onClick={() => void restoreHandle()} disabled={sync === "syncing"} data-testid="tier-restore">
+                  {sync === "syncing" ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />} Restore from your wallet
+                </Button>
+              )}
+            </div>
+            {syncMsg && <p className={cn("text-[12px]", sync === "error" ? "text-destructive" : "text-muted-foreground")} data-testid="tier-sync-msg">{syncMsg}</p>}
           </div>
         )}
       </Panel>

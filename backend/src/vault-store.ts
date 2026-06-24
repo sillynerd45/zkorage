@@ -13,8 +13,12 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const DATA_FILE = process.env.DR_VAULT_FILE ||
-  resolve(dirname(fileURLToPath(import.meta.url)), "../data/dr-rooms-vault.json");
+const HERE = dirname(fileURLToPath(import.meta.url));
+// Two opaque-blob stores keyed by an unguessable wallet-derived pseudonym handle: the Data Room "rooms you can
+// open" list, and the standalone Bonded Access handle secret. Same shape + invariants, separate files so the
+// two namespaces never share a file even though their handles are derived from different HKDF info anyway.
+const DATA_FILE = process.env.DR_VAULT_FILE || resolve(HERE, "../data/dr-rooms-vault.json");
+const BOND_FILE = process.env.BOND_HANDLE_VAULT_FILE || resolve(HERE, "../data/bonded-handle-vault.json");
 
 // The opaque encrypted blob (the frontend RoomsBackupFile shape; the backend never inspects its meaning).
 export interface VaultBlob {
@@ -36,34 +40,34 @@ type Store = Record<string, VaultRecord>; // handleHex (lowercased) -> record
 const MAX_VAULTS = 20_000;
 const norm = (handle: string) => handle.toLowerCase();
 
-function load(): Store {
-  if (!existsSync(DATA_FILE)) return {};
+function load(file: string): Store {
+  if (!existsSync(file)) return {};
   let raw: string;
   try {
-    raw = readFileSync(DATA_FILE, "utf8");
+    raw = readFileSync(file, "utf8");
   } catch (e) {
-    throw new Error(`vault-store: cannot read ${DATA_FILE}: ${(e as Error).message}`);
+    throw new Error(`vault-store: cannot read ${file}: ${(e as Error).message}`);
   }
   try {
     return JSON.parse(raw) as Store;
   } catch {
-    throw new Error(`vault-store: ${DATA_FILE} is corrupt (invalid JSON) — refusing to proceed. Restore or remove it.`);
+    throw new Error(`vault-store: ${file} is corrupt (invalid JSON) — refusing to proceed. Restore or remove it.`);
   }
 }
 
-function save(s: Store): void {
-  mkdirSync(dirname(DATA_FILE), { recursive: true });
-  const tmp = `${DATA_FILE}.tmp`;
+function save(file: string, s: Store): void {
+  mkdirSync(dirname(file), { recursive: true });
+  const tmp = `${file}.tmp`;
   writeFileSync(tmp, JSON.stringify(s, null, 2));
-  renameSync(tmp, DATA_FILE);
+  renameSync(tmp, file);
 }
 
-export function getVault(handle: string): VaultBlob | null {
-  return load()[norm(handle)]?.blob ?? null;
+function getBlob(file: string, handle: string): VaultBlob | null {
+  return load(file)[norm(handle)]?.blob ?? null;
 }
 
-export function putVault(handle: string, blob: VaultBlob, nowMs: number): void {
-  const s = load();
+function putBlob(file: string, handle: string, blob: VaultBlob, nowMs: number): void {
+  const s = load(file);
   const h = norm(handle);
   if (!(h in s) && Object.keys(s).length >= MAX_VAULTS) {
     // Evict the oldest-touched handle to stay bounded. A production deployment would authenticate writes and
@@ -79,14 +83,24 @@ export function putVault(handle: string, blob: VaultBlob, nowMs: number): void {
     if (oldest) delete s[oldest];
   }
   s[h] = { blob, updatedAt: nowMs };
-  save(s);
+  save(file, s);
 }
 
-export function deleteVault(handle: string): boolean {
-  const s = load();
+function delBlob(file: string, handle: string): boolean {
+  const s = load(file);
   const h = norm(handle);
   if (!(h in s)) return false;
   delete s[h];
-  save(s);
+  save(file, s);
   return true;
 }
+
+// Data Room "rooms you can open" vault.
+export const getVault = (handle: string): VaultBlob | null => getBlob(DATA_FILE, handle);
+export const putVault = (handle: string, blob: VaultBlob, nowMs: number): void => putBlob(DATA_FILE, handle, blob, nowMs);
+export const deleteVault = (handle: string): boolean => delBlob(DATA_FILE, handle);
+
+// Standalone Bonded Access handle vault (its own file; the encrypted handle secret follows the wallet).
+export const getBondHandleVault = (handle: string): VaultBlob | null => getBlob(BOND_FILE, handle);
+export const putBondHandleVault = (handle: string, blob: VaultBlob, nowMs: number): void => putBlob(BOND_FILE, handle, blob, nowMs);
+export const deleteBondHandleVault = (handle: string): boolean => delBlob(BOND_FILE, handle);

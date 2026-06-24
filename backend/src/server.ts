@@ -55,7 +55,7 @@ import { buildDocauthJob, bankIssuer } from "./docauth.js";
 import { getEligible, addEligible, addEligibleBatch, indexOfCommitment } from "./eligible-store.js";
 import { addRequest, listRequests, removeRequest, hasRequest } from "./enroll-store.js";
 import { putEscrow, getEscrow } from "./escrow-store.js";
-import { getVault, putVault, deleteVault, type VaultBlob } from "./vault-store.js";
+import { getVault, putVault, deleteVault, getBondHandleVault, putBondHandleVault, deleteBondHandleVault, type VaultBlob } from "./vault-store.js";
 import {
   enqueue as enqueueBatch, getByTicket as getBatchTicket, listQueued as listBatchQueued,
   flush as flushBatch, nextFlushAt, queuedCount as batchQueuedCount, purgeTerminal as purgeBatchTerminal,
@@ -4673,6 +4673,47 @@ app.get("/bonded/bond/commitment", (req, res) => {
   try {
     const idSecret = hex32(req.query.id_secret, "id_secret");
     res.json({ commitment: toHex(bondQualCommitment(idSecret)) });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+// Bonded Access handle vault — make the standalone handle follow the wallet, not the browser. The BROWSER
+// encrypts the handle secret under a wallet-signature-derived key (see frontend lib/bonded/handleVault.ts) and
+// stores the CIPHERTEXT here under a wallet-derived PSEUDONYM handle. The backend holds an opaque blob it cannot
+// decrypt, indexed by a handle it cannot link to a wallet. Same shape, validation, rate limit, and bearer-write
+// caveat as the Data Room rooms vault (a learned handle can overwrite/delete but cannot forge a decryptable
+// handle; the owner's next push self-heals). Reads are rate-limited too (no existence/cadence oracle).
+app.get("/bonded/bond/handle-vault/:handle", (req, res) => {
+  if (!isVaultHandle(req.params.handle)) return res.status(400).json({ error: "handle must be 32-byte hex" });
+  if (vaultRateLimited(clientIp(req), Date.now())) return res.status(429).json({ error: "too many vault reads; please try again later" });
+  try {
+    const blob = getBondHandleVault(req.params.handle);
+    res.json({ found: blob !== null, blob });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+app.put("/bonded/bond/handle-vault/:handle", (req, res) => {
+  if (!isVaultHandle(req.params.handle)) return res.status(400).json({ error: "handle must be 32-byte hex" });
+  if (vaultRateLimited(clientIp(req), Date.now())) return res.status(429).json({ error: "too many vault writes; please try again later" });
+  const blob = req.body?.blob;
+  if (!validVaultBlob(blob)) return res.status(400).json({ error: "invalid vault blob" });
+  if (Buffer.byteLength(JSON.stringify(blob)) > VAULT_MAX_BYTES) return res.status(400).json({ error: "vault blob too large" });
+  try {
+    putBondHandleVault(req.params.handle, blob, Date.now());
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+app.delete("/bonded/bond/handle-vault/:handle", (req, res) => {
+  if (!isVaultHandle(req.params.handle)) return res.status(400).json({ error: "handle must be 32-byte hex" });
+  if (vaultRateLimited(clientIp(req), Date.now())) return res.status(429).json({ error: "too many vault writes; please try again later" });
+  try {
+    res.json({ ok: true, removed: deleteBondHandleVault(req.params.handle) });
   } catch (e) {
     res.status(400).json({ error: err(e) });
   }
