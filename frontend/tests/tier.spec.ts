@@ -72,6 +72,8 @@ test("tier: multi-token requirement, handle mints, anonymity-set gating (light +
     await create.click();
   }
   await expect(page.getByTestId("tier-identity")).toBeVisible({ timeout: 15_000 });
+  // A recovery affordance (re-mint + re-enrol) is offered once a handle exists.
+  await expect(page.getByTestId("tier-regen-identity")).toBeVisible();
 
   // A fresh requirement (stubbed TUSD) has no qualifying bonds, so the small-set warning shows and proving is
   // gated. (If the set has somehow reached the floor, proving is enabled and the warning is absent.)

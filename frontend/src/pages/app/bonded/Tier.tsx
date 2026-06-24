@@ -92,6 +92,9 @@ export default function BondedTier() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [msg, setMsg] = useState("");
   const alive = useRef(true);
+  // Bumped whenever the requirement changes, so a read started for an OLD requirement that resolves late is
+  // ignored (it would otherwise re-show a stale anon-set / grant for a different requirement).
+  const reqSeq = useRef(0);
   useEffect(() => {
     alive.current = true;
     return () => {
@@ -125,15 +128,25 @@ export default function BondedTier() {
     void reloadTokens();
   }, [reloadTokens]);
 
+  // When the requirement changes, drop the previous set + decision so the UI fails closed (gated, no grant)
+  // until the fresh reads for the new requirement land. Without this, a grant or anon-set from a DIFFERENT
+  // requirement could linger and mislead (e.g. an "Access granted" badge after switching tokens).
+  useEffect(() => {
+    reqSeq.current++;
+    setQual(null);
+    setStatus(null);
+  }, [tokenKey, amount, deadlineAt]);
+
   // The live qualifying set for the current requirement (anonymity-set size + the derived req_id).
   const refreshQual = useCallback(async () => {
-    if (!selected || !minAmountBase || deadlineUnix <= 0) {
+    if (!selected || !minAmountBase || !Number.isFinite(deadlineUnix) || deadlineUnix <= 0) {
       setQual(null);
       return;
     }
+    const seq = reqSeq.current;
     try {
       const q = await getBondQualSet(selected.contractId, minAmountBase, deadlineUnix);
-      if (alive.current) setQual(q);
+      if (alive.current && seq === reqSeq.current) setQual(q);
     } catch {
       /* transient read error; keep the last known set */
     }
@@ -151,9 +164,10 @@ export default function BondedTier() {
       setStatus(null);
       return;
     }
+    const seq = reqSeq.current;
     try {
       const s = await getBondStatus(identity.accessor, reqId);
-      if (alive.current) setStatus(s);
+      if (alive.current && seq === reqSeq.current) setStatus(s);
     } catch {
       /* keep the last known status */
     }
@@ -224,6 +238,7 @@ export default function BondedTier() {
     }
     setPhase("proving");
     setMsg("Building the proof on the self-hosted prover. This is usually a few seconds.");
+    const provedDeadlineAt = deadlineAt; // capture: the user may edit the deadline while proving runs
     try {
       const { jobId, error } = await proveBond({
         roomId: info.standaloneSetId,
@@ -253,9 +268,10 @@ export default function BondedTier() {
       const r = await submitBond(bundle);
       if (!r.ok) throw new Error(r.error || "the gate rejected the proof");
       setPhase("done");
-      setMsg(`Access granted to your anonymous handle, valid until ${fmtDeadline(deadlineAt)}. The record does not say which wallet or how much.`);
+      setMsg(`Access granted to your anonymous handle, valid until ${fmtDeadline(provedDeadlineAt)}. The record does not say which wallet or how much.`);
       await refreshStatus();
     } catch (e) {
+      if (!alive.current) return;
       setPhase("error");
       setMsg((e as Error)?.message ?? "something went wrong");
     }
@@ -382,6 +398,14 @@ export default function BondedTier() {
               Demo only. The secret for this handle stays in your browser. In a real setup you would keep it
               yourself and register only the public tag.
             </p>
+            <button
+              type="button"
+              onClick={() => void createIdentity()}
+              className="mt-1 w-fit text-[12px] text-brand hover:underline"
+              data-testid="tier-regen-identity"
+            >
+              Regenerate handle
+            </button>
           </div>
         ) : (
           <div className="flex flex-col items-start gap-3 py-1">
@@ -467,7 +491,7 @@ export default function BondedTier() {
         <div className="mt-4">
           <Button
             variant="brand"
-            disabled={!hasIdentity || !reqValid || busyFlow || belowMin || expired}
+            disabled={!hasIdentity || !reqValid || !info?.standaloneSetId || busyFlow || belowMin || expired}
             onClick={() => void prove()}
             data-testid="tier-prove"
           >
