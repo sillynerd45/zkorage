@@ -1423,3 +1423,18 @@ export const enrollBond = () =>
 
 export const getBondStatus = (accessor: string, reqId: string) =>
   fetch(`${BASE}/bonded/bond/status?accessor=${accessor}&req_id=${reqId}`).then(j<BondStatus>);
+
+// The Bonded Access handle vault: an opaque encrypted blob (the handle secret, encrypted in the browser under
+// a wallet-signature-derived key) stored under a wallet-derived pseudonym, so the handle follows the wallet.
+// Same opaque shape as the rooms vault blob.
+export type BondHandleVaultBlob = RoomsVaultBlob;
+export const getBondHandleVault = (handle: string) =>
+  fetch(`${BASE}/bonded/bond/handle-vault/${handle}`).then(j<{ found: boolean; blob: BondHandleVaultBlob | null }>);
+export const putBondHandleVault = (handle: string, blob: BondHandleVaultBlob) =>
+  fetch(`${BASE}/bonded/bond/handle-vault/${handle}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ blob }),
+  }).then(j<{ ok: boolean }>);
+export const deleteBondHandleVault = (handle: string) =>
+  fetch(`${BASE}/bonded/bond/handle-vault/${handle}`, { method: "DELETE" }).then(j<{ ok: boolean; removed: boolean }>);
