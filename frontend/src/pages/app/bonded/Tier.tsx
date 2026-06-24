@@ -56,15 +56,6 @@ function fmtDeadline(local: string): string {
   return d.toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
-function Stat({ label, value, testid }: { label: string; value: number | string; testid?: string }) {
-  return (
-    <div className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2" data-testid={testid}>
-      <div className="text-[18px] font-semibold tabular-nums">{value}</div>
-      <div className="text-[11px] text-muted-foreground">{label}</div>
-    </div>
-  );
-}
-
 function loadIdentity(): BondIdentity | null {
   try {
     const raw = localStorage.getItem(IDENTITY_KEY);
@@ -285,26 +276,10 @@ export default function BondedTier() {
     <div className="grid gap-4" data-testid="bonded-tier">
       <Panel title="Bonded Access">
         <p className="text-[13px] leading-relaxed text-muted-foreground">
-          Lock a bond, then prove you hold one without showing which wallet locked it or how much. The proof
-          shows two facts. You are an enrolled member. You hold a bond that meets the requirement below. Everyone
-          who bonds the same token, amount, and deadline shares one anonymity set, so your proof blends in with
-          theirs. The bond cannot be pulled back early, so a deadline in the future is enough to show the funds
-          are still locked.
+          Prove you hold a qualifying bond without showing which wallet locked it or how much. Pick a
+          requirement, lock the bond, then prove it once your anonymity set is large enough. The steps below
+          walk you through it.
         </p>
-        <p className="mt-3 text-[12px] text-muted-foreground">
-          Each requirement (a token, an amount, a deadline) is its own set. The set grows as more people bond
-          the same one, so picking a requirement others already use gives you a bigger crowd to hide in. To gate
-          a whole room this way, an owner sets the requirement once in{" "}
-          <Link to="/app/dataroom" className="text-brand hover:underline">the Data Room</Link>.
-        </p>
-      </Panel>
-
-      <Panel title="Live on testnet">
-        <div className="grid grid-cols-3 gap-3" data-testid="tier-numbers">
-          <Stat label="Bonds in this set" value={anonSize} testid="tier-stat-bonds" />
-          <Stat label="Grants given" value={info?.grantCount ?? 0} testid="tier-stat-grants" />
-          <Stat label="Smallest safe set" value={minSet} testid="tier-stat-min" />
-        </div>
       </Panel>
 
       {/* The requirement: any token your wallet holds, an amount, and a deadline. */}
@@ -373,12 +348,11 @@ export default function BondedTier() {
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-muted-foreground" data-testid="tier-req">
-              <span>
-                Bonds in this set: <span className="font-semibold text-foreground tabular-nums">{anonSize}</span> (need {minSet})
-              </span>
-              {selected && <span>Balance: {fmtAmount(selected.balanceBase, selected.decimals)} {selected.symbol}</span>}
-            </div>
+            {selected && (
+              <div className="text-[12px] text-muted-foreground" data-testid="tier-req">
+                Balance: <span className="tabular-nums">{fmtAmount(selected.balanceBase, selected.decimals)}</span> {selected.symbol}
+              </div>
+            )}
             <p className="text-[12px] text-muted-foreground">A bigger set hides you better. Use a token, amount, and deadline others already bond.</p>
           </div>
         )}
@@ -513,6 +487,11 @@ export default function BondedTier() {
           {msg}
         </p>
       )}
+
+      <p className="text-[12px] text-muted-foreground">
+        To gate a whole room with a bond requirement, set it once in{" "}
+        <Link to="/app/dataroom" className="text-brand hover:underline">the Data Room</Link>.
+      </p>
     </div>
   );
 }
