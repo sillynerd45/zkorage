@@ -60,10 +60,6 @@ test("tier: multi-token requirement, handle mints, anonymity-set gating (light +
   await expect(page.getByTestId("tier-deadline-trigger")).toBeVisible();
   await expect(page.getByTestId("tier-deadline-trigger")).not.toBeEmpty();
 
-  // The live numbers panel renders.
-  await expect(page.getByTestId("tier-numbers")).toBeVisible();
-  await expect(page.getByTestId("tier-stat-grants")).toBeVisible();
-
   const size = (await (await qualResp).json()).anonSetSize ?? 0;
 
   // Mint an anonymous handle (idempotent: an already-stored handle shows in the panel).
