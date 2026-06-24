@@ -15,13 +15,27 @@ import {
   type TxSigner,
 } from "@/lib/api";
 
+// An in-memory snapshot of the last-loaded locks per wallet, keyed by address. It is module-level so it
+// survives leaving and returning to the page within one app session (a full browser reload clears it). We
+// seed the view from it on mount, so a return visit redisplays at once while a background refresh runs and
+// swaps in any change. It only ever holds public on-chain data, never a key or a secret.
+type BondedSnapshot = { locks: LockView[]; balance: string };
+const snapshotCache = new Map<string, BondedSnapshot>();
+
+// A no-op background refresh should not re-render the list, so compare before swapping. LockView is a flat
+// record of primitives, so a stable-shape JSON compare is sufficient here.
+const sameLocks = (a: LockView[], b: LockView[]) =>
+  a.length === b.length && JSON.stringify(a) === JSON.stringify(b);
+
 // Bonded Proofs (BP2): the connected wallet's locks + the write actions, all wallet-signed. `busy` is the
 // key of the action in flight (e.g. "deposit", "withdraw-3") so a row can show its own spinner.
 export function useBonded() {
   const { connected, address, status, connect } = useWallet();
   const signer = useTxSigner();
-  const [locks, setLocks] = useState<LockView[]>([]);
-  const [balance, setBalance] = useState<string>("0"); // bond-token base units
+  // Seed from the cache so a return visit paints instantly instead of flashing a loader.
+  const seed = address ? snapshotCache.get(address) : undefined;
+  const [locks, setLocks] = useState<LockView[]>(seed?.locks ?? []);
+  const [balance, setBalance] = useState<string>(seed?.balance ?? "0"); // bond-token base units
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -39,8 +53,10 @@ export function useBonded() {
         listEscrowLocks(address),
         getBondBalance(address).catch(() => ({ balance: "0" })),
       ]);
-      setLocks(r.locks);
-      setBalance(bal.balance);
+      snapshotCache.set(address, { locks: r.locks, balance: bal.balance });
+      // Only swap in changed data, so a background refresh that found nothing new does not re-render.
+      setLocks((prev) => (sameLocks(prev, r.locks) ? prev : r.locks));
+      setBalance((prev) => (prev === bal.balance ? prev : bal.balance));
     } catch (e) {
       setError((e as Error)?.message ?? "could not load your locks");
     } finally {
@@ -48,9 +64,14 @@ export function useBonded() {
     }
   }, [address]);
 
+  // On mount and whenever the wallet changes, show the cached snapshot at once (instant on a return visit),
+  // then refresh in the background.
   useEffect(() => {
+    const snap = address ? snapshotCache.get(address) : undefined;
+    setLocks(snap?.locks ?? []);
+    setBalance(snap?.balance ?? "0");
     void refresh();
-  }, [refresh]);
+  }, [address, refresh]);
 
   const run = useCallback(
     async (key: string, fn: (s: TxSigner) => Promise<WalletWriteResult>): Promise<WalletWriteResult> => {

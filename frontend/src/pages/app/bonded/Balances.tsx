@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Wallet, RefreshCw, AlertTriangle } from "lucide-react";
 import { useBonded } from "@/lib/hooks/useBonded";
-import { Panel, DataRow } from "@/components/app/blocks";
+import { Panel } from "@/components/app/blocks";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { fmtAmount, type LockView, type WalletWriteResult } from "@/lib/api";
@@ -19,11 +19,15 @@ const tokenLabel = (l: LockView): string => {
   return s;
 };
 
+// A single-word status pill keeps the card header compact; the full unlock time shows on the meta line.
 function statusOf(l: LockView): { label: string; cls: string } {
   if (l.released) return { label: "Released", cls: "bg-muted text-muted-foreground" };
-  if (l.is_locked) return { label: `Locked until ${fmtDate(l.unlock_time)}`, cls: "bg-brand/10 text-brand" };
+  if (l.is_locked) return { label: "Locked", cls: "bg-brand/10 text-brand" };
   return { label: "Unlocked", cls: "bg-success/10 text-success" };
 }
+
+// Your relationship to the lock, in one or two words for the compact meta line.
+const roleLabel = (l: LockView): string => (l.role === "self" ? "self-bond" : l.role);
 
 export default function BondedBalances() {
   const b = useBonded();
@@ -59,6 +63,11 @@ export default function BondedBalances() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-[13px] text-muted-foreground">
           Locks for <span className="font-mono">{b.address ? short(b.address, 5) : ""}</span>
+          {b.loading && b.locks.length > 0 && (
+            <span className="ml-2 text-[12px] text-muted-foreground" data-testid="bonded-refreshing">
+              · refreshing…
+            </span>
+          )}
         </p>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => void b.refresh()} disabled={b.loading} data-testid="bonded-refresh">
@@ -124,21 +133,22 @@ export default function BondedBalances() {
         return (
           <Panel
             key={l.id}
-            title={`Lock #${l.id}`}
+            className="p-4"
+            title={
+              <span className="text-[15px] font-semibold tabular-nums">
+                {fmtAmount(l.amount, l.tokenDecimals || 7)} {tokenLabel(l)}
+              </span>
+            }
             aside={<span className={cn("rounded-full px-2.5 py-1 text-[11px] font-medium", st.cls)}>{st.label}</span>}
           >
-            <div className="grid gap-0.5">
-              <DataRow k="Amount">{fmtAmount(l.amount, l.tokenDecimals || 7)} {tokenLabel(l)}</DataRow>
-              <DataRow k="Unlocks">{fmtDate(l.unlock_time)}</DataRow>
-              <DataRow k="You are" mono={false}>
-                {l.role === "self" ? "depositor (self-bond)" : l.role}
-              </DataRow>
-              <DataRow k="Revocable" mono={false}>
-                {l.revocable ? "yes, can pull early" : "no, one-way until unlock"}
-              </DataRow>
-            </div>
+            <p className="text-[12px] text-muted-foreground" data-testid={`lock-${l.id}`}>
+              Escrow lock #{l.id} · {roleLabel(l)} · {l.revocable ? "revocable" : "one-way"}
+            </p>
+            <p className="mt-0.5 text-[12px] text-muted-foreground">
+              {l.is_locked ? "Unlocks" : "Unlocked"} {fmtDate(l.unlock_time)}
+            </p>
 
-            <div className="mt-4 flex flex-wrap items-center gap-2">
+            <div className="mt-3 flex flex-wrap items-center gap-2">
               {canWithdraw && (
                 <Button size="sm" variant="brand" disabled={busyKey(`withdraw-${l.id}`)} onClick={() => void act(l.id, b.withdraw(l.id))} data-testid={`withdraw-${l.id}`}>
                   Withdraw
