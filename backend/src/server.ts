@@ -85,7 +85,7 @@ import {
   isTierGranted, getTierGrant, isTierNullifierUsed, getTierConfig, getTierMemberRoot, getTierQualRing, getTierGrantCount,
 } from "./tier.js";
 import {
-  BOND_GATE_ID, BOND_IMAGE_ID, BOND_MIN_ANON_SET,
+  BOND_GATE_ID, BOND_IMAGE_ID, BOND_MIN_ANON_SET, BOND_STANDALONE_SET_ID,
   buildBondJob, buildBondQualSet, reqIdHex as bondReqIdHex, qualCommitment as bondQualCommitment,
   isBondGrantedFor, isBondGranted, getBondGrant, isBondNullifierUsed, getBondQualRing, getBondConfig, getBondGrantCount,
 } from "./bond.js";
@@ -4614,9 +4614,55 @@ app.get("/bonded/bond/info", async (_req, res) => {
   try {
     const config = BOND_GATE_ID ? await getBondConfig().catch(() => null) : null;
     const grantCount = BOND_GATE_ID ? await getBondGrantCount().catch(() => 0) : 0;
-    res.json({ bondGateId: BOND_GATE_ID, imageId: BOND_IMAGE_ID, minAnonSet: BOND_MIN_ANON_SET, escrowId: ESCROW_ID, config, grantCount });
+    // The standalone Bonded Access page proves membership in this fixed set (its own context, no Data Room).
+    const standaloneCommitments = getEligible(BOND_STANDALONE_SET_ID).map((h) => fromHex(h));
+    const standaloneMemberRoot = standaloneCommitments.length ? toHex(buildEligibleTree(standaloneCommitments).root) : null;
+    res.json({
+      bondGateId: BOND_GATE_ID, imageId: BOND_IMAGE_ID, minAnonSet: BOND_MIN_ANON_SET, escrowId: ESCROW_ID,
+      qualCommitmentScheme: "sha256(0x03 ‖ id_secret ‖ 'escrow') — store this in the escrow lock's commitment",
+      standaloneSetId: BOND_STANDALONE_SET_ID, standaloneEnrolledCount: standaloneCommitments.length, standaloneMemberRoot,
+      config, grantCount,
+    });
   } catch (e) {
     res.status(500).json({ error: err(e) });
+  }
+});
+
+// Enroll a member in the STANDALONE Bonded Access set (its own context, no Data Room). Mirrors the tier
+// enroll: with no commitment (or `mint`) the DEMO backend mints a fresh identity and returns its secrets +
+// the qual commitment to store in an escrow lock; otherwise it adds a caller-supplied commitment. The minted
+// identity is bond-compatible (same member-leaf + qual-commitment scheme as the tier/Data-Room bond proof).
+app.post("/bonded/bond/enroll", (req, res) => {
+  // Throttle by IP: this is an unauthenticated DEMO mint that appends to the standalone eligible store.
+  if (enrollRateLimited(clientIp(req), Date.now())) {
+    return res.status(429).json({ error: "too many enrol requests; please try again later" });
+  }
+  try {
+    let memberCommitmentHex: string;
+    let minted: Record<string, string> | undefined;
+    if (req.body?.idCommitment && !req.body?.mint) {
+      memberCommitmentHex = toHex(hex32(req.body.idCommitment, "idCommitment"));
+    } else {
+      const id = freshTierIdentity();
+      memberCommitmentHex = toHex(id.memberCommitment);
+      minted = {
+        idSecret: toHex(id.idSecret),
+        idTrapdoor: toHex(id.idTrapdoor),
+        holderSeed: toHex(id.holderSeed),
+        accessor: toHex(id.accessor),
+        qualCommitment: toHex(id.qualCommitment),
+        note: "DEMO ONLY — in production the member holds these client-side. Store `qualCommitment` in a NON-revocable escrow lock (the required token, amount >= min_amount, unlock_time >= deadline).",
+      };
+    }
+    const { index, added, total } = addEligible(BOND_STANDALONE_SET_ID, memberCommitmentHex);
+    const commitments = getEligible(BOND_STANDALONE_SET_ID).map((h) => fromHex(h));
+    const { root } = buildEligibleTree(commitments);
+    res.json({
+      ok: true, setId: BOND_STANDALONE_SET_ID, memberIndex: index, added, memberCount: total,
+      memberCommitment: memberCommitmentHex, memberRoot: toHex(root), minted,
+    });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
   }
 });
 

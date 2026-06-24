@@ -37,6 +37,12 @@ export const BOND_IMAGE_ID =
  *  de-anonymizes by elimination). Off-chain by necessity — a Merkle root carries no member count. */
 export const BOND_MIN_ANON_SET = Number(process.env.BOND_MIN_ANON_SET || 3);
 
+/** The member set for the STANDALONE Bonded Access page (no Data Room). A user enrolls here, bonds a
+ *  qualifying lock for a requirement they pick, and proves membership in THIS set + the bond. Anonymity is
+ *  still per req_id (the qualifying-bond crowd), independent of the member set. A fixed 32-byte id keyed
+ *  like a DR2 room, distinct from the tier member set. */
+export const BOND_STANDALONE_SET_ID = toHex(sha256(new TextEncoder().encode("zkorage-ba-standalone-members")));
+
 export { ESCROW_ID };
 
 const ZERO32 = new Uint8Array(32);

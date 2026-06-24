@@ -1,53 +1,87 @@
 import { test, expect } from "@playwright/test";
 
-// BP5 — anonymous bonded tier. The tab + page render, an identity can be minted (held in the browser),
-// the anonymity-set size is surfaced with the small-set warning, and the prove control is gated until the
-// set is large enough. The full prove flow is exercised on-chain in the backend e2e (it needs the gate +
-// prover). These render-level checks run against the live backend's tier reads.
+// Standalone Bonded Access (multi-token). The page lets a connected wallet pick ANY token + amount + deadline
+// as the requirement, mint an anonymous handle, and (when the anonymity set is large enough) prove. These are
+// render-level checks against the live backend's bond reads; the full prove flow is exercised on-chain in the
+// backend e2e. A fresh requirement (the stubbed TUSD here) has no qualifying bonds yet, so proving is gated.
+const DEPLOYER = "GDLECNXD76OZQROASQGWEP4KAMJWTJXZW2LN7OJGYPXIJDRXACWGXZY6";
+const TUSD_ISSUER = "GDFEJBM6RGK2IL2PIMGVNTGSO7O2NOVILFQUMIC55YMFKSGACA5IO2PM";
+const mock = (addr: string) => `
+  localStorage.setItem("zkorage.wallet.connected", "1");
+  window.__freighterMock = {
+    isConnected: async () => ({ isConnected: true }),
+    isAllowed: async () => ({ isAllowed: true }),
+    requestAccess: async () => ({ address: "${addr}" }),
+    getAddress: async () => ({ address: "${addr}" }),
+    getNetwork: async () => ({ network: "TESTNET", networkPassphrase: "Test SDF Network ; September 2015" }),
+    signTransaction: async (xdr) => ({ signedTxXdr: xdr, signerAddress: "${addr}" }),
+  };
+`;
 const DARK = `localStorage.setItem("zkorage-theme","dark");`;
+const stubHorizon = (page: import("@playwright/test").Page) =>
+  page.route("**/horizon-testnet.stellar.org/accounts/**", (route) =>
+    route.fulfill({
+      json: {
+        balances: [
+          { asset_type: "credit_alphanum4", asset_code: "TUSD", asset_issuer: TUSD_ISSUER, balance: "207116.0000000" },
+          { asset_type: "native", balance: "10000.0000000" },
+        ],
+      },
+    }),
+  );
 
-test("tier: the Anonymous Tier tab is present in the bonded group", async ({ page }) => {
+test("tier: the Bonded Access tab is present in the bonded group", async ({ page }) => {
   await page.goto("/app/bonded");
   await expect(page.getByTestId("bonded-overview")).toBeVisible();
   await expect(page.getByRole("link", { name: "Bonded Access", exact: true })).toBeVisible();
 });
 
-test("tier: page renders, identity mints, anonymity-set size + state (light + dark)", async ({ page }) => {
+test("tier: multi-token requirement, handle mints, anonymity-set gating (light + dark)", async ({ page }) => {
   const errs: string[] = [];
   page.on("console", (m) => {
     if (m.type() === "error" && !/Failed to load resource/i.test(m.text())) errs.push(m.text());
   });
+  await page.addInitScript(mock(DEPLOYER));
+  await stubHorizon(page);
 
-  // The anonymity-set count lands from the live escrow scan (the panel defaults to 0 until that fetch
-  // resolves). Capture the AUTHORITATIVE size from the network response so the assertions + screenshot
-  // reflect the loaded state, not the pre-fetch default. Robust to the live state (how many qualifying
-  // bonds currently exist for the demo tier, which the on-chain e2e populates).
-  const waitQual = () => page.waitForResponse((r) => r.url().includes("/bonded/tier/qual-set") && r.status() === 200, { timeout: 30_000 });
+  // The qual-set lands from the live escrow scan for the current requirement (TUSD by default here).
+  const waitQual = () => page.waitForResponse((r) => r.url().includes("/bonded/bond/qual-set") && r.status() === 200, { timeout: 30_000 });
   let qualResp = waitQual();
   await page.goto("/app/bonded/tier");
   await expect(page.getByTestId("bonded-tier")).toBeVisible();
-  await expect(page.getByTestId("tier-anonset")).toBeVisible({ timeout: 30_000 });
-  const size = (await (await qualResp).json()).anonSetSize ?? 0;
 
-  // BP6: the "Live on testnet" numbers panel renders, and the stable demo grant (a fixed accessor that
-  // already holds a live tier grant on-chain) is surfaced.
+  // The requirement is built from the wallet's tokens: the picker lists TUSD + XLM, with an amount + a
+  // picker-only deadline trigger (the calendar icon at the right edge, no manual typing).
+  const picker = page.getByTestId("tier-token");
+  await expect(picker).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("option", { name: /TUSD/ })).toBeAttached();
+  await expect(page.getByRole("option", { name: /XLM/ })).toBeAttached();
+  await expect(page.getByTestId("tier-amount")).toBeVisible();
+  await expect(page.getByTestId("tier-deadline-trigger")).toBeVisible();
+  await expect(page.getByTestId("tier-deadline-trigger")).not.toBeEmpty();
+
+  // The live numbers panel renders.
   await expect(page.getByTestId("tier-numbers")).toBeVisible();
   await expect(page.getByTestId("tier-stat-grants")).toBeVisible();
-  await expect(page.getByTestId("tier-demo-grant")).toBeVisible({ timeout: 30_000 });
 
-  // Mint an anonymous identity (idempotent: if one is already stored, the panel is already showing it).
+  const size = (await (await qualResp).json()).anonSetSize ?? 0;
+
+  // Mint an anonymous handle (idempotent: an already-stored handle shows in the panel).
   const create = page.getByTestId("tier-create-identity");
   if (await create.isVisible().catch(() => false)) {
     await create.click();
   }
   await expect(page.getByTestId("tier-identity")).toBeVisible({ timeout: 15_000 });
+  // A recovery affordance (re-mint + re-enrol) is offered once a handle exists.
+  await expect(page.getByTestId("tier-regen-identity")).toBeVisible();
 
+  // A fresh requirement (stubbed TUSD) has no qualifying bonds, so the small-set warning shows and proving is
+  // gated. (If the set has somehow reached the floor, proving is enabled and the warning is absent.)
+  await expect(page.getByTestId("tier-anonset")).toBeVisible({ timeout: 30_000 });
   if (size < 3) {
-    // Below the minimum anonymity set: the small-set warning shows + proving is gated.
     await expect(page.getByTestId("tier-anonset-warning")).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId("tier-prove")).toBeDisabled();
   } else {
-    // A healthy anonymity set (>= 3 qualifying bonds): no small-set warning; proving is available.
     await expect(page.getByTestId("tier-anonset-warning")).toHaveCount(0, { timeout: 30_000 });
     await expect(page.getByTestId("tier-prove")).toBeEnabled({ timeout: 30_000 });
   }
@@ -58,12 +92,8 @@ test("tier: page renders, identity mints, anonymity-set size + state (light + da
   qualResp = waitQual();
   await page.reload();
   await expect(page.getByTestId("bonded-tier")).toBeVisible();
-  await expect(page.getByTestId("tier-anonset")).toBeVisible({ timeout: 30_000 });
-  // Re-read the size from the dark-mode fetch so the assertion matches the dark-mode render (the live set
-  // could differ from the light-mode capture if qualifying bonds are landing concurrently).
-  const darkSize = (await (await qualResp).json()).anonSetSize ?? size;
-  await expect(page.getByTestId("tier-prove")).toBeVisible();
-  if (darkSize >= 3) await expect(page.getByTestId("tier-anonset-warning")).toHaveCount(0, { timeout: 30_000 });
+  await expect(page.getByTestId("tier-prove")).toBeVisible({ timeout: 30_000 });
+  await (await qualResp).json();
   await page.screenshot({ path: "tests/bonded-tier-dark.png", fullPage: true });
 
   expect(errs, errs.join("\n")).toHaveLength(0);

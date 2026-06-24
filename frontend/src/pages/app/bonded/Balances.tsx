@@ -1,10 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Wallet, RefreshCw, AlertTriangle } from "lucide-react";
+import { Wallet, RefreshCw, AlertTriangle, CalendarClock } from "lucide-react";
 import { useBonded } from "@/lib/hooks/useBonded";
 import { Panel } from "@/components/app/blocks";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { fmtAmount, type LockView, type WalletWriteResult } from "@/lib/api";
 import { short } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -15,6 +14,14 @@ const fmtClock = (unix: number) =>
   new Date(unix * 1000).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 // Date and clock on one line, e.g. "Jun 25, 2026 · 3:31 PM".
 const fmtWhen = (unix: number) => `${fmtDay(unix)} · ${fmtClock(unix)}`;
+
+// Format a datetime-local value ("2026-06-24T12:05", parsed as local time) for the Extend trigger button.
+function fmtExtend(local: string): string {
+  if (!local) return "Pick a new time";
+  const d = new Date(local);
+  if (Number.isNaN(d.getTime())) return "Pick a new time";
+  return d.toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+}
 
 // Compact relative time, e.g. "in 3 days", "in 5 hours", "2 days ago". Coarsens to the largest sensible unit.
 function relTime(unix: number): string {
@@ -67,9 +74,23 @@ export default function BondedBalances() {
   const [extendId, setExtendId] = useState<number | null>(null);
   const [extendAt, setExtendAt] = useState("");
   const [result, setResult] = useState<{ id: number; r: WalletWriteResult } | null>(null);
+  // One shared ref: only one extend form is open at a time (extendId is a single value).
+  const extendRef = useRef<HTMLInputElement>(null);
 
   // Drop a stale action result when the wallet switches.
   useEffect(() => setResult(null), [b.address]);
+
+  // Open the native date-time picker for the Extend field (matches the Deposit pattern). showPicker() is the
+  // modern path; some engines throw, so fall back to focusing the real input. No manual spinner typing.
+  const openExtendPicker = () => {
+    const el = extendRef.current;
+    if (!el) return;
+    try {
+      el.showPicker();
+    } catch {
+      el.focus();
+    }
+  };
 
   const act = async (id: number, p: Promise<WalletWriteResult>) => {
     setResult(null);
@@ -237,16 +258,37 @@ export default function BondedBalances() {
 
             {extendId === l.id && (
               <div className="mt-3 flex flex-wrap items-end gap-2 rounded-xl border bg-muted/30 p-3">
-                <label className="text-[12px] text-muted-foreground">
-                  New unlock time (must be later)
-                  <Input
-                    type="datetime-local"
-                    value={extendAt}
-                    onChange={(e) => setExtendAt(e.target.value)}
-                    className="mt-1 w-60"
-                    data-testid={`extend-input-${l.id}`}
-                  />
-                </label>
+                <div className="flex flex-col gap-1">
+                  <span id={`extend-label-${l.id}`} className="text-[12px] text-muted-foreground">
+                    New unlock time (must be later)
+                  </span>
+                  <div className="relative w-60 max-w-full">
+                    <button
+                      id={`extend-trigger-${l.id}`}
+                      type="button"
+                      onClick={openExtendPicker}
+                      aria-labelledby={`extend-label-${l.id} extend-trigger-${l.id}`}
+                      data-testid={`extend-trigger-${l.id}`}
+                      className={cn(
+                        "flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-left text-sm shadow-sm transition-colors",
+                        "focus-visible:border-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+                      )}
+                    >
+                      <span className={cn("tabular-nums", !extendAt && "text-muted-foreground")}>{fmtExtend(extendAt)}</span>
+                      <CalendarClock className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                    </button>
+                    <input
+                      ref={extendRef}
+                      type="datetime-local"
+                      value={extendAt}
+                      onChange={(e) => setExtendAt(e.target.value)}
+                      data-testid={`extend-input-${l.id}`}
+                      tabIndex={-1}
+                      aria-hidden="true"
+                      className="pointer-events-none absolute left-0 top-0 h-0 w-0 overflow-hidden opacity-0"
+                    />
+                  </div>
+                </div>
                 <Button
                   size="sm"
                   disabled={!extendAt || busyKey(`relock-${l.id}`)}
