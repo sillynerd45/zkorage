@@ -20,12 +20,20 @@ function defaultUnlock(): string {
 
 const PASTE = "__paste__";
 
+// Module-level, in-memory: the loaded token list + the picked token per wallet, so returning to Deposit
+// paints the picker instantly instead of re-reading Horizon. Cleared on a full reload. Public data only.
+type TokenSnapshot = { tokens: TokenOption[]; selectedKey: string };
+const tokenCache = new Map<string, TokenSnapshot>();
+const sameTokens = (a: TokenOption[], c: TokenOption[]) =>
+  a.length === c.length && JSON.stringify(a) === JSON.stringify(c);
+
 export default function BondedDeposit() {
   const b = useBonded();
   const nav = useNavigate();
-  const [tokens, setTokens] = useState<TokenOption[]>([]);
+  const seedTokens = b.address ? tokenCache.get(b.address) : undefined;
+  const [tokens, setTokens] = useState<TokenOption[]>(seedTokens?.tokens ?? []);
   const [loadingTokens, setLoadingTokens] = useState(false);
-  const [selectedKey, setSelectedKey] = useState("");
+  const [selectedKey, setSelectedKey] = useState(seedTokens?.selectedKey ?? "");
   const [pasteValue, setPasteValue] = useState("");
   const [pasteToken, setPasteToken] = useState<TokenOption | null>(null);
   const [pasteErr, setPasteErr] = useState<string | null>(null);
@@ -45,16 +53,36 @@ export default function BondedDeposit() {
     setLoadingTokens(true);
     try {
       const list = await loadWalletTokens(b.address);
-      setTokens(list);
-      setSelectedKey((prev) => prev || list[0]?.key || "");
+      // Only swap in a changed list so a no-op background refresh does not re-render the picker.
+      setTokens((prev) => (sameTokens(prev, list) ? prev : list));
+      // Keep the user's pick if it still resolves (or is the paste path); otherwise fall back to the first.
+      setSelectedKey((prev) => {
+        if (prev === PASTE) return prev;
+        if (prev && list.some((t) => t.key === prev)) return prev;
+        return list[0]?.key ?? "";
+      });
     } finally {
       setLoadingTokens(false);
     }
   }, [b.address]);
 
+  // On mount and whenever the wallet changes, show the cached picker at once (instant on a return visit),
+  // then refresh the token list in the background.
   useEffect(() => {
+    const snap = b.address ? tokenCache.get(b.address) : undefined;
+    setTokens(snap?.tokens ?? []);
+    setSelectedKey(snap?.selectedKey ?? "");
     void reloadTokens();
-  }, [reloadTokens]);
+  }, [b.address, reloadTokens]);
+
+  // Persist the loaded list + the current pick so the next visit seeds from it. Never cache the paste path:
+  // the pasted token is not cached, so restoring it would land on an empty picker. Fall back to the first.
+  useEffect(() => {
+    if (b.address && tokens.length > 0) {
+      const key = selectedKey === PASTE ? tokens[0]?.key ?? "" : selectedKey;
+      tokenCache.set(b.address, { tokens, selectedKey: key });
+    }
+  }, [b.address, tokens, selectedKey]);
 
   const isPaste = selectedKey === PASTE;
   const selected: TokenOption | null = isPaste ? pasteToken : tokens.find((t) => t.key === selectedKey) ?? null;
@@ -121,14 +149,14 @@ export default function BondedDeposit() {
 
   const busy = b.busy === "deposit";
   const selectCls =
-    "mt-1 h-10 w-full max-w-xs rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring";
+    "h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring";
 
   return (
-    <Panel title="Lock tokens" className="max-w-xl">
+    <Panel title="Lock tokens" className="max-w-2xl">
       <div className="grid gap-4" data-testid="bonded-deposit">
         {/* Token: pick any token your wallet holds (the escrow holds any SEP-41 token). */}
         <div>
-          <Label htmlFor="token">Token</Label>
+          <Label htmlFor="token" className="mb-1.5 block">Token</Label>
           <select
             id="token"
             value={selectedKey}
@@ -158,7 +186,7 @@ export default function BondedDeposit() {
                   setPasteErr(null);
                 }}
                 placeholder="C…"
-                className="w-72 font-mono text-[13px]"
+                className="min-w-0 flex-1 font-mono text-[13px]"
                 data-testid="deposit-token-paste"
               />
               <Button type="button" variant="outline" size="sm" disabled={pasteBusy} onClick={() => void resolvePaste()} data-testid="deposit-token-load">
@@ -173,40 +201,40 @@ export default function BondedDeposit() {
               Balance: {selected ? `${fmtAmount(selected.balanceBase, selected.decimals)} ${selected.symbol}` : "…"}
             </span>
           </div>
-          <p className="mt-1 text-[12px] text-muted-foreground">
-            Any token your wallet holds. The escrow locks it the same way, whatever the token.
-          </p>
+          <p className="mt-1 text-[12px] text-muted-foreground">Any token your wallet holds works.</p>
         </div>
 
-        <div>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <Label htmlFor="amt">Amount ({selected?.symbol ?? "token"})</Label>
-            {selected && BigInt(selected.balanceBase || "0") > 0n && (
-              <button
-                type="button"
-                className="text-[12px] text-brand hover:underline"
-                onClick={() => setAmount(plainAmount(selected.balanceBase, selected.decimals))}
-                data-testid="deposit-max"
-              >
-                Max
-              </button>
-            )}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+              <Label htmlFor="amt">Amount ({selected?.symbol ?? "token"})</Label>
+              {selected && BigInt(selected.balanceBase || "0") > 0n && (
+                <button
+                  type="button"
+                  className="text-[12px] text-brand hover:underline"
+                  onClick={() => setAmount(plainAmount(selected.balanceBase, selected.decimals))}
+                  data-testid="deposit-max"
+                >
+                  Max
+                </button>
+              )}
+            </div>
+            <Input id="amt" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} className="w-full" data-testid="deposit-amount" />
           </div>
-          <Input id="amt" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} className="mt-1 w-48" data-testid="deposit-amount" />
+
+          <div>
+            <Label htmlFor="unlock" className="mb-1.5 block">Unlock time</Label>
+            <Input id="unlock" type="datetime-local" value={unlockAt} onChange={(e) => setUnlockAt(e.target.value)} className="w-full" data-testid="deposit-unlock" />
+          </div>
         </div>
+        <p className="text-[12px] text-muted-foreground">
+          Funds release at this time. Extend it later on{" "}
+          <Link to="/app/bonded/balances" className="text-brand hover:underline">My Balances</Link>. You cannot shorten it.
+        </p>
 
         <div>
-          <Label htmlFor="unlock">Unlock time</Label>
-          <Input id="unlock" type="datetime-local" value={unlockAt} onChange={(e) => setUnlockAt(e.target.value)} className="mt-1 w-64" data-testid="deposit-unlock" />
-          <p className="mt-1 text-[12px] text-muted-foreground">
-            Funds free up at this time. You can extend it later on{" "}
-            <Link to="/app/bonded/balances" className="text-brand hover:underline">My Balances</Link>. You cannot shorten it.
-          </p>
-        </div>
-
-        <div>
-          <Label>Type</Label>
-          <div className="mt-1 flex w-fit gap-1 rounded-xl border bg-card p-1" role="radiogroup" aria-label="Lock type">
+          <Label className="mb-1.5 block">Type</Label>
+          <div className="flex w-fit gap-1 rounded-xl border bg-card p-1" role="radiogroup" aria-label="Lock type">
             {(["bond", "send"] as const).map((m) => (
               <button
                 key={m}
@@ -229,13 +257,13 @@ export default function BondedDeposit() {
         {mode === "bond" ? (
           <label className="flex items-start gap-2 text-[13px] leading-relaxed">
             <input type="checkbox" checked={revocable} onChange={(e) => setRevocable(e.target.checked)} className="mt-0.5" data-testid="deposit-revocable" />
-            <span>Allow early release (revocable). Unchecked means it stays locked until the unlock time, with no early exit.</span>
+            <span>Allow early release (revocable). Unchecked keeps it locked until the unlock time.</span>
           </label>
         ) : (
           <div>
-            <Label htmlFor="rcpt">Recipient (G…)</Label>
-            <Input id="rcpt" value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder="G…" className="mt-1 font-mono text-[13px]" data-testid="deposit-recipient" />
-            <p className="mt-1 text-[12px] text-muted-foreground">Only this address can claim, and only after the unlock time. A send cannot be pulled back.</p>
+            <Label htmlFor="rcpt" className="mb-1.5 block">Recipient (G…)</Label>
+            <Input id="rcpt" value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder="G…" className="font-mono text-[13px]" data-testid="deposit-recipient" />
+            <p className="mt-1 text-[12px] text-muted-foreground">Only this address can claim it, and only after the unlock time. A send cannot be pulled back.</p>
           </div>
         )}
 
