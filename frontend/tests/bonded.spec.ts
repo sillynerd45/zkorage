@@ -59,6 +59,8 @@ test("bonded: my balances lists the wallet's locks with the right actions", asyn
   // Release + Extend; lock #1 is the released lock with no actions.
   await expect(page.getByTestId(`lock-${ACTIVE_LOCK}`)).toBeVisible({ timeout: 60_000 });
   await expect(page.getByTestId(`lock-${ACTIVE_LOCK}`)).toContainText(`#${ACTIVE_LOCK}`);
+  // The highlighted unlock block (right column) renders per lock and carries the date.
+  await expect(page.getByTestId(`unlock-${ACTIVE_LOCK}`)).toBeVisible();
   await expect(page.getByTestId(`unbond-${ACTIVE_LOCK}`)).toBeVisible();
   await expect(page.getByTestId(`extend-${ACTIVE_LOCK}`)).toBeVisible();
   // A testid is exact, so this never collides with a double-digit id (e.g. #10/#11) the way a "Lock #1"
@@ -147,6 +149,36 @@ test("bonded: deposit form, token picker + mode switcher", async ({ page }) => {
   await expect(page.getByTestId("deposit-revocable")).toBeVisible();
 
   await page.screenshot({ path: "tests/bonded-deposit.png", fullPage: true });
+});
+
+test("bonded: deposit token picker persists its list + selection on a return visit", async ({ page }) => {
+  await page.addInitScript(mock(DEPLOYER));
+  await page.route("**/horizon-testnet.stellar.org/accounts/**", (route) =>
+    route.fulfill({
+      json: {
+        balances: [
+          { asset_type: "credit_alphanum4", asset_code: "TUSD", asset_issuer: TUSD_ISSUER, balance: "207116.0000000" },
+          { asset_type: "native", balance: "10000.0000000" },
+        ],
+      },
+    }),
+  );
+  await page.goto("/app/bonded/deposit");
+  const picker = page.getByTestId("deposit-token");
+  await expect(picker).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("option", { name: /TUSD/ })).toBeAttached();
+  // Change the pick away from the default, then leave to another tab and return.
+  await picker.selectOption("native");
+  await expect(page.getByText("Amount (XLM)")).toBeVisible();
+  await page.getByRole("link", { name: "My Balances", exact: true }).first().click();
+  await expect(page).toHaveURL(/\/app\/bonded\/balances/);
+  await page.getByRole("link", { name: "Deposit", exact: true }).first().click();
+  await expect(page).toHaveURL(/\/app\/bonded\/deposit/);
+  // The picker paints from the in-memory cache: no "Loading your tokens…" placeholder, and the XLM pick
+  // is remembered (not reset to the first token).
+  await expect(page.getByRole("option", { name: /Loading your tokens/ })).toHaveCount(0);
+  await expect(page.getByTestId("deposit-token")).toHaveValue("native", { timeout: 3_000 });
+  await expect(page.getByText("Amount (XLM)")).toBeVisible();
 });
 
 test("bonded: prove tab shows the LIVE solvency badge + the release control (the self-void)", async ({ page }) => {
