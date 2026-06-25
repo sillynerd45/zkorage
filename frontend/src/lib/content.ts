@@ -171,6 +171,11 @@ export const DATAROOM_TABS: DataroomTab[] = [
     blurb: "Request to join a room, or approve members of a room you own. Joining is by name; getting in stays anonymous.",
   },
   {
+    slug: "manage",
+    label: "Room Management",
+    blurb: "Settings for a room you own: how readers get in (approved membership, or a bond anyone can lock) and who can find it.",
+  },
+  {
     slug: "discover",
     label: "Discover",
     blurb: "Browse rooms that opted into the public directory, or look one up by its id, then ask to join.",

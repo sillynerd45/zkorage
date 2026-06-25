@@ -24,6 +24,7 @@ import DataroomDisclosure from "./pages/app/dataroom/Disclosure";
 import DataroomPolicy from "./pages/app/dataroom/Policy";
 import DataroomAnchor from "./pages/app/dataroom/Anchor";
 import DataroomMembership from "./pages/app/dataroom/Membership";
+import DataroomManage from "./pages/app/dataroom/Manage";
 import DataroomDiscover from "./pages/app/dataroom/Discover";
 import DataroomAuthenticity from "./pages/app/dataroom/Authenticity";
 // The member open now lives under Documents (#open). The old /access route redirects there, preserving ?room=.
@@ -80,6 +81,7 @@ export default function App() {
           {/* "documents" = store + open + browse (the page is still implemented in Anchor.tsx) */}
           <Route path="documents" element={<DataroomAnchor />} />
           <Route path="membership" element={<DataroomMembership />} />
+          <Route path="manage" element={<DataroomManage />} />
           <Route path="discover" element={<DataroomDiscover />} />
           <Route path="authenticity" element={<DataroomAuthenticity />} />
         </Route>

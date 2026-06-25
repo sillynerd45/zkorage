@@ -1275,6 +1275,9 @@ export interface BondRequirement {
   token?: string;
   minAmount?: string; // base units
   deadline?: number; // unix seconds
+  /** TRUE bond-only (no-approval) mode: a reader needs only a qualifying bond, no membership/approval. */
+  bondOpen?: boolean;
+  mode?: "open" | "membership";
 }
 
 export interface BondQualLockView {
@@ -1319,10 +1322,13 @@ export const setBondRequirement = (
   roomId: string,
   req: { token: string; minAmount: string; deadline: number },
   signer: TxSigner,
-): Promise<WalletWriteResult & { reqId?: string; memberCount?: string }> =>
+  // "open" = TRUE bond-only (no approval, no membership); "membership" = the legacy bond-implies-membership
+  // path. Room Management uses "open".
+  mode: "open" | "membership" = "open",
+): Promise<WalletWriteResult & { reqId?: string; memberCount?: string; mode?: string }> =>
   writeViaWallet(
     "/dataroom/bond-requirement",
-    { roomId, token: req.token, min_amount: req.minAmount, deadline: req.deadline },
+    { roomId, token: req.token, min_amount: req.minAmount, deadline: req.deadline, mode },
     signer,
   );
 
@@ -1368,6 +1374,43 @@ export const proveBond = (body: {
 // backend relays (the reader never reveals or pays from a funded wallet). Grant or a contract error.
 export const submitBond = (bundle: Bundle) =>
   post<WalletWriteResult & { grant?: unknown }>("/bonded/bond/submit", { ...bundle });
+
+// Reader (TRUE bond-only): build + enqueue the bond-OPEN proof (kind=bond-open). NO membership/enrollment —
+// the proof asserts only a qualifying bond + carries a proof-bound recipient_pub for the keepers. Poll
+// getProveStatus(jobId), then submitBondOpen(bundle); or pass background:true to have the backend finish it.
+export const proveBondOpen = (body: {
+  idSecret: string;
+  idTrapdoor: string;
+  holderSeed: string;
+  recipientPub: string;
+  token: string;
+  minAmount: string;
+  deadline: number;
+  background?: boolean;
+}) =>
+  post<{ jobId?: string; reqId?: string; qualRoot?: string; nullifier?: string; accessor?: string; recipientPub?: string; anonSetSize?: number; background?: boolean; error?: string }>(
+    "/bonded/bond-open/prove",
+    {
+      idSecret: body.idSecret,
+      idTrapdoor: body.idTrapdoor,
+      holderSeed: body.holderSeed,
+      recipientPub: body.recipientPub,
+      token: body.token,
+      min_amount: body.minAmount,
+      deadline: body.deadline,
+      background: body.background ?? false,
+    },
+  );
+
+// Submit a bond-open proof to the gate (PERMISSIONLESS).
+export const submitBondOpen = (bundle: Bundle) =>
+  post<WalletWriteResult & { grant?: unknown }>("/bonded/bond-open/submit", { ...bundle });
+
+// The live bond-only decision for (accessor, req_id): an unexpired bond-open grant exists (no member_root).
+export const getBondOpenStatus = (accessor: string, reqId: string) =>
+  fetch(`${BASE}/bonded/bond-open/status?accessor=${accessor}&req_id=${reqId}`).then(
+    j<{ accessor: string; reqId: string; is_granted: boolean; recipientPub: string | null; grant: unknown; bondGateId: string }>,
+  );
 
 // ── Bonded Access (standalone): the same per-requirement bond gate as the Data Room, but with its OWN member
 // context, so a user can pick ANY token + amount + deadline, bond, and prove anonymously without a room. The
