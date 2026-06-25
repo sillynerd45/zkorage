@@ -37,6 +37,7 @@ import BondedBalances from "./pages/app/bonded/Balances";
 import BondedDeposit from "./pages/app/bonded/Deposit";
 import BondedProve from "./pages/app/bonded/Prove";
 import BondedTier from "./pages/app/bonded/Tier";
+import BondedAccessPage from "./pages/app/bonded/Access";
 
 // One unified app, two shells:
 //   PUBLIC  marketing top-bar site at "/"      : Landing, Documentation, Verify, Explorer
@@ -88,6 +89,7 @@ export default function App() {
           <Route path="deposit" element={<BondedDeposit />} />
           <Route path="prove" element={<BondedProve />} />
           <Route path="tier" element={<BondedTier />} />
+          <Route path="access" element={<BondedAccessPage />} />
         </Route>
         <Route path="*" element={<Home />} />
       </Route>

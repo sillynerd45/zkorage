@@ -51,6 +51,11 @@ export default {
           "0%,100%": { boxShadow: "0 0 0 0 hsl(var(--brand) / 0)" },
           "50%": { boxShadow: "0 0 0 4px hsl(var(--brand) / 0.18)" },
         },
+        // An indeterminate progress segment sliding across its track (a short bar for "checking…").
+        indeterminate: {
+          "0%": { left: "-40%" },
+          "100%": { left: "100%" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down .2s ease-out",
@@ -58,6 +63,7 @@ export default {
         "pulse-dot": "pulse-dot 1.4s ease-in-out infinite",
         "fade-in": "fade-in .25s ease-out",
         "sync-attn": "sync-attn 2.4s ease-in-out infinite",
+        indeterminate: "indeterminate 1.15s ease-in-out infinite",
       },
     },
   },

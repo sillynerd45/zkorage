@@ -197,6 +197,7 @@ export const BONDED_TABS: BondedTab[] = [
   { slug: "balances", label: "My Balances", blurb: "The locks your connected wallet can act on." },
   { slug: "deposit", label: "Deposit", blurb: "Lock tokens until a time you choose." },
   { slug: "tier", label: "Bonded Access", blurb: "Lock a bond, then prove you hold one without showing your wallet or your amount." },
+  { slug: "access", label: "Your access", blurb: "The requirements your handle can open, and ones that have ended." },
 ];
 
 export const bondedTab = (slug: string) => BONDED_TABS.find((t) => t.slug === slug);
