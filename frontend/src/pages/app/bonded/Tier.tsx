@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Wallet, ShieldCheck, Loader2, AlertTriangle, RefreshCw, UserPlus, Lock, Users, CalendarClock, Check } from "lucide-react";
+import { Wallet, ShieldCheck, Loader2, AlertTriangle, RefreshCw, UserPlus, Lock, Users, CalendarClock } from "lucide-react";
 import { useBonded } from "@/lib/hooks/useBonded";
 import { useWallet } from "@/lib/wallet/WalletContext";
 import { Panel, DataRow } from "@/components/app/blocks";
@@ -40,7 +40,11 @@ const bondSigCache = new Map<string, Uint8Array>();
 // requirement, the stronger the set. The default below gives newcomers one shared requirement to converge on.
 const DEFAULT_DEADLINE_UNIX = 1_800_000_000; // ~2027-01-15
 const DEFAULT_AMOUNT = "100";
-const IDENTITY_KEY = "zkorage-bond-identity";
+// The anonymous handle is stored PER WALLET, so switching accounts in Freighter never shows the previous
+// wallet's handle. An older build used a single global slot (no address suffix); it is migrated to the
+// per-wallet slot for the first wallet that connects (see the wallet-change effect).
+const IDENTITY_BASE = "zkorage-bond-identity";
+const idKey = (addr?: string | null): string => (addr ? `${IDENTITY_BASE}.${addr}` : IDENTITY_BASE);
 
 type Phase = "idle" | "proving" | "submitting" | "done" | "error";
 
@@ -78,9 +82,9 @@ const fmtShortDate = (unix: number): string =>
 const normCommit = (h: string): string => h.toLowerCase().replace(/^0x/, "");
 const isZeroCommit = (h: string): boolean => /^0*$/.test(normCommit(h));
 
-function loadIdentity(): BondIdentity | null {
+function loadIdentityAt(addr?: string | null): BondIdentity | null {
   try {
-    const raw = localStorage.getItem(IDENTITY_KEY);
+    const raw = localStorage.getItem(idKey(addr));
     return raw ? (JSON.parse(raw) as BondIdentity) : null;
   } catch {
     return null;
@@ -90,7 +94,7 @@ function loadIdentity(): BondIdentity | null {
 export default function BondedTier() {
   const b = useBonded();
   const [info, setInfo] = useState<BondInfo | null>(null);
-  const [identity, setIdentity] = useState<BondIdentity | null>(loadIdentity());
+  const [identity, setIdentity] = useState<BondIdentity | null>(() => loadIdentityAt(null));
 
   // The requirement (token, amount, deadline).
   const [tokens, setTokens] = useState<TokenOption[]>([]);
@@ -126,6 +130,25 @@ export default function BondedTier() {
   useEffect(() => {
     getBondInfo().then(setInfo).catch(() => {});
   }, []);
+
+  // Re-validate the displayed handle whenever the connected wallet changes. Each wallet has its OWN handle
+  // slot, so switching accounts in Freighter must drop the previous wallet's handle (the bug this fixes). A
+  // one-time migration adopts an older single-slot handle for the first wallet that connects, then removes it.
+  useEffect(() => {
+    const addr = b.address;
+    let next = loadIdentityAt(addr);
+    if (!next && addr) {
+      const legacy = loadIdentityAt(null);
+      if (legacy) {
+        localStorage.setItem(idKey(addr), JSON.stringify(legacy));
+        localStorage.removeItem(idKey(null));
+        next = legacy;
+      }
+    }
+    setIdentity(next);
+    setSync("idle");
+    setSyncMsg("");
+  }, [b.address]);
 
   // Load the wallet's tokens once connected (these are what you can bond).
   const reloadTokens = useCallback(async () => {
@@ -234,6 +257,10 @@ export default function BondedTier() {
     setDeadlineAt(toLocalInput(l.unlock_time));
   };
 
+  // The id of the held bond whose (token, amount, deadline) currently matches the form, so the dropdown shows
+  // it as selected; empty when the requirement has been edited away from every held bond.
+  const loadedBondId = String(myBonds.find((l) => bondReqEq(l))?.id ?? "");
+
   // A bond the wallet holds that satisfies the CURRENT requirement AND is tagged with the current handle, so
   // it is provable now. This mirrors the prover's qualifying check (token + amount >= min + unlock >= deadline
   // + non-revocable + still locked + commitment == this handle's qual tag), so we only claim "already held"
@@ -312,7 +339,7 @@ export default function BondedTier() {
         return;
       }
       const h = await decryptBondHandle(sig, res.blob);
-      localStorage.setItem(IDENTITY_KEY, JSON.stringify(h));
+      localStorage.setItem(idKey(b.address), JSON.stringify(h));
       if (alive.current) {
         setIdentity(h);
         setSync("synced");
@@ -323,7 +350,7 @@ export default function BondedTier() {
         setSyncMsg((e as Error)?.message ?? "could not restore the handle");
       }
     }
-  }, [getBondSig]);
+  }, [getBondSig, b.address]);
 
   // No local handle but the wallet already signed this session: restore silently (no extra prompt, no hint).
   useEffect(() => {
@@ -339,7 +366,7 @@ export default function BondedTier() {
     try {
       const r = await enrollBond();
       if (!r.minted) throw new Error("enroll did not return an identity");
-      localStorage.setItem(IDENTITY_KEY, JSON.stringify(r.minted));
+      localStorage.setItem(idKey(b.address), JSON.stringify(r.minted));
       setIdentity(r.minted);
       // Back it up to the wallet so it follows you to other devices (one signature). Best-effort.
       if (b.connected) void backupHandle(r.minted);
@@ -420,18 +447,83 @@ export default function BondedTier() {
   const selectCls =
     "h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring";
 
+  // The anonymous-handle panel. It LEADS the page while no handle exists (creating it is the first action),
+  // and moves to the bottom as a reference once it exists, so the requirement + proving take focus. Rendered
+  // in one of two slots below, guarded by hasIdentity.
+  const handlePanel = (
+    <Panel title={hasIdentity ? "Your anonymous handle" : "Create an anonymous handle"}>
+      {hasIdentity ? (
+        <div className="grid gap-0.5" data-testid="tier-identity">
+          <DataRow k="Your handle">
+            <span className="font-mono text-[12px]">{short(identity!.accessor, 6)}</span>
+          </DataRow>
+          <DataRow k="Bond tag">
+            <span className="font-mono text-[12px]">{short(identity!.qualCommitment, 6)}</span>
+          </DataRow>
+          {/* Backup status: the handle is encrypted under your wallet and stored as an opaque blob, so it
+              follows your wallet to other devices. */}
+          <div className="flex flex-wrap items-center gap-3 pt-2" data-testid="tier-sync">
+            {sync === "synced" ? (
+              <span className="inline-flex items-center gap-1.5 text-[12px] text-success">
+                <ShieldCheck className="size-3.5" /> Backed up to your wallet
+              </span>
+            ) : sync === "syncing" ? (
+              <span className="inline-flex items-center gap-1.5 text-[12px] text-muted-foreground">
+                <Loader2 className="size-3.5 animate-spin" /> Backing up…
+              </span>
+            ) : b.connected ? (
+              <button type="button" onClick={() => identity && void backupHandle(identity)} className="text-[12px] text-brand hover:underline" data-testid="tier-backup">
+                Back up to your wallet
+              </button>
+            ) : (
+              <span className="text-[12px] text-muted-foreground">Connect your wallet to back this handle up.</span>
+            )}
+            <button type="button" onClick={() => void createIdentity()} className="text-[12px] text-brand hover:underline" data-testid="tier-regen-identity">
+              Regenerate handle
+            </button>
+          </div>
+          {sync === "error" && syncMsg && <p className="text-[12px] text-destructive" data-testid="tier-sync-msg">{syncMsg}</p>}
+          <p className="pt-2 text-[12px] text-muted-foreground">
+            Your handle's secret stays in your browser. When you back it up, it is encrypted under your
+            wallet and stored as an opaque blob, so only your wallet can restore it on another device.
+          </p>
+        </div>
+      ) : (
+        <div className="flex flex-col items-start gap-3 py-1">
+          <p className="text-[13px] text-muted-foreground">
+            Make an anonymous handle, or restore the one this wallet already saved. It is not tied to your
+            wallet address, so the grant it earns cannot be traced to you.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="brand" onClick={() => void createIdentity()} data-testid="tier-create-identity">
+              <UserPlus className="size-4" /> Create a handle
+            </Button>
+            {b.connected && (
+              <Button variant="outline" onClick={() => void restoreHandle()} disabled={sync === "syncing"} data-testid="tier-restore">
+                {sync === "syncing" ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />} Restore from your wallet
+              </Button>
+            )}
+          </div>
+          {syncMsg && <p className={cn("text-[12px]", sync === "error" ? "text-destructive" : "text-muted-foreground")} data-testid="tier-sync-msg">{syncMsg}</p>}
+        </div>
+      )}
+    </Panel>
+  );
+
   return (
     <div className="grid gap-4" data-testid="bonded-tier">
       <Panel title="Bonded Access">
         <p className="text-[13px] leading-relaxed text-muted-foreground">
           Prove you hold a qualifying bond without showing which wallet locked it or how much. Pick a
-          requirement, lock the bond, then prove it once your anonymity set is large enough. The steps below
-          walk you through it.
+          requirement, lock the bond, then prove it once your anonymity set is large enough.
         </p>
       </Panel>
 
-      {/* The requirement: any token your wallet holds, an amount, and a deadline. */}
-      <Panel title="Choose what to bond">
+      {/* The handle leads while it is not made yet; once it exists it moves to the bottom (rendered below). */}
+      {!hasIdentity && handlePanel}
+
+      {/* The requirement (token, amount, deadline) plus locking a qualifying bond, in one panel. */}
+      <Panel title="Pick a requirement and lock your bond">
         {!b.connected ? (
           <div className="flex flex-col items-start gap-3 py-1">
             <p className="text-[13px] text-muted-foreground">Connect your wallet on testnet to pick a token to bond.</p>
@@ -441,34 +533,35 @@ export default function BondedTier() {
           </div>
         ) : (
           <div className="grid gap-4">
+            {/* Optional shortcut: a tinted sub-card, set a step below the panel surface so it reads as
+                supplementary, not a required input. Picking a held bond fills the inputs below. */}
             {myBonds.length > 0 && (
-              <div data-testid="tier-mybonds">
-                <div className="mb-1.5 text-sm font-medium">Use a bond you already hold</div>
-                <div className="flex flex-wrap gap-2">
-                  {myBonds.map((l) => {
-                    const active = bondReqEq(l);
-                    return (
-                      <button
-                        key={l.id}
-                        type="button"
-                        onClick={() => loadBond(l)}
-                        aria-pressed={active}
-                        data-testid={`tier-mybond-${l.id}`}
-                        className={cn(
-                          "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[12px] transition-colors",
-                          active ? "border-brand bg-brand/10 text-brand" : "border-input bg-background hover:bg-muted",
-                        )}
-                      >
-                        {active && <Check className="size-3.5 shrink-0" aria-hidden="true" />}
-                        <span className="tabular-nums font-medium">{fmtAmount(l.amount, l.tokenDecimals || 7)}</span> {bondSymbol(l)}
-                        <span className="text-muted-foreground">· until {fmtShortDate(l.unlock_time)}</span>
-                      </button>
-                    );
-                  })}
+              <div className="rounded-lg border border-border bg-muted/40 p-3" data-testid="tier-mybonds">
+                <div className="mb-1 flex items-center gap-1.5">
+                  <Wallet className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                  <span className="text-[12px] font-medium text-foreground">Use a bond you already hold</span>
+                  <span className="text-[12px] text-muted-foreground">(optional)</span>
                 </div>
-                <p className="mt-1.5 text-[12px] text-muted-foreground">
-                  Loads that bond's token, amount, and deadline below, so the anonymity set reflects it.
+                <p className="mb-2 text-[12px] text-muted-foreground">
+                  Load one of your locked bonds to fill in the token, amount, and deadline below.
                 </p>
+                <select
+                  value={loadedBondId}
+                  onChange={(e) => {
+                    const l = myBonds.find((x) => String(x.id) === e.target.value);
+                    if (l) loadBond(l);
+                  }}
+                  className={selectCls}
+                  data-testid="tier-mybonds-select"
+                  aria-label="Use a bond you already hold"
+                >
+                  <option value="">Load a locked bond…</option>
+                  {myBonds.map((l) => (
+                    <option key={l.id} value={String(l.id)}>
+                      {`${fmtAmount(l.amount, l.tokenDecimals || 7)} ${bondSymbol(l)} · until ${fmtShortDate(l.unlock_time)}`}
+                    </option>
+                  ))}
+                </select>
               </div>
             )}
             <div>
@@ -532,116 +625,59 @@ export default function BondedTier() {
               </div>
             )}
             <p className="text-[12px] text-muted-foreground">A bigger set hides you better. Use a token, amount, and deadline others already bond.</p>
-          </div>
-        )}
-      </Panel>
 
-      {/* Step 1: an anonymous handle, generated and held in this browser. */}
-      <Panel title="1. Create an anonymous handle">
-        {hasIdentity ? (
-          <div className="grid gap-0.5" data-testid="tier-identity">
-            <DataRow k="Your handle">
-              <span className="font-mono text-[12px]">{short(identity!.accessor, 6)}</span>
-            </DataRow>
-            <DataRow k="Bond tag">
-              <span className="font-mono text-[12px]">{short(identity!.qualCommitment, 6)}</span>
-            </DataRow>
-            {/* Backup status: the handle is encrypted under your wallet and stored as an opaque blob, so it
-                follows your wallet to other devices. */}
-            <div className="flex flex-wrap items-center gap-3 pt-2" data-testid="tier-sync">
-              {sync === "synced" ? (
-                <span className="inline-flex items-center gap-1.5 text-[12px] text-success">
-                  <ShieldCheck className="size-3.5" /> Backed up to your wallet
-                </span>
-              ) : sync === "syncing" ? (
-                <span className="inline-flex items-center gap-1.5 text-[12px] text-muted-foreground">
-                  <Loader2 className="size-3.5 animate-spin" /> Backing up…
-                </span>
-              ) : b.connected ? (
-                <button type="button" onClick={() => identity && void backupHandle(identity)} className="text-[12px] text-brand hover:underline" data-testid="tier-backup">
-                  Back up to your wallet
-                </button>
-              ) : (
-                <span className="text-[12px] text-muted-foreground">Connect your wallet to back this handle up.</span>
-              )}
-              <button type="button" onClick={() => void createIdentity()} className="text-[12px] text-brand hover:underline" data-testid="tier-regen-identity">
-                Regenerate handle
-              </button>
+            {/* Lock it: the action moved here from the old separate panel (it was only a button). */}
+            <div className="mt-1 flex items-center gap-3">
+              <span className="text-[12px] font-medium uppercase tracking-wide text-muted-foreground">Lock it</span>
+              <span className="h-px flex-1 bg-border" />
             </div>
-            {sync === "error" && syncMsg && <p className="text-[12px] text-destructive" data-testid="tier-sync-msg">{syncMsg}</p>}
-            <p className="pt-2 text-[12px] text-muted-foreground">
-              Your handle's secret stays in your browser. When you back it up, it is encrypted under your
-              wallet and stored as an opaque blob, so only your wallet can restore it on another device.
-            </p>
-          </div>
-        ) : (
-          <div className="flex flex-col items-start gap-3 py-1">
-            <p className="text-[13px] text-muted-foreground">
-              Make an anonymous handle, or restore the one this wallet already saved. It is not tied to your
-              wallet address, so the grant it earns cannot be traced to you.
-            </p>
-            <div className="flex flex-wrap items-center gap-2">
-              <Button variant="brand" onClick={() => void createIdentity()} data-testid="tier-create-identity">
-                <UserPlus className="size-4" /> Create a handle
-              </Button>
-              {b.connected && (
-                <Button variant="outline" onClick={() => void restoreHandle()} disabled={sync === "syncing"} data-testid="tier-restore">
-                  {sync === "syncing" ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />} Restore from your wallet
+
+            {myQualBond ? (
+              <div className="flex flex-col items-start gap-3 py-1" data-testid="tier-bond-have">
+                <p className="text-[13px] text-success">
+                  You already hold a qualifying bond for this requirement (escrow lock #{myQualBond.id},{" "}
+                  {fmtAmount(myQualBond.amount, myQualBond.tokenDecimals || 7)} {bondSymbol(myQualBond)} until{" "}
+                  {fmtShortDate(myQualBond.unlock_time)}). You do not need to lock another to prove.
+                </p>
+                <p className="text-[13px] text-muted-foreground">
+                  Locking another adds one more bond to the set.
+                </p>
+                <Button
+                  variant="outline"
+                  disabled={!reqValid || expired || b.busy === "deposit"}
+                  onClick={() => void bondQualifying()}
+                  data-testid="tier-bond-again"
+                >
+                  {b.busy === "deposit" ? <Loader2 className="size-4 animate-spin" /> : <Lock className="size-4" />}
+                  Lock another {amount} {tokenSym}
                 </Button>
-              )}
-            </div>
-            {syncMsg && <p className={cn("text-[12px]", sync === "error" ? "text-destructive" : "text-muted-foreground")} data-testid="tier-sync-msg">{syncMsg}</p>}
-          </div>
-        )}
-      </Panel>
-
-      {/* Step 2: bond a qualifying lock (wallet-signed, public on purpose; the proof hides which one is yours). */}
-      <Panel title="2. Lock a qualifying bond">
-        {!b.connected ? (
-          <p className="text-[13px] text-muted-foreground">Connect your wallet above to lock a qualifying bond.</p>
-        ) : myQualBond ? (
-          <div className="flex flex-col items-start gap-3 py-1" data-testid="tier-bond-have">
-            <p className="text-[13px] text-success">
-              You already hold a qualifying bond for this requirement (escrow lock #{myQualBond.id},{" "}
-              {fmtAmount(myQualBond.amount, myQualBond.tokenDecimals || 7)} {bondSymbol(myQualBond)} until{" "}
-              {fmtShortDate(myQualBond.unlock_time)}). You do not need to lock another to prove.
-            </p>
-            <p className="text-[13px] text-muted-foreground">
-              Locking another adds one more bond to the set.
-            </p>
-            <Button
-              variant="outline"
-              disabled={!reqValid || expired || b.busy === "deposit"}
-              onClick={() => void bondQualifying()}
-              data-testid="tier-bond-again"
-            >
-              {b.busy === "deposit" ? <Loader2 className="size-4 animate-spin" /> : <Lock className="size-4" />}
-              Lock another {amount} {tokenSym}
-            </Button>
-            <Link to="/app/bonded/balances" className="text-[12px] text-brand hover:underline">
-              See it in My Balances
-            </Link>
-          </div>
-        ) : (
-          <div className="flex flex-col items-start gap-3 py-1">
-            <p className="text-[13px] text-muted-foreground">
-              Lock {amount} {tokenSym} until {fmtDeadline(deadlineAt)}, tagged with your handle. The lock itself
-              is public. The privacy comes at the proving step, where you prove without pointing at this lock.
-            </p>
-            <Button
-              variant="brand"
-              disabled={!hasIdentity || !reqValid || expired || b.busy === "deposit"}
-              onClick={() => void bondQualifying()}
-              data-testid="tier-bond"
-            >
-              {b.busy === "deposit" ? <Loader2 className="size-4 animate-spin" /> : <Lock className="size-4" />}
-              Lock {amount} {tokenSym}
-            </Button>
-            {!hasIdentity && <p className="text-[12px] text-muted-foreground">Create your handle first.</p>}
-            {selected && minAmountBase && safeBig(selected.balanceBase) < safeBig(minAmountBase) && (
-              <p className="text-[12px] text-warning">You only have {fmtAmount(selected.balanceBase, selected.decimals)} {selected.symbol}.</p>
+                <Link to="/app/bonded/balances" className="text-[12px] text-brand hover:underline">
+                  See it in My Balances
+                </Link>
+              </div>
+            ) : (
+              <div className="flex flex-col items-start gap-3 py-1">
+                <p className="text-[13px] text-muted-foreground">
+                  Lock {amount} {tokenSym} until {fmtDeadline(deadlineAt)}, tagged with your handle. The lock
+                  itself is public. The privacy comes at the proving step, where you prove without pointing at
+                  this lock.
+                </p>
+                <Button
+                  variant="brand"
+                  disabled={!hasIdentity || !reqValid || expired || b.busy === "deposit"}
+                  onClick={() => void bondQualifying()}
+                  data-testid="tier-bond"
+                >
+                  {b.busy === "deposit" ? <Loader2 className="size-4 animate-spin" /> : <Lock className="size-4" />}
+                  Lock {amount} {tokenSym}
+                </Button>
+                {!hasIdentity && <p className="text-[12px] text-muted-foreground">Create your handle first.</p>}
+                {selected && minAmountBase && safeBig(selected.balanceBase) < safeBig(minAmountBase) && (
+                  <p className="text-[12px] text-warning">You only have {fmtAmount(selected.balanceBase, selected.decimals)} {selected.symbol}.</p>
+                )}
+                {expired && <p className="text-[12px] text-warning" data-testid="tier-expired">The deadline is in the past. Pick a later deadline.</p>}
+              </div>
             )}
-            {expired && <p className="text-[12px] text-warning" data-testid="tier-expired">The deadline is in the past. Pick a later deadline.</p>}
           </div>
         )}
       </Panel>
@@ -669,8 +705,8 @@ export default function BondedTier() {
         )}
       </Panel>
 
-      {/* Step 3: prove anonymously. */}
-      <Panel title="3. Prove access, anonymously">
+      {/* Prove anonymously. */}
+      <Panel title="Prove access, anonymously">
         <div className="flex flex-wrap items-center gap-3" data-testid="tier-badge" data-state={granted ? "active" : status?.grant ? "expired" : "none"}>
           {granted ? (
             <span className="inline-flex items-center gap-2 rounded-full bg-success/10 px-3 py-1.5 text-[13px] font-semibold text-success">
@@ -701,6 +737,9 @@ export default function BondedTier() {
           )}
         </div>
       </Panel>
+
+      {/* Once the handle exists it lives here, at the bottom, as a reference. */}
+      {hasIdentity && handlePanel}
 
       {msg && (
         <p
