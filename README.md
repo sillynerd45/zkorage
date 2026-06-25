@@ -24,12 +24,15 @@ amount, a deadline) before opening the room's documents. A reader who locked a q
 proves it without revealing which wallet, which lock, or the exact amount, and the bond proof also proves room
 membership. Privacy needs at least three qualifying bonders for a requirement. A reader records two grants on
 open (a membership grant provides the proof-bound key the keepers seal to, the bond grant provides admission),
-and the document is released by the 2-of-3 keeper committee. Frontend is **v0.12.29**. A
+and the document is released by the 2-of-3 keeper committee. Frontend is **v0.12.33**. A
 **Bonded Proofs** pillar (a Soroban-native time-locked escrow plus two
 live ZK products: a **solvency proof that dies when you pull your collateral** and a **standalone Bonded
 Access tier**) is also live; see below. The standalone Bonded Access tier now takes **any wallet token** for
 its requirement (token, amount, deadline), and its anonymous handle is **wallet-synced** (encrypted under a
-wallet signature so it follows your wallet, not your browser). The whole stack
+wallet signature so it follows your wallet, not your browser). Proving runs **in the background** (the backend
+finishes and submits the proof, so you can leave the page), the access you hold is listed in a **Your access**
+tab, and each grant has a shareable link to a public **`/verify/bond`** page that re-reads `is_granted`
+on-chain. The whole stack
 runs on **RISC Zero 5.0.0-rc.1** (GPU proving on a self-hosted box, with a CPU fallback). The frontend is a
 single unified app — a **public marketing site** (`/` — landing, documentation, verify, explorer) plus a
 **sidebar app** (`/app/*`) in the "Precision Ink" design system. The app nav now focuses on the **Data Room**
