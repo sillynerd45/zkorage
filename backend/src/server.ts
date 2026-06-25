@@ -3273,10 +3273,12 @@ app.post("/dataroom/committee/open/:roomId/:docId", async (req, res) => {
     const contentHash = toHex(new Uint8Array(d.content_hash));
     const kCommitment = new Uint8Array(d.k_commitment);
 
-    // the AUTHORITATIVE recipient_pub is from the on-chain DR2 grant (proof-bound) — read it ourselves, not
-    // from the share aggregator (defense-in-depth: a wrong reported key can only yield a failed open).
-    const { value: grantRaw } = await readContract(DATAROOM_ID, "get_grant", [scBytes(roomIdHex), scBytes(accessorHex)]);
-    const grantRecipient = grantRaw ? toHex(new Uint8Array((grantRaw as { recipient_pub: Uint8Array }).recipient_pub)) : "";
+    // the AUTHORITATIVE recipient_pub is read from chain (proof-bound), not from the share aggregator
+    // (defense-in-depth: a wrong reported key can only yield a failed open). Use the unified
+    // admission_recipient_pub so this works for BOTH access models: a bond-only room has no DR2 membership
+    // grant, so its recipient_pub lives in the bond-OPEN grant (the contract cross-calls the bond gate).
+    const { value: rpRaw } = await readContract(DATAROOM_ID, "admission_recipient_pub", [scBytes(roomIdHex), scBytes(accessorHex)]);
+    const grantRecipient = rpRaw ? toHex(new Uint8Array(rpRaw as Uint8Array)) : "";
 
     // collect sealed shares (gated on the live grant by each keyper).
     const { shares, errors } = await collectSealedShares(roomIdHex, docIdHex, accessorHex);
