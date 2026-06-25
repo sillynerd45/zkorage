@@ -2012,6 +2012,28 @@ impl MockBondGate {
         let m: Option<BytesN<32>> = env.storage().instance().get(&symbol_short!("m"));
         a == Some(accessor) && r == Some(req_id) && m == Some(member_root)
     }
+    // ---- bond-OPEN (no-approval) path: records (accessor, req_id) -> recipient_pub, no member_root ----
+    pub fn set_open_grant(env: Env, accessor: BytesN<32>, req_id: BytesN<32>, recipient_pub: BytesN<32>) {
+        env.storage().instance().set(&symbol_short!("oa"), &accessor);
+        env.storage().instance().set(&symbol_short!("orq"), &req_id);
+        env.storage().instance().set(&symbol_short!("orp"), &recipient_pub);
+    }
+    pub fn is_open_granted(env: Env, accessor: BytesN<32>, req_id: BytesN<32>) -> bool {
+        let a: Option<BytesN<32>> = env.storage().instance().get(&symbol_short!("oa"));
+        let r: Option<BytesN<32>> = env.storage().instance().get(&symbol_short!("orq"));
+        a == Some(accessor) && r == Some(req_id)
+    }
+    pub fn get_open_recipient_pub(
+        env: Env,
+        accessor: BytesN<32>,
+        req_id: BytesN<32>,
+    ) -> Option<BytesN<32>> {
+        if Self::is_open_granted(env.clone(), accessor, req_id) {
+            env.storage().instance().get(&symbol_short!("orp"))
+        } else {
+            None
+        }
+    }
 }
 
 /// Membership-enabled room (eligible_root pinned to ELIG_ROOT) + a registered mock bond gate + a token addr.
@@ -2220,4 +2242,136 @@ fn test_set_bond_requirement_requires_room_owner_auth() {
         &room_id, &bond_id, &BytesN::from_array(&env, &REQ), &token, &1_000_000_000i128, &9_000_000_000u64,
     );
     assert!(res.is_err(), "set_bond_requirement must require the room owner's auth; got {:?}", res);
+}
+
+// ============================ TRUE bond-only (no-approval) mode ============================
+
+const BOND_RECIP: [u8; 32] = [0x55u8; 32];
+
+#[test]
+fn test_bond_open_admits_non_member_without_eligible_root() {
+    // The whole point: a reader who is NOT an approved member, in a room with NO pinned eligible_root, is
+    // admitted purely by a qualifying bond proven anonymously (the bond-OPEN leg). No approval, no membership.
+    let env = Env::default();
+    env.mock_all_auths();
+    let f = setup(&env);
+    let owner = Address::generate(&env);
+    let fresh = [0x44u8; 32];
+    let room_id = BytesN::from_array(&env, &fresh);
+    f.dr.create_room(&owner, &room_id); // NO set_eligible_root, NO approvals
+    let bond_id = env.register(MockBondGate, ());
+    let bond = MockBondGateClient::new(&env, &bond_id);
+    let token = Address::generate(&env);
+    let req_id = BytesN::from_array(&env, &REQ);
+    let accessor = BytesN::from_array(&env, &ACCESSOR2);
+    let doc_id = BytesN::from_array(&env, &DOC);
+
+    f.dr.set_bond_open_requirement(&room_id, &bond_id, &req_id, &token, &1_000_000_000i128, &9_000_000_000u64);
+    assert!(f.dr.is_bond_open(&room_id));
+    // no grant yet -> denied
+    assert!(!f.dr.is_doc_admitted(&room_id, &doc_id, &accessor));
+    // a bond-open grant (NO member_root) -> admitted, with no eligible_root pinned
+    bond.set_open_grant(&accessor, &req_id, &BytesN::from_array(&env, &BOND_RECIP));
+    assert!(f.dr.is_doc_admitted(&room_id, &doc_id, &accessor));
+    assert!(f.dr.is_admitted(&room_id, &accessor));
+    // the keeper's unified recipient_pub read returns the proof-bound key from the bond-open grant
+    assert_eq!(
+        f.dr.admission_recipient_pub(&room_id, &accessor),
+        Some(BytesN::from_array(&env, &BOND_RECIP))
+    );
+}
+
+#[test]
+fn test_bond_open_revocation_drops_access() {
+    // Revoking the accessor drops a bond-only admission too (revocation is checked first).
+    let env = Env::default();
+    env.mock_all_auths();
+    let f = setup(&env);
+    let owner = Address::generate(&env);
+    let fresh = [0x45u8; 32];
+    let room_id = BytesN::from_array(&env, &fresh);
+    f.dr.create_room(&owner, &room_id);
+    let bond_id = env.register(MockBondGate, ());
+    let bond = MockBondGateClient::new(&env, &bond_id);
+    let token = Address::generate(&env);
+    let req_id = BytesN::from_array(&env, &REQ);
+    let accessor = BytesN::from_array(&env, &ACCESSOR2);
+    let doc_id = BytesN::from_array(&env, &DOC);
+    f.dr.set_bond_open_requirement(&room_id, &bond_id, &req_id, &token, &1_000_000_000i128, &9_000_000_000u64);
+    bond.set_open_grant(&accessor, &req_id, &BytesN::from_array(&env, &BOND_RECIP));
+    assert!(f.dr.is_doc_admitted(&room_id, &doc_id, &accessor));
+    f.dr.revoke_access(&room_id, &accessor, &true);
+    assert!(!f.dr.is_doc_admitted(&room_id, &doc_id, &accessor));
+}
+
+#[test]
+fn test_admission_recipient_pub_membership_fallback() {
+    // For a non-bond-only (membership) room, the keeper read returns the DR2 grant's recipient_pub, and None
+    // for an accessor with no grant.
+    let env = Env::default();
+    env.mock_all_auths();
+    let f = setup(&env);
+    let (mem_image, _owner) = setup_membership(&env, &f);
+    let room_id = BytesN::from_array(&env, &ROOM);
+    let j = make_membership_journal(&env, 1, CLAIM_TYPE_MEMBERSHIP_T, &ROOM, &ELIG_ROOT, &NULL1, &ACCESSOR1);
+    f.dr.request_access(&f.seal, &mem_image, &j);
+    assert!(!f.dr.is_bond_open(&room_id));
+    assert_eq!(
+        f.dr.admission_recipient_pub(&room_id, &BytesN::from_array(&env, &ACCESSOR1)),
+        Some(BytesN::from_array(&env, &RECIPIENT))
+    );
+    assert_eq!(f.dr.admission_recipient_pub(&room_id, &BytesN::from_array(&env, &ACCESSOR2)), None);
+}
+
+#[test]
+fn test_clear_bond_requirement_clears_open_mode() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let f = setup(&env);
+    let owner = Address::generate(&env);
+    let fresh = [0x46u8; 32];
+    let room_id = BytesN::from_array(&env, &fresh);
+    f.dr.create_room(&owner, &room_id);
+    let bond_id = env.register(MockBondGate, ());
+    let token = Address::generate(&env);
+    let req_id = BytesN::from_array(&env, &REQ);
+    f.dr.set_bond_open_requirement(&room_id, &bond_id, &req_id, &token, &1_000_000_000i128, &9_000_000_000u64);
+    assert!(f.dr.is_bond_open(&room_id));
+    assert!(f.dr.get_bond_requirement(&room_id).is_some());
+    f.dr.clear_bond_requirement(&room_id);
+    assert!(!f.dr.is_bond_open(&room_id));
+    assert!(f.dr.get_bond_requirement(&room_id).is_none());
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #28)")] // BadBondRequirement
+fn test_set_bond_open_requirement_rejects_zero_min_amount() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let f = setup(&env);
+    let owner = Address::generate(&env);
+    let fresh = [0x47u8; 32];
+    let room_id = BytesN::from_array(&env, &fresh);
+    f.dr.create_room(&owner, &room_id);
+    let bond_id = env.register(MockBondGate, ());
+    let token = Address::generate(&env);
+    f.dr.set_bond_open_requirement(&room_id, &bond_id, &BytesN::from_array(&env, &REQ), &token, &0i128, &9_000_000_000u64);
+}
+
+#[test]
+fn test_set_bond_open_requirement_requires_room_owner_auth() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let f = setup(&env);
+    let owner = Address::generate(&env);
+    let fresh = [0x48u8; 32];
+    let room_id = BytesN::from_array(&env, &fresh);
+    f.dr.create_room(&owner, &room_id);
+    let bond_id = env.register(MockBondGate, ());
+    let token = Address::generate(&env);
+    env.mock_auths(&[]); // drop auths
+    let res = f.dr.try_set_bond_open_requirement(
+        &room_id, &bond_id, &BytesN::from_array(&env, &REQ), &token, &1_000_000_000i128, &9_000_000_000u64,
+    );
+    assert!(res.is_err(), "set_bond_open_requirement must require the room owner's auth; got {:?}", res);
 }

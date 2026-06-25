@@ -245,6 +245,12 @@ pub enum DataKey {
     /// A per-document Bonded Access requirement (persistent), keyed by (room, doc). Overrides `BondReq(room)`
     /// for that committee document. Set by the room owner.
     BondReqDoc(BytesN<32>, BytesN<32>),
+    /// TRUE bond-only (no-approval) mode flag for a room (persistent), keyed by room. Presence == the room's
+    /// `BondReq` uses the bond-OPEN gate path: a reader who locked a qualifying bond opens with NO owner
+    /// approval and NO membership enrollment (the bond proof carries its own `recipient_pub`). Absent ⇒ the
+    /// legacy bond-implies-membership path. Set by `set_bond_open_requirement`, cleared by
+    /// `clear_bond_requirement`.
+    BondOpen(BytesN<32>),
 }
 
 #[contracttype]
@@ -607,6 +613,12 @@ pub trait GateInterface {
 #[contractclient(name = "BondGateClient")]
 pub trait BondGateInterface {
     fn is_granted_for(env: Env, accessor: BytesN<32>, req_id: BytesN<32>, member_root: BytesN<32>) -> bool;
+    /// TRUE bond-only admission: granted iff `accessor` holds an unexpired bond-OPEN grant for `req_id`. No
+    /// member-root binding (= no membership/approval). Used when the room is in bond-only mode.
+    fn is_open_granted(env: Env, accessor: BytesN<32>, req_id: BytesN<32>) -> bool;
+    /// The proof-bound `recipient_pub` recorded by a bond-OPEN grant (the key the DR3 keepers seal to). Used
+    /// by `admission_recipient_pub` for a bond-only room.
+    fn get_open_recipient_pub(env: Env, accessor: BytesN<32>, req_id: BytesN<32>) -> Option<BytesN<32>>;
 }
 
 fn be_u32(a: &[u8], o: usize) -> u32 {
@@ -651,6 +663,16 @@ fn bond_leg_ok(env: &Env, room_id: &BytesN<32>, req: &BondRequirement, accessor:
     };
     matches!(
         BondGateClient::new(env, &req.gate).try_is_granted_for(accessor, &req.req_id, &root),
+        Ok(Ok(true))
+    )
+}
+
+/// The TRUE bond-only (no-approval) leg: true iff the bond gate grants `accessor` for `req.req_id` via the
+/// bond-OPEN path. There is NO eligible_root / member binding (a reader needs no approval and no membership),
+/// just a qualifying bond proven anonymously. Fail-closed: a reverting / foreign gate ⇒ false (`try_*`).
+fn bond_open_leg_ok(env: &Env, req: &BondRequirement, accessor: &BytesN<32>) -> bool {
+    matches!(
+        BondGateClient::new(env, &req.gate).try_is_open_granted(accessor, &req.req_id),
         Ok(Ok(true))
     )
 }
@@ -1406,6 +1428,55 @@ impl DataRoom {
         .publish(&env);
     }
 
+    /// Set (or replace) a room-level TRUE bond-only (no-approval) Bonded Access requirement (room-owner auth).
+    /// Like `set_bond_requirement`, but it ALSO sets the `BondOpen` flag, so opening the room's documents goes
+    /// through the bond-OPEN gate path: a reader who locked a qualifying bond is admitted with NO owner
+    /// approval and NO membership enrollment (the bond-open proof carries its own `recipient_pub` for the
+    /// keepers). There is NO pinned-eligible_root precondition (a non-member reader is the whole point). Clear
+    /// (back to plain membership) with `clear_bond_requirement`.
+    pub fn set_bond_open_requirement(
+        env: Env,
+        room_id: BytesN<32>,
+        gate: Address,
+        req_id: BytesN<32>,
+        token: Address,
+        min_amount: i128,
+        deadline: u64,
+    ) {
+        load_config(&env).unwrap_or_else(|e| panic_with_error!(&env, e));
+        let pstore = env.storage().persistent();
+        let room: Room = pstore
+            .get(&DataKey::Room(room_id.clone()))
+            .unwrap_or_else(|| panic_with_error!(&env, DataRoomError::RoomNotFound));
+        room.owner.require_auth();
+        if min_amount <= 0 {
+            panic_with_error!(&env, DataRoomError::BadBondRequirement);
+        }
+        let req = BondRequirement {
+            gate: gate.clone(),
+            req_id: req_id.clone(),
+            token,
+            min_amount,
+            deadline,
+        };
+        pstore.set(&DataKey::BondReq(room_id.clone()), &req);
+        pstore.extend_ttl(&DataKey::BondReq(room_id.clone()), THRESHOLD, BUMP);
+        pstore.set(&DataKey::BondOpen(room_id.clone()), &true);
+        pstore.extend_ttl(&DataKey::BondOpen(room_id.clone()), THRESHOLD, BUMP);
+        bump_instance(&env);
+
+        BondRequirementSet {
+            room_id: room_id.clone(),
+            doc_id: room_id,
+            gate,
+            req_id,
+            min_amount,
+            deadline,
+            per_document: false,
+        }
+        .publish(&env);
+    }
+
     /// Set (or replace) a PER-DOCUMENT Bonded Access requirement (room-owner auth), overriding `BondReq(room)`
     /// for this committee document. The committee document must already exist (`CommitteeDocNotFound`). Same
     /// semantics as `set_bond_requirement`. Clear with `clear_doc_bond_requirement`.
@@ -1454,8 +1525,8 @@ impl DataRoom {
         .publish(&env);
     }
 
-    /// Remove a room-level Bonded Access requirement (room-owner auth). The room's documents fall back to
-    /// their per-document bond requirement (if any), else the policy / bare membership.
+    /// Remove a room-level Bonded Access requirement (room-owner auth) AND the bond-only mode flag. The room's
+    /// documents fall back to their per-document bond requirement (if any), else the policy / bare membership.
     pub fn clear_bond_requirement(env: Env, room_id: BytesN<32>) {
         load_config(&env).unwrap_or_else(|e| panic_with_error!(&env, e));
         let pstore = env.storage().persistent();
@@ -1463,7 +1534,8 @@ impl DataRoom {
             .get(&DataKey::Room(room_id.clone()))
             .unwrap_or_else(|| panic_with_error!(&env, DataRoomError::RoomNotFound));
         room.owner.require_auth();
-        pstore.remove(&DataKey::BondReq(room_id));
+        pstore.remove(&DataKey::BondReq(room_id.clone()));
+        pstore.remove(&DataKey::BondOpen(room_id));
         bump_instance(&env);
     }
 
@@ -1493,6 +1565,42 @@ impl DataRoom {
         env.storage()
             .persistent()
             .get(&DataKey::BondReqDoc(room_id, doc_id))
+    }
+
+    /// Whether the room is in TRUE bond-only (no-approval) mode: opening its documents requires only a
+    /// qualifying bond proven anonymously, with no owner approval and no membership enrollment. Public config.
+    pub fn is_bond_open(env: Env, room_id: BytesN<32>) -> bool {
+        env.storage().persistent().has(&DataKey::BondOpen(room_id))
+    }
+
+    /// The `recipient_pub` the DR3 keepers must seal the document key to for `accessor` in `room_id`. For a
+    /// bond-only room it is the proof-bound key from the bond-OPEN grant (cross-called from the bond gate);
+    /// otherwise it is the DR2 membership grant's recipient_pub. Returns `None` if there is no admitting
+    /// record. This unifies the keeper's key read across both access models (membership and bond-only).
+    pub fn admission_recipient_pub(
+        env: Env,
+        room_id: BytesN<32>,
+        accessor: BytesN<32>,
+    ) -> Option<BytesN<32>> {
+        let pstore = env.storage().persistent();
+        // Bond-only room: the recipient_pub lives in the bond-OPEN grant (keyed by accessor + the room's
+        // req_id). Cross-call the bond gate; fail-soft to None if the requirement/gate is missing.
+        if pstore.has(&DataKey::BondOpen(room_id.clone())) {
+            let req: Option<BondRequirement> = pstore.get(&DataKey::BondReq(room_id.clone()));
+            if let Some(req) = req {
+                return match BondGateClient::new(&env, &req.gate)
+                    .try_get_open_recipient_pub(&accessor, &req.req_id)
+                {
+                    Ok(Ok(rp)) => rp,
+                    _ => None,
+                };
+            }
+            return None;
+        }
+        // Membership room (legacy): the DR2 grant carries the recipient_pub.
+        pstore
+            .get::<DataKey, Grant>(&DataKey::Grant(room_id, accessor))
+            .map(|g| g.recipient_pub)
     }
 
     /// Admit `accessor` by enforcing the room's composite policy — the anonymous composite-policy AND. In
@@ -1947,9 +2055,16 @@ impl DataRoom {
             return false;
         }
         match &bond_req {
-            // Bond implies membership (Option A): the bond leg REPLACES the DR2 membership spine.
+            // A bond requirement is set: the bond leg REPLACES the DR2 membership spine. In bond-ONLY mode
+            // (BondOpen set) the open leg grants with NO approval/membership; otherwise the legacy
+            // bond-implies-membership leg binds the room's eligible_root (Option A).
             Some(req) => {
-                if !bond_leg_ok(&env, &room_id, req, &accessor) {
+                let ok = if pstore.has(&DataKey::BondOpen(room_id.clone())) {
+                    bond_open_leg_ok(&env, req, &accessor)
+                } else {
+                    bond_leg_ok(&env, &room_id, req, &accessor)
+                };
+                if !ok {
                     return false;
                 }
             }
@@ -2023,9 +2138,16 @@ impl DataRoom {
             return Self::is_granted(env.clone(), room_id, accessor);
         }
         match &bond_req {
-            // Bond implies membership (Option A): the bond leg REPLACES the DR2 membership spine.
+            // A bond requirement is set: the bond leg REPLACES the DR2 membership spine. In bond-ONLY mode
+            // (BondOpen set) the open leg grants with NO approval/membership; otherwise the legacy
+            // bond-implies-membership leg binds the room's eligible_root (Option A).
             Some(req) => {
-                if !bond_leg_ok(&env, &room_id, req, &accessor) {
+                let ok = if pstore.has(&DataKey::BondOpen(room_id.clone())) {
+                    bond_open_leg_ok(&env, req, &accessor)
+                } else {
+                    bond_leg_ok(&env, &room_id, req, &accessor)
+                };
+                if !ok {
                     return false;
                 }
             }
