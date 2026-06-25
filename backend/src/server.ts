@@ -2697,6 +2697,32 @@ function queueRateLimited(ip: string, nowMs: number): boolean {
   return hits.length > QUEUE_RL_MAX;
 }
 
+// Heavy-prove limiter (shared by /bonded/bond/prove + /bonded/bond-open/prove). Each call runs a full escrow
+// lock scan + a real GPU proof, and the background path auto-submits relay-paid txs. Throttle per IP so an
+// unauthenticated caller cannot drain the relay's XLM or saturate the single GPU worker. Same shape as the
+// other limiters; env-tunable.
+const PROVE_RL_WINDOW_MS = 10 * 60_000;
+const PROVE_RL_MAX = numEnv(process.env.BOND_PROVE_RL_MAX, 8, 1);
+const PROVE_RL_MAX_IPS = 10_000;
+const proveHits = new Map<string, number[]>();
+function proveRateLimited(ip: string, nowMs: number): boolean {
+  if (proveHits.size > PROVE_RL_MAX_IPS) {
+    for (const [k, ts] of proveHits) {
+      const live = ts.filter((t) => nowMs - t < PROVE_RL_WINDOW_MS);
+      if (live.length === 0) proveHits.delete(k);
+      else proveHits.set(k, live);
+    }
+    if (proveHits.size > PROVE_RL_MAX_IPS) {
+      let toEvict = proveHits.size - PROVE_RL_MAX_IPS;
+      for (const k of proveHits.keys()) { if (toEvict-- <= 0) break; proveHits.delete(k); }
+    }
+  }
+  const hits = (proveHits.get(ip) ?? []).filter((t) => nowMs - t < PROVE_RL_WINDOW_MS);
+  hits.push(nowMs);
+  proveHits.set(ip, hits);
+  return hits.length > PROVE_RL_MAX;
+}
+
 // M7 — flush the batch queue NOW: shuffle every queued bundle and submit each request_access in shuffled order
 // through the single relay account (serial seq numbers => the on-chain grant index order is the shuffled
 // order). Guarded so two flushes never overlap. Wired to a fixed epoch-aligned timer in startBatchFlusher().
@@ -4855,6 +4881,7 @@ async function pollAndSubmitBond(jobId: string): Promise<void> {
 app.post("/bonded/bond/prove", async (req, res) => {
   if (!PROVER_URL) return res.status(503).json({ error: "PROVER_URL not configured" });
   if (!BOND_GATE_ID) return res.status(503).json({ error: "BOND_GATE_ID not configured" });
+  if (proveRateLimited(clientIp(req), Date.now())) return res.status(429).json({ error: "too many proofs from this client; retry shortly" });
   let roomIdHex: string, idSecret: Uint8Array, idTrapdoor: Uint8Array, holderSeed: Uint8Array;
   let token: string, minAmount: bigint, deadline: number, reqId: string;
   try {
@@ -4863,6 +4890,8 @@ app.post("/bonded/bond/prove", async (req, res) => {
     idTrapdoor = hex32(req.body?.idTrapdoor, "idTrapdoor");
     holderSeed = hex32(req.body?.holderSeed, "holderSeed");
     ({ token, minAmount, deadline, reqId } = parseBondReq(req.body ?? {}));
+    // A past deadline can never be satisfied; fail fast before scanning + proving (parity with bond-open).
+    if (deadline <= Math.floor(Date.now() / 1000)) return res.status(400).json({ error: "deadline must be in the future" });
   } catch (e) {
     return res.status(400).json({ error: err(e) });
   }
@@ -5018,6 +5047,7 @@ async function pollAndSubmitBondOpen(jobId: string): Promise<void> {
 app.post("/bonded/bond-open/prove", async (req, res) => {
   if (!PROVER_URL) return res.status(503).json({ error: "PROVER_URL not configured" });
   if (!BOND_GATE_ID) return res.status(503).json({ error: "BOND_GATE_ID not configured" });
+  if (proveRateLimited(clientIp(req), Date.now())) return res.status(429).json({ error: "too many proofs from this client; retry shortly" });
   let idSecret: Uint8Array, idTrapdoor: Uint8Array, holderSeed: Uint8Array, recipientPub: Uint8Array;
   let token: string, minAmount: bigint, deadline: number, reqId: string;
   try {
@@ -5026,6 +5056,9 @@ app.post("/bonded/bond-open/prove", async (req, res) => {
     holderSeed = hex32(req.body?.holderSeed, "holderSeed");
     recipientPub = hex32(req.body?.recipientPub, "recipientPub");
     ({ token, minAmount, deadline, reqId } = parseBondReq(req.body ?? {}));
+    // A past deadline can never be satisfied (a qualifying lock needs unlock_time >= deadline AND now <
+    // unlock_time), so the qual set is empty by construction. Fail fast before scanning + proving.
+    if (deadline <= Math.floor(Date.now() / 1000)) return res.status(400).json({ error: "deadline must be in the future" });
   } catch (e) {
     return res.status(400).json({ error: err(e) });
   }

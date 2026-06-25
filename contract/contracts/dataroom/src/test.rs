@@ -2375,3 +2375,23 @@ fn test_set_bond_open_requirement_requires_room_owner_auth() {
     );
     assert!(res.is_err(), "set_bond_open_requirement must require the room owner's auth; got {:?}", res);
 }
+
+#[test]
+#[should_panic(expected = "Error(Contract, #28)")] // BadBondRequirement
+fn test_set_doc_bond_requirement_rejected_on_bond_only_room() {
+    // A bond-only room is room-uniform: a per-document bond requirement (which admission_recipient_pub does
+    // NOT resolve) must be rejected, so a bonded doc can never become admittable-but-unopenable.
+    let env = Env::default();
+    env.mock_all_auths();
+    let f = setup(&env);
+    let owner = Address::generate(&env);
+    let fresh = [0x49u8; 32];
+    let room_id = BytesN::from_array(&env, &fresh);
+    f.dr.create_room(&owner, &room_id);
+    let bond_id = env.register(MockBondGate, ());
+    let token = Address::generate(&env);
+    let req_id = BytesN::from_array(&env, &REQ);
+    f.dr.set_bond_open_requirement(&room_id, &bond_id, &req_id, &token, &1_000_000_000i128, &9_000_000_000u64);
+    let doc_id = BytesN::from_array(&env, &DOC);
+    f.dr.set_doc_bond_requirement(&room_id, &doc_id, &bond_id, &req_id, &token, &1_000_000_000i128, &9_000_000_000u64);
+}

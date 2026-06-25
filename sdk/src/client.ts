@@ -1321,10 +1321,13 @@ export class ZkorageClient {
   }
 
   /** The proof-bound `recipient_pub` (hex) recorded by a bond-OPEN grant, or null if there is no grant. The
-   *  key the DR3 keepers seal the document key to for a bond-only room. */
+   *  key the DR3 keepers seal the document key to for a bond-only room. A real key is exactly 32 bytes; a
+   *  missing/empty value normalizes to null. */
   async getBondOpenRecipientPub(accessorHex: string, reqIdHex: string): Promise<string | null> {
     const v = await this.simRead(this.cfg.contracts.bondGate, "get_open_recipient_pub", [scBytes(accessorHex), scBytes(reqIdHex)]);
-    return v == null ? null : bytesToHex(v);
+    if (v == null) return null;
+    const hex = bytesToHex(v);
+    return hex.length === 64 ? hex : null;
   }
 
   /** Whether a room is in TRUE bond-only (no-approval) mode: opening its documents requires only a qualifying

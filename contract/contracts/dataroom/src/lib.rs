@@ -669,7 +669,10 @@ fn bond_leg_ok(env: &Env, room_id: &BytesN<32>, req: &BondRequirement, accessor:
 
 /// The TRUE bond-only (no-approval) leg: true iff the bond gate grants `accessor` for `req.req_id` via the
 /// bond-OPEN path. There is NO eligible_root / member binding (a reader needs no approval and no membership),
-/// just a qualifying bond proven anonymously. Fail-closed: a reverting / foreign gate ⇒ false (`try_*`).
+/// just a qualifying bond proven anonymously. Fail-closed: a reverting / foreign gate ⇒ false (`try_*`). The
+/// relying party trusts the room owner's configured `req.gate` address for the ADMISSION decision (same trust
+/// model as `bond_leg_ok` and the DR6 compliance/accredited gates); the recipient_pub binding protects only the
+/// KEY seal, not the admission verdict.
 fn bond_open_leg_ok(env: &Env, req: &BondRequirement, accessor: &BytesN<32>) -> bool {
     matches!(
         BondGateClient::new(env, &req.gate).try_is_open_granted(accessor, &req.req_id),
@@ -1480,6 +1483,10 @@ impl DataRoom {
     /// Set (or replace) a PER-DOCUMENT Bonded Access requirement (room-owner auth), overriding `BondReq(room)`
     /// for this committee document. The committee document must already exist (`CommitteeDocNotFound`). Same
     /// semantics as `set_bond_requirement`. Clear with `clear_doc_bond_requirement`.
+    ///
+    /// NOT allowed on a TRUE bond-only room (`BondOpen` set): `admission_recipient_pub` resolves the key from
+    /// the ROOM-level requirement only, so a divergent per-document requirement would admit a reader the
+    /// keepers cannot seal to (fail-closed but confusing). Bond-only is room-uniform; this panics to keep it so.
     pub fn set_doc_bond_requirement(
         env: Env,
         room_id: BytesN<32>,
@@ -1496,6 +1503,10 @@ impl DataRoom {
             .get(&DataKey::Room(room_id.clone()))
             .unwrap_or_else(|| panic_with_error!(&env, DataRoomError::RoomNotFound));
         room.owner.require_auth();
+        if pstore.has(&DataKey::BondOpen(room_id.clone())) {
+            // A bond-only room is room-uniform (see the doc above + admission_recipient_pub). Reject per-doc reqs.
+            panic_with_error!(&env, DataRoomError::BadBondRequirement);
+        }
         if !pstore.has(&DataKey::CommitteeDoc(room_id.clone(), doc_id.clone())) {
             panic_with_error!(&env, DataRoomError::CommitteeDocNotFound);
         }
@@ -1574,9 +1585,11 @@ impl DataRoom {
     }
 
     /// The `recipient_pub` the DR3 keepers must seal the document key to for `accessor` in `room_id`. For a
-    /// bond-only room it is the proof-bound key from the bond-OPEN grant (cross-called from the bond gate);
-    /// otherwise it is the DR2 membership grant's recipient_pub. Returns `None` if there is no admitting
-    /// record. This unifies the keeper's key read across both access models (membership and bond-only).
+    /// bond-only room it is the proof-bound key from the bond-OPEN grant (cross-called from the bond gate),
+    /// keyed by the ROOM-level requirement's `req_id`; otherwise it is the DR2 membership grant's recipient_pub.
+    /// Returns `None` if there is no admitting record. This unifies the keeper's key read across both access
+    /// models (membership and bond-only). NOTE: a bond-only room is room-uniform (per-doc bond requirements are
+    /// rejected by `set_doc_bond_requirement`), so the room-level `req_id` always matches the admitting one.
     pub fn admission_recipient_pub(
         env: Env,
         room_id: BytesN<32>,

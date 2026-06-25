@@ -78,7 +78,8 @@ if (st0.is_granted) {
 // 3) the no-approval admission checks.
 let [, st] = await jget(`/bonded/bond-open/status?accessor=${ACCESSOR}&req_id=${breq.reqId}`);
 console.log(`[bondonly] is_open_granted=${st.is_granted} recipientPub=${String(st.recipientPub).slice(0, 12)}...`);
-let [, adm] = await jget(`/dataroom/is-doc-admitted/${ROOM}/${DOC}/${ACCESSOR}`).catch(() => [0, {}]);
+let [, adm] = await jget(`/dataroom/doc-admitted/${ROOM}/${DOC}/${ACCESSOR}`);
+console.log(`[bondonly] is_doc_admitted=${adm.isDocAdmitted} (no membership, no eligible_root, no approval)`);
 
 // 4) store the committee document + OPEN it via the keepers (validates admission_recipient_pub).
 let [, cd] = await jget(`/dataroom/committee/document/${ROOM}/${DOC}`);
@@ -88,9 +89,9 @@ if (!cd.document) {
   console.log(`[bondonly] committee doc anchored: dealt=${seal.dealt} contentHash=${String(seal.contentHash).slice(0, 12)}...`);
 }
 let [, open] = await jpost(`/dataroom/committee/open/${ROOM}/${DOC}`, { accessor: ACCESSOR });
-const ok = st.is_granted && open.ok && open.faithful && open.content === CONTENT;
+const ok = st.is_granted && adm.isDocAdmitted && open.ok && open.faithful && open.content === CONTENT;
 
 console.log("\n===== TRUE bond-only OPEN E2E =====");
-console.log(JSON.stringify({ room: ROOM, doc: DOC, accessor: ACCESSOR, bondOnly: breq.bondOpen, is_open_granted: st.is_granted, recipientPub: st.recipientPub, faithful: open.faithful, contentMatch: open.content === CONTENT, error: open.error }, null, 2));
+console.log(JSON.stringify({ room: ROOM, doc: DOC, accessor: ACCESSOR, bondOnly: breq.bondOpen, is_open_granted: st.is_granted, is_doc_admitted: adm.isDocAdmitted, recipientPub: st.recipientPub, faithful: open.faithful, contentMatch: open.content === CONTENT, error: open.error }, null, 2));
 console.log(ok ? "\nTRUE bond-only OPEN e2e GREEN — a NEVER-APPROVED reader opened a bond-only room (bond is the only gate)" : "\nTRUE bond-only OPEN e2e FAILED");
 process.exit(ok ? 0 : 1);

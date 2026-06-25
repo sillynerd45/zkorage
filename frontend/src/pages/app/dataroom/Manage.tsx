@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Compass, Globe, KeyRound, Lock, ShieldCheck, Users } from "lucide-react";
 import { useEnroll } from "@/lib/hooks/useEnroll";
 import { useTxSigner } from "@/lib/wallet/WalletContext";
@@ -29,33 +29,51 @@ export default function RoomManagement() {
   const e = useEnroll();
   const signer = useTxSigner();
 
-  // The room's on-chain access model (bond-only or membership), plus the owner's current pick (which drives
-  // what shows). `bondOpen === null` while loading. `picked` syncs to the chain model on room change, then the
-  // owner can switch it.
+  // The room's on-chain bond state: `found` = any bond requirement is set, `bondOpen` = it is TRUE bond-only
+  // (no approval). Both null while loading. `picked` is the owner's choice of which panel to show. It syncs to
+  // the chain model ONCE per room (a `reqRefresh` after a set/clear updates the chain markers but must NOT yank
+  // the owner's pick), so the resync is keyed to the room id via `syncedRoom`.
+  const [found, setFound] = useState<boolean | null>(null);
   const [bondOpen, setBondOpen] = useState<boolean | null>(null);
   const [picked, setPicked] = useState<AccessModel>("membership");
   const [reqRefresh, setReqRefresh] = useState(0);
   const [clearing, setClearing] = useState(false);
   const [clearErr, setClearErr] = useState<string | null>(null);
+  const syncedRoom = useRef<string | null>(null);
+
+  // The current on-chain model: any bond requirement (bond-only OR a legacy bond-implies-membership one) reads
+  // as the "bond" model; no bond requirement reads as "membership".
+  const currentModel: AccessModel | null = found === null ? null : found ? "bond" : "membership";
 
   useEffect(() => {
     if (!e.ownerRoom) {
+      setFound(null);
       setBondOpen(null);
+      syncedRoom.current = null;
       return;
     }
     let live = true;
+    setFound(null);
     setBondOpen(null);
     getBondRequirementApi(e.ownerRoom)
       .then((r) => {
         if (!live) return;
-        const open = Boolean(r.bondOpen);
-        setBondOpen(open);
-        setPicked(open ? "bond" : "membership");
+        setFound(Boolean(r.found));
+        setBondOpen(Boolean(r.bondOpen));
+        // Sync the owner's pick to the chain model only on the FIRST read for this room; later refreshes
+        // (after a set/clear) update the markers but leave the owner's pick alone.
+        if (syncedRoom.current !== e.ownerRoom) {
+          setPicked(r.found ? "bond" : "membership");
+          syncedRoom.current = e.ownerRoom;
+        }
       })
       .catch(() => {
-        if (live) {
-          setBondOpen(false);
+        if (!live) return;
+        setFound(false);
+        setBondOpen(false);
+        if (syncedRoom.current !== e.ownerRoom) {
           setPicked("membership");
+          syncedRoom.current = e.ownerRoom;
         }
       });
     return () => {
@@ -117,6 +135,7 @@ export default function RoomManagement() {
             {e.myRooms.map((r) => (
               <button
                 key={r.roomId}
+                type="button"
                 onClick={() => e.selectOwnerRoom(r.roomId)}
                 data-testid="manage-owner-room"
                 aria-pressed={e.ownerRoom === r.roomId}
@@ -171,7 +190,7 @@ export default function RoomManagement() {
                 ]
               ).map((m) => {
                 const active = picked === m.key;
-                const isCurrent = (bondOpen ? "bond" : "membership") === m.key;
+                const isCurrent = currentModel === m.key;
                 return (
                   <button
                     key={m.key}
@@ -190,7 +209,7 @@ export default function RoomManagement() {
                         <m.icon className="size-4" aria-hidden="true" />
                         {m.title}
                       </div>
-                      {bondOpen !== null && isCurrent && (
+                      {currentModel !== null && isCurrent && (
                         <span className="rounded-full border border-success/50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-success" data-testid={`manage-model-current-${m.key}`}>
                           Current
                         </span>
@@ -202,14 +221,16 @@ export default function RoomManagement() {
               })}
             </div>
 
-            {/* Membership picked. If the room is currently bond-only, offer the switch (clears the bond). */}
+            {/* Membership picked. If the room currently has a bond requirement (bond-only, or a legacy
+                bond-implies-membership one set before Room Management), offer the switch, which clears it. */}
             {picked === "membership" && (
               <div className="mt-4" data-testid="manage-membership-panel">
-                {bondOpen ? (
+                {found ? (
                   <div className="space-y-3">
                     <Callout icon={ShieldCheck}>
-                      This room currently uses Bonded Access. Switching to membership clears the bond
-                      requirement, and readers will need your approval again.
+                      {bondOpen
+                        ? "This room currently uses Bonded Access. Switching to membership clears the bond requirement, and readers will need your approval again."
+                        : "This room has a bond requirement that also requires membership (set before Room Management). Switching to membership clears it, and readers get in by your approval alone."}
                     </Callout>
                     <Button variant="outline" onClick={() => void switchToMembership()} disabled={clearing} data-testid="manage-switch-membership">
                       {clearing ? "Switching…" : "Switch to membership"}

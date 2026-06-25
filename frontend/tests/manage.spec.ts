@@ -25,7 +25,9 @@ const mock = `
 const DARK = `localStorage.setItem("zkorage-theme","dark");`;
 const json = (body: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
 
-async function stubs(page: import("@playwright/test").Page, bondOpen: boolean) {
+// The reads the Room Management page makes, EXCEPT the bond-requirement GET (each test sets that, since it
+// drives the access-model marker).
+async function stubsCommon(page: import("@playwright/test").Page) {
   await page.route("**/dataroom/committee/info", (r) => r.fulfill(json({ online: 3, n: 3, threshold: 2 })));
   await page.route("**/dataroom/rooms?owner=**", (r) =>
     r.fulfill(json({ owner: ADDR, count: 1, dataroomId: "", rooms: [{ roomId: OWNER_ROOM, label: "Acme board", owner: ADDR, docCount: 0, ledger: 1, visibility: "private", name: null, description: null }] })));
@@ -36,7 +38,11 @@ async function stubs(page: import("@playwright/test").Page, bondOpen: boolean) {
   await page.route("**/dataroom/rooms-vault/**", (r) => r.fulfill(json({ found: false, blob: null })));
   await page.route("**/bonded/bond/qual-set**", (r) => r.fulfill(json({ token: TOKEN, minAmount: MIN, deadline: DEADLINE, reqId: "ab".repeat(32), anonSetSize: 0, minAnonSet: 3, belowMin: true, computedRoot: "cd".repeat(32), published: false, ringLen: 0, locks: [] })));
   await page.route("**/escrow/token-balance**", (r) => r.fulfill(json({ owner: ADDR, token: TOKEN, balance: "0", decimals: 7, symbol: "TUSD" })));
-  // The room's current bond mode (drives the access-model marker).
+}
+
+// stubsCommon + a STATIC bond-requirement GET (bond-only or membership), for tests that don't toggle it.
+async function stubs(page: import("@playwright/test").Page, bondOpen: boolean) {
+  await stubsCommon(page);
   await page.route("**/dataroom/bond-requirement/**", (r) => {
     if (r.request().method() !== "GET") return r.continue();
     return r.fulfill(bondOpen
@@ -91,8 +97,15 @@ test("manage: picking Bonded Access reveals the requirement editor", async ({ pa
 
 test("manage: a bond-only room can switch back to membership", async ({ page }) => {
   await page.addInitScript(mock);
-  await stubs(page, true); // the room is currently bond-only
+  // The GET toggles: bond-only until the bond is cleared, then plain membership (mirrors the chain).
   let cleared = false;
+  await stubsCommon(page);
+  await page.route("**/dataroom/bond-requirement/**", (r) => {
+    if (r.request().method() !== "GET") return r.continue();
+    return r.fulfill(cleared
+      ? json({ found: false, bondOpen: false })
+      : json({ found: true, scope: "room", bondOpen: true, mode: "open", gate: "C".repeat(56), reqId: "ab".repeat(32), token: TOKEN, minAmount: MIN, deadline: DEADLINE }));
+  });
   await page.route("**/dataroom/bond-requirement/clear", (r) => { cleared = true; return r.fulfill(json({ ok: true, mode: "xdr", xdr: "AAAA", source: ADDR })); });
   await page.route("**/tx/submit", (r) => r.fulfill(json({ ok: true, txHash: "ab".repeat(8) })));
 
@@ -101,10 +114,11 @@ test("manage: a bond-only room can switch back to membership", async ({ page }) 
   await expect(page.getByTestId("manage-access-model")).toBeVisible({ timeout: 15_000 });
   // Bonded Access is the current model.
   await expect(page.getByTestId("manage-model-current-bond")).toBeVisible();
-  // Switch to membership -> clears the bond requirement.
+  // Switch to membership -> clears the bond requirement AND the UI lands on the membership model.
   await page.getByTestId("manage-model-membership").click();
   await page.getByTestId("manage-switch-membership").click();
   await expect.poll(() => cleared, { timeout: 15_000 }).toBe(true);
+  await expect(page.getByTestId("manage-model-current-membership")).toBeVisible({ timeout: 15_000 });
 });
 
 test("manage: renders dark", async ({ page }) => {

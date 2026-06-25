@@ -1406,12 +1406,6 @@ export const proveBondOpen = (body: {
 export const submitBondOpen = (bundle: Bundle) =>
   post<WalletWriteResult & { grant?: unknown }>("/bonded/bond-open/submit", { ...bundle });
 
-// The live bond-only decision for (accessor, req_id): an unexpired bond-open grant exists (no member_root).
-export const getBondOpenStatus = (accessor: string, reqId: string) =>
-  fetch(`${BASE}/bonded/bond-open/status?accessor=${accessor}&req_id=${reqId}`).then(
-    j<{ accessor: string; reqId: string; is_granted: boolean; recipientPub: string | null; grant: unknown; bondGateId: string }>,
-  );
-
 // ── Bonded Access (standalone): the same per-requirement bond gate as the Data Room, but with its OWN member
 // context, so a user can pick ANY token + amount + deadline, bond, and prove anonymously without a room. The
 // anonymity set is still per req_id (everyone who bonded the same requirement), so it grows with adoption and

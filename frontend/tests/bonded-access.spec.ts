@@ -225,7 +225,8 @@ test("Room Management: the owner sets Bonded Access via a classic asset", async 
       : json({ found: false, bondOpen: false }));
   });
   await page.route("**/bonded/bond/qual-set**", (r) => r.fulfill(json(qualSet(0, []))));
-  await page.route("**/dataroom/bond-requirement", (r) => r.fulfill(json({ ok: true, mode: "xdr", xdr: "AAAA", source: ADDR, reqId: "ab".repeat(32) })));
+  let setBody: Record<string, unknown> = {};
+  await page.route("**/dataroom/bond-requirement", (r) => { setBody = (r.request().postDataJSON() ?? {}) as Record<string, unknown>; return r.fulfill(json({ ok: true, mode: "xdr", xdr: "AAAA", source: ADDR, reqId: "ab".repeat(32) })); });
   await page.route("**/tx/submit", (r) => { set = true; return r.fulfill(json({ ok: true, txHash: "ab".repeat(8) })); });
   await page.route("**/bonded/bond/qual-root", (r) => r.fulfill(json({ ok: true, txHash: "cd".repeat(8) })));
 
@@ -245,6 +246,9 @@ test("Room Management: the owner sets Bonded Access via a classic asset", async 
   await page.getByTestId("bond-set").click();
   await expect(page.getByTestId("bond-set-done")).toContainText("Bonded Access set", { timeout: 30_000 });
   await expect(page.getByTestId("bond-current")).toBeVisible();
+  // The owner UI must request the TRUE bond-only mode (not the legacy membership-bond), or the room would
+  // still need approval.
+  expect(setBody.mode, "set-requirement must send mode 'open'").toBe("open");
   expect(errs, errs.join("\n")).toHaveLength(0);
 });
 

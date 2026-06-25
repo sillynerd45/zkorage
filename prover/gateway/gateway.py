@@ -412,6 +412,39 @@ class H(BaseHTTPRequestHandler):
                     if li < 0 or li >= (1 << 20):
                         return self._send(400, {"error": f"{f} out of range (must be < 2^20, the depth-20 tree capacity)", "kind": kind})
                     inputs[f] = str(li)
+            # bond-open (Room Mgmt): same hardening as bond, but NO member tree (only qual_siblings/qual_leaf_index)
+            # and a NEW recipient_pub_hex (the proof-bound key the keepers seal to). sig = 64 bytes; the seven
+            # keyed 32-byte fields; qual_siblings = depth-20 (640 bytes); deadline a u64; min_amount a POSITIVE
+            # i128; qual_leaf_index < 2^20. The backend always sends well-formed values; this is the boundary guard.
+            if kind == "bond-open":
+                for f in ("pk_hex", "accessor_hex", "recipient_pub_hex", "id_secret_hex", "id_trapdoor_hex", "context_hex", "token_hex"):
+                    if not _HEX32.match(str(inputs.get(f, ""))):
+                        return self._send(400, {"error": f"{f} must be 32-byte hex (64 hex chars)", "kind": kind})
+                if not _HEX64.match(str(inputs.get("sig_hex", ""))):
+                    return self._send(400, {"error": "sig_hex must be 64-byte hex (128 hex chars)", "kind": kind})
+                if not _HEX_SIBLINGS.match(str(inputs.get("qual_siblings_hex", ""))):
+                    return self._send(400, {"error": "qual_siblings_hex must be depth-20 (1280 hex chars)", "kind": kind})
+                try:
+                    dl = int(str(inputs["deadline"]).strip())
+                except (ValueError, TypeError):
+                    return self._send(400, {"error": "deadline must be an integer", "kind": kind})
+                if dl < 0 or dl > 0xFFFFFFFFFFFFFFFF:
+                    return self._send(400, {"error": "deadline out of u64 range", "kind": kind})
+                inputs["deadline"] = str(dl)
+                try:
+                    ma = int(str(inputs["min_amount"]).strip())
+                except (ValueError, TypeError):
+                    return self._send(400, {"error": "min_amount must be an integer", "kind": kind})
+                if ma <= 0 or ma >= (1 << 127):
+                    return self._send(400, {"error": "min_amount must be a positive i128", "kind": kind})
+                inputs["min_amount"] = str(ma)
+                try:
+                    li = int(str(inputs["qual_leaf_index"]).strip())
+                except (ValueError, TypeError):
+                    return self._send(400, {"error": "qual_leaf_index must be an integer", "kind": kind})
+                if li < 0 or li >= (1 << 20):
+                    return self._send(400, {"error": "qual_leaf_index out of range (must be < 2^20, the depth-20 tree capacity)", "kind": kind})
+                inputs["qual_leaf_index"] = str(li)
             jid = uuid.uuid4().hex[:12]
             with lock:
                 jobs[jid] = {"id": jid, "kind": kind, "inputs": inputs,

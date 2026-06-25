@@ -473,13 +473,16 @@ export async function getBondOpenGrant(accessorHex: string, reqIdHex: string): P
   return value ? jsonSafe(value) : null;
 }
 
-/** The proof-bound recipient_pub (hex) the keepers seal to for a bond-only grant, or null. */
+/** The proof-bound recipient_pub (hex) the keepers seal to for a bond-only grant, or null. Normalizes a
+ *  missing/empty value to null (a real recipient_pub is exactly 32 bytes). */
 export async function getBondOpenRecipientPub(accessorHex: string, reqIdHex: string): Promise<string | null> {
   const { value } = await readContract(requireGate(), "get_open_recipient_pub", [
     scBytes(accessorHex),
     scBytes(reqIdHex),
   ]);
-  return value == null ? null : toHex(new Uint8Array(value as Uint8Array));
+  if (value == null) return null;
+  const buf = new Uint8Array(value as Uint8Array);
+  return buf.length === 32 ? toHex(buf) : null;
 }
 
 export async function isBondOpenNullifierUsed(nullifierHex: string): Promise<boolean> {
