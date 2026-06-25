@@ -43,6 +43,7 @@ HOST_DOCAUTH_BIN = os.environ.get("HOST_DOCAUTH_BIN", os.path.join(PROVER_DIR, "
 HOST_SOLVENCY_BIN = os.environ.get("HOST_SOLVENCY_BIN", os.path.join(PROVER_DIR, "target/release/host_solvency"))
 HOST_TIER_BIN = os.environ.get("HOST_TIER_BIN", os.path.join(PROVER_DIR, "target/release/host_tier"))
 HOST_BOND_BIN = os.environ.get("HOST_BOND_BIN", os.path.join(PROVER_DIR, "target/release/host_bond"))
+HOST_BOND_OPEN_BIN = os.environ.get("HOST_BOND_OPEN_BIN", os.path.join(PROVER_DIR, "target/release/host_bond_open"))
 PORT = int(os.environ.get("PORT", "8080"))
 FALLBACK_SECS = int(os.environ.get("FALLBACK_SECS", "30"))
 CLAIM_TIMEOUT = int(os.environ.get("CLAIM_TIMEOUT", "1800"))  # worker claimed but never returned
@@ -101,6 +102,12 @@ REQUIRED = {
     "bond": ["sig_hex", "pk_hex", "accessor_hex", "id_secret_hex", "id_trapdoor_hex", "context_hex",
              "token_hex", "min_amount", "deadline", "member_siblings_hex", "member_leaf_index",
              "qual_siblings_hex", "qual_leaf_index"],
+    # bond-open (Room Management): TRUE bond-only Bonded Access. Like `bond` but DROPS the member tree (no
+    # membership/approval) and ADDS a proof-bound recipient_pub (so the DR3 keepers can seal the doc key). The
+    # holder sig binds recipient_pub. id_secret/id_trapdoor/the qual leaf index are PRIVATE (reach the
+    # self-hosted prover only). context == req_id = sha256(token ‖ min_amount ‖ deadline) (the gate enforces).
+    "bond-open": ["sig_hex", "pk_hex", "accessor_hex", "recipient_pub_hex", "id_secret_hex", "id_trapdoor_hex",
+                  "context_hex", "token_hex", "min_amount", "deadline", "qual_siblings_hex", "qual_leaf_index"],
 }
 
 jobs = {}            # id -> dict
@@ -160,6 +167,12 @@ def run_host_local(inputs, kind):
                  inputs["id_trapdoor_hex"], inputs["context_hex"], inputs["token_hex"],
                  str(int(inputs["min_amount"])), str(int(inputs["deadline"])), inputs["member_siblings_hex"],
                  str(int(inputs["member_leaf_index"])), inputs["qual_siblings_hex"],
+                 str(int(inputs["qual_leaf_index"]))]
+    elif kind == "bond-open":
+        bin_path = HOST_BOND_OPEN_BIN
+        lines = [inputs["sig_hex"], inputs["pk_hex"], inputs["accessor_hex"], inputs["recipient_pub_hex"],
+                 inputs["id_secret_hex"], inputs["id_trapdoor_hex"], inputs["context_hex"], inputs["token_hex"],
+                 str(int(inputs["min_amount"])), str(int(inputs["deadline"])), inputs["qual_siblings_hex"],
                  str(int(inputs["qual_leaf_index"]))]
     else:
         bin_path = HOST_BIN
