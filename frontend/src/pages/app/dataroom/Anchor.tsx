@@ -26,7 +26,16 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { DataRow, Verdict } from "@/components/app/blocks";
 import { DecryptedFile } from "@/components/app/DecryptedFile";
-import { Callout, CopyIconButton, GroupLabel, SectionLabel, StepStrip } from "@/components/app/dataroom/kit";
+import {
+  Callout,
+  CopyIconButton,
+  DocListSkeleton,
+  GroupLabel,
+  RefreshBar,
+  RoomChipsSkeleton,
+  SectionLabel,
+  StepStrip,
+} from "@/components/app/dataroom/kit";
 import OpenShared from "./OpenShared";
 
 // The Documents page collects every document action under one tab as a submenu, so there is ONE place to open.
@@ -638,7 +647,10 @@ export default function Anchor() {
         <Card id="mine" className="rounded-2xl p-6">
           <div className="mb-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-base font-semibold tracking-tight">My files</h2>
+              <div className="flex items-center">
+                <h2 className="text-base font-semibold tracking-tight">My files</h2>
+                {a.connected && <RefreshBar active={a.roomsRefreshing} />}
+              </div>
               {a.connected && (
                 <div className="relative">
                   <Search
@@ -667,7 +679,7 @@ export default function Anchor() {
               on-chain owner of each room. Your address is a public key, not your name.
             </p>
           ) : a.roomsLoading ? (
-            <p className="text-sm text-muted-foreground">Reading the public record…</p>
+            <RoomChipsSkeleton testId="my-rooms-skeleton" label="Loading the rooms you own" />
           ) : a.myRooms.length === 0 ? (
             <p className="text-sm leading-relaxed text-muted-foreground" data-testid="browse-empty">
               You haven't stored anything yet. Store a document and the room you own shows up here.
@@ -679,8 +691,7 @@ export default function Anchor() {
                   <button
                     key={r.roomId}
                     onClick={() => {
-                      a.setBrowseRoom(r.roomId);
-                      a.refreshDocs(r.roomId);
+                      a.selectBrowseRoom(r.roomId);
                       setDocQuery("");
                     }}
                     data-testid="my-room"
@@ -701,9 +712,13 @@ export default function Anchor() {
               {a.browseRoom && (
                 <div className="space-y-2">
                   <GroupLabel>
-                    Room {short(a.browseRoom, 8)} · {a.docs.length} document{a.docs.length === 1 ? "" : "s"}
+                    Room {short(a.browseRoom, 8)}
+                    {!a.docsLoading && ` · ${a.docs.length} document${a.docs.length === 1 ? "" : "s"}`}
+                    {!a.docsLoading && <RefreshBar active={a.docsRefreshing} />}
                   </GroupLabel>
-                  {a.docs.length === 0 ? (
+                  {a.docsLoading ? (
+                    <DocListSkeleton testId="docs-skeleton" label="Loading documents" />
+                  ) : a.docs.length === 0 ? (
                     <p className="text-sm text-muted-foreground">No documents in this room yet.</p>
                   ) : shownDocs.length === 0 ? (
                     <p className="text-sm text-muted-foreground">No documents match your search.</p>

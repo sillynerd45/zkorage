@@ -56,6 +56,12 @@ export default {
           "0%": { left: "-40%" },
           "100%": { left: "100%" },
         },
+        // A highlight band sweeping left to right across a skeleton placeholder. The overlay translates (not
+        // the parent's background-position) so the band keeps a fixed width on a narrow chip and a wide row
+        // alike, keeping every skeleton on one cadence.
+        shimmer: {
+          "100%": { transform: "translateX(100%)" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down .2s ease-out",
@@ -64,6 +70,9 @@ export default {
         "fade-in": "fade-in .25s ease-out",
         "sync-attn": "sync-attn 2.4s ease-in-out infinite",
         indeterminate: "indeterminate 1.15s ease-in-out infinite",
+        // Slower + softer than the indeterminate bar: skeletons are ambient, the refresh bar is a foreground
+        // "working" signal, so the two loading states read differently.
+        shimmer: "shimmer 1.6s ease-in-out infinite",
       },
     },
   },

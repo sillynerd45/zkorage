@@ -163,6 +163,82 @@ test("dataroom Browse: lists a committee doc and wires the owner-open", async ({
   await expect(page.getByTestId("owner-open-error")).toBeVisible({ timeout: 30_000 });
 });
 
+// Loading + persistence in My files: a room's documents load behind a shimmer skeleton (the documents read is
+// delayed so the skeleton is observable), and a room opened before reopens at once from the in-memory cache
+// (no skeleton, just a background refresh). Two rooms with distinct documents prove the per-room cache.
+const ROOM_B = "ef".repeat(32);
+const DOC_B = "98".repeat(32);
+const twoRoomsMock = () => `
+  ${freighterMock()}
+  window.__freighterMock.signMessage = async () => ({ signedMessage: "${SIG_B64}", signerAddress: "${DEMO_G}" });
+`;
+const committeeDoc = (room: string, doc: string, ledger: number) => ({
+  kind: "committee", index: 0, room_id: room, doc_id: doc, content_hash: "ab".repeat(32),
+  k_commitment: "cd".repeat(32), blob_pointer: "local://x", ledger, timestamp: "0",
+});
+
+test("My files: a room's documents load behind a skeleton, then a re-opened room is instant (cached)", async ({ page }) => {
+  await page.addInitScript(twoRoomsMock());
+  const J = (b: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(b) });
+  await page.route("**/dataroom/committee/info", (r) => r.fulfill(J({ online: 3, n: 3, threshold: 2 })));
+  await page.route("**/dataroom/rooms-vault/**", (r) => r.fulfill(J({ found: false, blob: null })));
+  await page.route("**/dataroom/rooms?owner=**", (r) => r.fulfill(J({ owner: DEMO_G, count: 2, dataroomId: "CID", rooms: [
+    { roomId: ROOM_HEX, label: "Room A", owner: DEMO_G, docCount: 1, committeeDocCount: 1, ledger: 5, visibility: "private", name: null, description: null },
+    { roomId: ROOM_B, label: "Room B", owner: DEMO_G, docCount: 1, committeeDocCount: 1, ledger: 6, visibility: "private", name: null, description: null },
+  ] })));
+  await page.route("**/dataroom/documents/**", async (r) => {
+    const isA = r.request().url().includes(ROOM_HEX);
+    await new Promise((res) => setTimeout(res, 600));
+    return r.fulfill(J({ roomId: isA ? ROOM_HEX : ROOM_B, count: 1, start: 0, limit: 25, dataroomId: "CID",
+      documents: [committeeDoc(isA ? ROOM_HEX : ROOM_B, isA ? DOC_HEX : DOC_B, isA ? 5 : 6)] }));
+  });
+
+  await page.goto("/app/dataroom/documents#mine");
+  // Room A: the doc-list skeleton shows while it loads, then A's document.
+  await page.getByTestId("my-room").nth(0).click({ timeout: 30_000 });
+  await expect(page.getByTestId("docs-skeleton")).toBeVisible();
+  await expect(page.locator(`[title="${DOC_HEX}"]`)).toBeVisible({ timeout: 15_000 });
+
+  // Room B: another cold load (its own skeleton), then B's document.
+  await page.getByTestId("my-room").nth(1).click();
+  await expect(page.getByTestId("docs-skeleton")).toBeVisible();
+  await expect(page.locator(`[title="${DOC_B}"]`)).toBeVisible({ timeout: 15_000 });
+
+  // Back to Room A: its documents are cached, so they reopen at once with NO skeleton (a background refresh
+  // runs silently). This is the fix for "going back to a room makes me wait for it to reload".
+  await page.getByTestId("my-room").nth(0).click();
+  await expect(page.locator(`[title="${DOC_HEX}"]`)).toBeVisible();
+  await expect(page.getByTestId("docs-skeleton")).toHaveCount(0);
+});
+
+test("My files: the selected room and its documents persist across a tab switch", async ({ page }) => {
+  await page.addInitScript(twoRoomsMock());
+  const J = (b: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(b) });
+  await page.route("**/dataroom/committee/info", (r) => r.fulfill(J({ online: 3, n: 3, threshold: 2 })));
+  await page.route("**/dataroom/rooms-vault/**", (r) => r.fulfill(J({ found: false, blob: null })));
+  await page.route("**/dataroom/rooms?owner=**", (r) => r.fulfill(J({ owner: DEMO_G, count: 1, dataroomId: "CID", rooms: [
+    { roomId: ROOM_HEX, label: "Room A", owner: DEMO_G, docCount: 1, committeeDocCount: 1, ledger: 5, visibility: "private", name: null, description: null },
+  ] })));
+  await page.route("**/dataroom/documents/**", async (r) => {
+    await new Promise((res) => setTimeout(res, 600));
+    return r.fulfill(J({ roomId: ROOM_HEX, count: 1, start: 0, limit: 25, dataroomId: "CID", documents: [committeeDoc(ROOM_HEX, DOC_HEX, 5)] }));
+  });
+
+  await page.goto("/app/dataroom/documents#mine");
+  await page.getByTestId("my-room").first().click({ timeout: 30_000 });
+  await expect(page.locator(`[title="${DOC_HEX}"]`)).toBeVisible({ timeout: 15_000 });
+
+  // Leave Documents (client-side nav) then return to My files: the selection + its documents repaint at once
+  // from cache, with no skeleton.
+  await page.getByRole("link", { name: "Overview", exact: true }).first().click();
+  await expect(page.getByTestId("dataroom-overview")).toBeVisible();
+  await page.getByRole("link", { name: "Documents", exact: true }).first().click();
+  await page.getByTestId("doc-subtab-mine").click();
+  await expect(page.locator(`[title="${DOC_HEX}"]`)).toBeVisible();
+  await expect(page.getByTestId("docs-skeleton")).toHaveCount(0);
+  await expect(page.getByTestId("my-room").first()).toHaveAttribute("aria-pressed", "true");
+});
+
 test("dataroom overview: task-oriented cards route to the right place; guided-demo tab removed", async ({ page }) => {
   await page.goto("/app/dataroom");
   // the landing is a featured "Store a document" hero card + an "All tasks" grid (no duplicate "what do you

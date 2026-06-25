@@ -12,6 +12,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Skeleton } from "@/components/ui/skeleton";
 import type { CommitteeInfoResp } from "@/lib/api";
 
 // Data-Room UI kit. These molecules drive the Data Room pages, plus TaskCard + GroupLabel are reused by the
@@ -298,6 +299,83 @@ export function BondCount({ count, className }: { count: number | null; classNam
       <span className="text-muted-foreground">
         {enough ? "enough to prove anonymously" : `below the floor of ${BOND_FLOOR}`}
       </span>
+    </span>
+  );
+}
+
+// ── Loading skeletons (shimmer placeholders) ─────────────────────────────────────────────────────────────
+// Shown on the COLD path (no cached data yet). Each mirrors the real element's box so the swap to real
+// content does not shift layout. The thin RefreshBar below instead marks a background refresh of already
+// painted (cached) content. Both are reduced-motion safe via the underlying Skeleton / motion-safe: classes.
+
+// A grid of placeholder room chips, matching the real `rounded-xl border px-3.5 py-2` chip (a name line + a
+// muted sub-line). Five chips fill a row or two without implying an exact count. Used by My files and Room
+// Management while the owner's rooms load. Widths vary so it does not look like a striped pattern.
+const CHIP_SKELETON_W = [
+  ["w-28", "w-20"],
+  ["w-24", "w-16"],
+  ["w-32", "w-24"],
+  ["w-24", "w-16"],
+  ["w-28", "w-20"],
+] as const;
+export function RoomChipsSkeleton({ label = "Loading rooms", testId }: { label?: string; testId?: string }) {
+  return (
+    <div className="flex flex-wrap gap-2" aria-busy="true" data-testid={testId}>
+      <span className="sr-only" role="status">{label}</span>
+      {CHIP_SKELETON_W.map(([name, sub], i) => (
+        <div key={`chip-${i}`} className="rounded-xl border border-border/70 bg-muted/40 px-3.5 py-2">
+          <Skeleton className={cn("h-3.5 rounded", name)} />
+          <Skeleton className={cn("mt-1.5 h-3 rounded", sub)} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// A placeholder document list, matching the real `divide-y rounded-xl border` row (a square icon tile, two
+// text lines, an "Encrypted" pill). Three rows read as "a short list is loading"; the real count corrects on
+// swap. Used by My files while a room's documents load.
+const DOC_SKELETON_W = [
+  ["w-40", "w-56"],
+  ["w-36", "w-48"],
+  ["w-44", "w-52"],
+] as const;
+export function DocListSkeleton({ label = "Loading documents", testId }: { label?: string; testId?: string }) {
+  return (
+    <div className="divide-y divide-border/70 rounded-xl border" aria-busy="true" data-testid={testId}>
+      <span className="sr-only" role="status">{label}</span>
+      {DOC_SKELETON_W.map(([id, sub], i) => (
+        <div key={`doc-${i}`} className="flex items-center gap-3 px-3 py-2.5">
+          <Skeleton className="size-9 shrink-0 rounded-lg" />
+          <div className="min-w-0 flex-1">
+            <Skeleton className={cn("h-3.5 rounded", id)} />
+            <Skeleton className={cn("mt-1.5 h-3 rounded", sub)} />
+          </div>
+          <Skeleton className="h-5 w-20 shrink-0 rounded-full" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// A thin indeterminate sweep shown beside a section label while a BACKGROUND refresh of already-painted
+// (cached) content runs. The content stays live and interactive; this bar is the only signal that a refresh
+// is in flight, never a dim or overlay. The track always renders (so the label row does not jump); only the
+// inner sweep toggles with `active`. Decorative (aria-hidden); skeletons cover the cold path, this the warm.
+export function RefreshBar({ active }: { active: boolean }) {
+  return (
+    <span
+      className="relative ml-2 inline-block h-0.5 w-16 overflow-hidden rounded-full bg-muted align-middle"
+      aria-hidden="true"
+      data-testid="refresh-bar"
+      data-active={String(active)}
+    >
+      <span
+        className={cn(
+          "absolute inset-y-0 w-2/5 rounded-full bg-brand",
+          active ? "motion-safe:animate-indeterminate" : "opacity-0",
+        )}
+      />
     </span>
   );
 }
