@@ -194,6 +194,22 @@ function stubBond(page: import("@playwright/test").Page) {
   );
 }
 
+test("tier: editing the requirement shows the anonymity-set checking indicator", async ({ page }) => {
+  await page.addInitScript(mock(DEPLOYER));
+  await stubHorizon(page);
+  stubBond(page);
+  await page.goto("/app/bonded/tier");
+  await expect(page.getByTestId("tier-amount")).toBeVisible({ timeout: 30_000 });
+  // Let the initial set settle (the indicator clears once the first read lands).
+  await expect(page.getByTestId("tier-anonset-loading")).toHaveCount(0, { timeout: 30_000 });
+  // Editing the amount flips the line to the checking indicator immediately (before the debounced read).
+  await page.getByTestId("tier-amount").fill("777");
+  await expect(page.getByTestId("tier-anonset-loading")).toBeVisible();
+  // Then it resolves back to the count.
+  await expect(page.getByTestId("tier-anonset-loading")).toHaveCount(0, { timeout: 30_000 });
+  await expect(page.getByTestId("tier-anonset")).toContainText("in this set");
+});
+
 test("tier: load a bond you already hold, and the already-held detection", async ({ page }) => {
   const errs: string[] = [];
   page.on("console", (m) => {
@@ -233,14 +249,10 @@ test("tier: load a bond you already hold, and the already-held detection", async
   expect(errs, errs.join("\n")).toHaveLength(0);
 });
 
-test("tier: a granted requirement disables Prove and shows up in Your access", async ({ page }) => {
+test("tier: a granted requirement disables Prove with the already-have-access state", async ({ page }) => {
   const ACCESSOR = "04".repeat(32);
   const REQ = "cd".repeat(32);
   await page.addInitScript(mock(DEPLOYER));
-  // Seed a local grant record for this handle (the chain carries no token/amount label, so the list reads it
-  // from here). Keyed by the accessor the enroll stub mints.
-  const seed = JSON.stringify([{ reqId: REQ, tokenSymbol: "TUSD", minAmount: "25000000000", decimals: 7, deadline: LOCK_UNLOCK }]);
-  await page.addInitScript(`localStorage.setItem(${JSON.stringify(`zkorage-bond-grants.${ACCESSOR}`)}, ${JSON.stringify(seed)});`);
   await stubHorizon(page);
   stubBond(page);
   // Override the status read to GRANTED (registered after stubBond, so it wins).
@@ -266,24 +278,30 @@ test("tier: a granted requirement disables Prove and shows up in Your access", a
   await expect(prove).toBeDisabled({ timeout: 15_000 });
   await expect(prove).toContainText("You already have access");
   await expect(page.getByTestId("tier-granted-help")).toBeVisible();
+});
 
-  // The access list shows the live-checked, currently-loaded grant.
-  await expect(page.getByTestId("tier-access")).toBeVisible();
-  const row = page.getByTestId("tier-access-row");
-  await expect(row).toHaveCount(1);
-  await expect(row).toContainText("2,500 TUSD");
-  await expect(row).toContainText("active until");
-  await expect(row).toContainText("2030");
-  await expect(row).toContainText("loaded");
+test("tier: clicking Prove starts a background proof and shows in-progress (persists across reload)", async ({ page }) => {
+  await page.addInitScript(mock(DEPLOYER));
+  await stubHorizon(page);
+  stubBond(page); // qual-set anonSetSize 3 (at the floor), status is_granted false
+  // The background prove returns a jobId; the backend finishes it, so the client does not poll/submit.
+  await page.route("**/bonded/bond/prove", (route) =>
+    route.fulfill({ json: { jobId: "job-1", reqId: "cd".repeat(32), background: true } }),
+  );
 
-  // The active grant is shareable: the copied link points at the public /verify/bond page.
-  await expect(page.getByTestId("tier-access-share-note")).toBeVisible();
-  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
-  await page.getByTestId("tier-access-share").click();
-  const copied = await page.evaluate(() => navigator.clipboard.readText());
-  expect(copied).toContain(`/verify/bond?accessor=${ACCESSOR}`);
-  expect(copied).toContain(`req=${REQ}`);
-  await expect(page.getByTestId("tier-access-share")).toContainText("Copied");
+  await page.goto("/app/bonded/tier");
+  await page.getByTestId("tier-create-identity").click();
+  await expect(page.getByTestId("tier-identity")).toBeVisible({ timeout: 15_000 });
+  const prove = page.getByTestId("tier-prove");
+  await expect(prove).toBeEnabled({ timeout: 30_000 });
+  await prove.click();
+  // The button flips to in-progress + the reassurance copy says you can leave; no "keep this tab open".
+  await expect(prove).toContainText("Proof in progress", { timeout: 15_000 });
+  await expect(prove).toBeDisabled();
+  await expect(page.getByTestId("tier-prove-inflight")).toContainText("You can close this tab");
+  // It persists across a reload (the pending marker is in localStorage).
+  await page.reload();
+  await expect(page.getByTestId("tier-prove")).toContainText("Proof in progress", { timeout: 15_000 });
 });
 
 test("tier: switching wallets in Freighter drops the previous wallet's handle", async ({ page }) => {
@@ -344,6 +362,4 @@ test("tier: the handle backs up to the wallet and restores on another device", a
   await expect(page.getByTestId("tier-identity")).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId("tier-identity")).toContainText(handle);
   await expect(page.getByTestId("tier-sync")).toContainText("Backed up to your wallet", { timeout: 15_000 });
-  // Restoring the handle also pulls the access list, so its sync hint reports it follows the wallet.
-  await expect(page.getByTestId("tier-access-sync")).toContainText("follows you to other devices", { timeout: 15_000 });
 });

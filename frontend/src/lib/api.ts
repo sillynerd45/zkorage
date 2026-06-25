@@ -1348,8 +1348,9 @@ export const proveBond = (body: {
   token: string;
   minAmount: string;
   deadline: number;
+  background?: boolean; // when true, the backend finishes (poll + submit) so the caller can leave
 }) =>
-  post<{ jobId?: string; roomId?: string; reqId?: string; memberRoot?: string; qualRoot?: string; nullifier?: string; accessor?: string; anonSetSize?: number; error?: string }>(
+  post<{ jobId?: string; roomId?: string; reqId?: string; memberRoot?: string; qualRoot?: string; nullifier?: string; accessor?: string; anonSetSize?: number; background?: boolean; error?: string }>(
     "/bonded/bond/prove",
     {
       roomId: body.roomId,
@@ -1359,6 +1360,7 @@ export const proveBond = (body: {
       token: body.token,
       min_amount: body.minAmount,
       deadline: body.deadline,
+      background: body.background ?? false,
     },
   );
 

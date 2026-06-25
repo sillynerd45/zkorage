@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Wallet, ShieldCheck, Loader2, AlertTriangle, RefreshCw, UserPlus, Lock, Users, CalendarClock, Link2, Check } from "lucide-react";
+import { Wallet, ShieldCheck, Loader2, AlertTriangle, RefreshCw, UserPlus, Lock, Users, CalendarClock } from "lucide-react";
 import { useBonded } from "@/lib/hooks/useBonded";
 import { useWallet } from "@/lib/wallet/WalletContext";
 import { Panel, DataRow } from "@/components/app/blocks";
@@ -12,43 +12,34 @@ import {
   enrollBond,
   getBondQualSet,
   proveBond,
-  submitBond,
   getBondStatus,
-  getProveStatus,
   getBondHandleVault,
   putBondHandleVault,
-  getBondGrantsVault,
-  putBondGrantsVault,
   fmtAmount,
   toBaseUnits,
   type BondInfo,
   type BondIdentity,
   type BondQualSet,
   type BondStatus,
-  type Bundle,
   type LockView,
 } from "@/lib/api";
 import { loadWalletTokens, plainAmount, type TokenOption } from "@/lib/bonded/tokens";
-import { readBondGrants, recordBondGrant, type BondGrantRecord } from "@/lib/bonded/grants";
-import { encryptBondGrants, decryptBondGrants, deriveBondGrantsVaultId } from "@/lib/bonded/grantsVault";
-import { encryptBondHandle, decryptBondHandle, deriveBondHandleVaultId, BOND_HANDLE_VAULT_MESSAGE, type BondHandle } from "@/lib/bonded/handleVault";
+import { recordBondGrant } from "@/lib/bonded/grants";
+import { readPending, addPending, removePending, type BondPending } from "@/lib/bonded/pending";
+import { pushGrantsVault, pullGrantsVault } from "@/lib/bonded/grantsSync";
+import { idKey, loadIdentityAt, getBondSig, hasBondSig } from "@/lib/bonded/handle";
+import { encryptBondHandle, decryptBondHandle, deriveBondHandleVaultId, type BondHandle } from "@/lib/bonded/handleVault";
 import { short } from "@/lib/format";
 import { cn } from "@/lib/utils";
-
-// One-signature-per-session cache for the bond-handle vault key (the wallet signature is the HKDF input). Held
-// only in memory, never persisted, so a page reload re-prompts once.
-const bondSigCache = new Map<string, Uint8Array>();
 
 // A standalone Bonded Access tier is one requirement: a token, a minimum amount, and a deadline. Anyone who
 // locks a non-revocable bond that meets it joins the same anonymity set, so the more people who bond the same
 // requirement, the stronger the set. The default below gives newcomers one shared requirement to converge on.
 const DEFAULT_DEADLINE_UNIX = 1_800_000_000; // ~2027-01-15
 const DEFAULT_AMOUNT = "100";
-// The anonymous handle is stored PER WALLET, so switching accounts in Freighter never shows the previous
-// wallet's handle. An older build used a single global slot (no address suffix); it is migrated to the
-// per-wallet slot for the first wallet that connects (see the wallet-change effect).
-const IDENTITY_BASE = "zkorage-bond-identity";
-const idKey = (addr?: string | null): string => (addr ? `${IDENTITY_BASE}.${addr}` : IDENTITY_BASE);
+// How long a background proof can be in flight before the page offers a retry (the prover can queue; the
+// is_granted poll still flips to granted whenever it actually lands, so this only governs the retry prompt).
+const PROVE_STALE_MS = 20 * 60_000;
 
 type Phase = "idle" | "proving" | "submitting" | "done" | "error";
 
@@ -86,15 +77,6 @@ const fmtShortDate = (unix: number): string =>
 const normCommit = (h: string): string => h.toLowerCase().replace(/^0x/, "");
 const isZeroCommit = (h: string): boolean => /^0*$/.test(normCommit(h));
 
-function loadIdentityAt(addr?: string | null): BondIdentity | null {
-  try {
-    const raw = localStorage.getItem(idKey(addr));
-    return raw ? (JSON.parse(raw) as BondIdentity) : null;
-  } catch {
-    return null;
-  }
-}
-
 export default function BondedTier() {
   const b = useBonded();
   const [info, setInfo] = useState<BondInfo | null>(null);
@@ -109,20 +91,15 @@ export default function BondedTier() {
   const deadlineRef = useRef<HTMLInputElement>(null);
 
   const [qual, setQual] = useState<BondQualSet | null>(null);
+  const [qualLoading, setQualLoading] = useState(false);
   const [status, setStatus] = useState<BondStatus | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
   const [msg, setMsg] = useState("");
   const { signMessage } = useWallet();
   const [sync, setSync] = useState<"idle" | "syncing" | "synced" | "error">("idle");
   const [syncMsg, setSyncMsg] = useState("");
-  // The handle's bonded-access grants, recorded locally per accessor (the on-chain grant carries no token /
-  // amount label) and live-checked on-chain. `active` is null while the check is in flight.
-  const [grantRows, setGrantRows] = useState<{ rec: BondGrantRecord; active: boolean | null }[]>([]);
-  // Backup state for the "Your access" list vault (its own, so the hint never claims "synced" when only the
-  // handle made it). It rides the handle's signature, so it never prompts on its own.
-  const [accessSync, setAccessSync] = useState<"idle" | "syncing" | "synced" | "error">("idle");
-  // The req_id whose share link was just copied (for the brief "Copied" feedback on that row).
-  const [copiedReq, setCopiedReq] = useState<string | null>(null);
+  // Background proofs started for this handle that have not landed on-chain yet (so the user can leave).
+  const [pending, setPending] = useState<BondPending[]>([]);
   const alive = useRef(true);
   // Bumped whenever the requirement changes, so a read started for an OLD requirement that resolves late is
   // ignored (it would otherwise re-show a stale anon-set / grant for a different requirement).
@@ -179,15 +156,6 @@ export default function BondedTier() {
     void reloadTokens();
   }, [reloadTokens]);
 
-  // When the requirement changes, drop the previous set + decision so the UI fails closed (gated, no grant)
-  // until the fresh reads for the new requirement land. Without this, a grant or anon-set from a DIFFERENT
-  // requirement could linger and mislead (e.g. an "Access granted" badge after switching tokens).
-  useEffect(() => {
-    reqSeq.current++;
-    setQual(null);
-    setStatus(null);
-  }, [tokenKey, amount, deadlineAt]);
-
   // The live qualifying set for the current requirement (anonymity-set size + the derived req_id).
   const refreshQual = useCallback(async () => {
     if (!selected || !minAmountBase || !Number.isFinite(deadlineUnix) || deadlineUnix <= 0) {
@@ -202,10 +170,28 @@ export default function BondedTier() {
       /* transient read error; keep the last known set */
     }
   }, [selected, minAmountBase, deadlineUnix]);
+
+  // On a requirement change (refreshQual is rebuilt when the token/amount/deadline change), drop the stale set
+  // + decision so the UI fails closed, show a "checking" state, then read after a ~450ms debounce so typing an
+  // amount does not fire a read per keystroke. A background interval re-polls quietly while the page is open.
   useEffect(() => {
-    void refreshQual();
+    reqSeq.current++;
+    setQual(null);
+    setStatus(null);
+    const checkable = Boolean(selected && minAmountBase && deadlineUnix > 0);
+    setQualLoading(checkable);
+    const seq = reqSeq.current;
+    const t = checkable
+      ? setTimeout(async () => {
+          await refreshQual();
+          if (alive.current && seq === reqSeq.current) setQualLoading(false);
+        }, 450)
+      : undefined;
     const iv = setInterval(() => void refreshQual(), 8000);
-    return () => clearInterval(iv);
+    return () => {
+      if (t) clearTimeout(t);
+      clearInterval(iv);
+    };
   }, [refreshQual]);
 
   // The live decision for this handle on the current requirement.
@@ -229,35 +215,6 @@ export default function BondedTier() {
     return () => clearInterval(iv);
   }, [refreshStatus]);
 
-  // The handle's recorded grants, each live-checked on-chain (is_granted folds in the deadline, so it is the
-  // authoritative "still active" signal; a network gap falls back to the recorded deadline).
-  const refreshGrants = useCallback(async () => {
-    const acc = identity?.accessor;
-    if (!acc) {
-      setGrantRows([]);
-      return;
-    }
-    const recs = readBondGrants(acc);
-    // This interim set is for the accessor of the current render (the callback is rebuilt per accessor), so it
-    // is correct without an extra guard; only the post-await set below needs the stale-accessor check.
-    setGrantRows(recs.map((rec) => ({ rec, active: null })));
-    const now = Math.floor(Date.now() / 1000);
-    const rows = await Promise.all(
-      recs.map(async (rec) => {
-        try {
-          const s = await getBondStatus(acc, rec.reqId);
-          return { rec, active: Boolean(s.is_granted) };
-        } catch {
-          return { rec, active: now < rec.deadline };
-        }
-      }),
-    );
-    if (alive.current && identity?.accessor === acc) setGrantRows(rows);
-  }, [identity?.accessor]);
-  useEffect(() => {
-    void refreshGrants();
-  }, [refreshGrants]);
-
   const minSet = qual?.minAnonSet ?? info?.minAnonSet ?? 3;
   const anonSize = qual?.anonSetSize ?? 0;
   const belowMin = anonSize < minSet;
@@ -265,6 +222,13 @@ export default function BondedTier() {
   const hasIdentity = Boolean(identity?.accessor);
   const busyFlow = phase === "proving" || phase === "submitting";
   const expired = deadlineUnix > 0 && Date.now() >= deadlineUnix * 1000;
+
+  // A background proof for the CURRENT requirement that has not landed yet: "in flight" until the stale window,
+  // then "stale" (offer a retry). `granted` and a passed deadline both supersede it.
+  const reqIdLc = reqId ? reqId.toLowerCase() : null;
+  const curPending = reqIdLc ? pending.find((p) => p.reqId === reqIdLc) ?? null : null;
+  const proveStale = !!curPending && !granted && !expired && Date.now() - curPending.startedAt >= PROVE_STALE_MS;
+  const proveInFlight = !!curPending && !granted && !expired && !proveStale;
 
   // The wallet's own bonds that can serve as a qualifying bond for some requirement: still locked,
   // non-revocable, with a real (non-zero) commitment. These are the bonds you can load to check their set.
@@ -302,85 +266,6 @@ export default function BondedTier() {
   // it as selected; empty when the requirement has been edited away from every held bond.
   const loadedBondId = String(myBonds.find((l) => bondReqEq(l))?.id ?? "");
 
-  // "Your access": active (or still-checking) grants first, lapsed ones grouped below.
-  const accessActive = grantRows.filter((r) => r.active !== false);
-  const accessExpired = grantRows.filter((r) => r.active === false);
-  const hasShareable = accessActive.some((r) => r.active === true) && Boolean(identity?.accessor);
-
-  // A verification link for a grant: the public /verify/bond page live-reads is_granted from the gate. It
-  // carries the anonymous handle id + the public requirement, never the wallet.
-  const shareLink = (rec: BondGrantRecord): string => {
-    const u = new URL("/verify/bond", window.location.origin);
-    u.searchParams.set("accessor", identity?.accessor ?? "");
-    u.searchParams.set("req", rec.reqId);
-    if (rec.tokenSymbol) u.searchParams.set("symbol", rec.tokenSymbol);
-    u.searchParams.set("amount", rec.minAmount);
-    u.searchParams.set("decimals", String(rec.decimals));
-    u.searchParams.set("deadline", String(rec.deadline));
-    return u.toString();
-  };
-  const shareGrant = async (rec: BondGrantRecord) => {
-    try {
-      await navigator.clipboard.writeText(shareLink(rec));
-      setCopiedReq(rec.reqId);
-      setTimeout(() => {
-        if (alive.current) setCopiedReq((c) => (c === rec.reqId ? null : c));
-      }, 1500);
-    } catch {
-      /* clipboard blocked; nothing to do */
-    }
-  };
-
-  const renderAccessRow = ({ rec, active }: { rec: BondGrantRecord; active: boolean | null }) => {
-    const isLoaded = !!reqId && rec.reqId === reqId.toLowerCase();
-    return (
-      <div
-        key={rec.reqId}
-        data-testid="tier-access-row"
-        className={cn(
-          "flex items-center justify-between gap-4 border-b border-border/70 py-2.5 last:border-0",
-          isLoaded && "-mx-2 rounded-md bg-brand/5 px-2",
-        )}
-      >
-        <span className="text-[13px]">
-          <span className="font-medium tabular-nums">{fmtAmount(rec.minAmount, rec.decimals)}</span> {rec.tokenSymbol}
-          {isLoaded && <span className="ml-2 text-[11px] text-brand">loaded</span>}
-        </span>
-        <span className="flex items-center gap-2 text-[12px]">
-          {active === null ? (
-            <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-              <Loader2 className="size-3.5 animate-spin" /> checking
-            </span>
-          ) : active ? (
-            <span className="text-success">active until {fmtShortDate(rec.deadline)}</span>
-          ) : Math.floor(Date.now() / 1000) >= rec.deadline ? (
-            <span className="text-muted-foreground">expired {fmtShortDate(rec.deadline)}</span>
-          ) : (
-            // is_granted is false but the deadline has not passed: the chain has no live grant for it.
-            <span className="text-muted-foreground">not active</span>
-          )}
-          {active === true && identity?.accessor && (
-            copiedReq === rec.reqId ? (
-              <span className="inline-flex items-center gap-1 text-[11px] text-success" data-testid="tier-access-share">
-                <Check className="size-3.5" /> Copied
-              </span>
-            ) : (
-              <button
-                type="button"
-                onClick={() => void shareGrant(rec)}
-                aria-label="Copy a verification link for this grant"
-                data-testid="tier-access-share"
-                className="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              >
-                <Link2 className="size-3.5" />
-              </button>
-            )
-          )}
-        </span>
-      </div>
-    );
-  };
-
   // A bond the wallet holds that satisfies the CURRENT requirement AND is tagged with the current handle, so
   // it is provable now. This mirrors the prover's qualifying check (token + amount >= min + unlock >= deadline
   // + non-revocable + still locked + commitment == this handle's qual tag), so we only claim "already held"
@@ -412,50 +297,53 @@ export default function BondedTier() {
     }
   };
 
-  // The wallet signature that keys the handle vault (one prompt per session, cached, never persisted).
-  const getBondSig = useCallback(async (): Promise<Uint8Array> => {
-    const addr = b.address;
-    if (!addr) throw new Error("Connect your wallet first.");
-    let sig = bondSigCache.get(addr);
-    if (!sig) {
-      sig = await signMessage(BOND_HANDLE_VAULT_MESSAGE);
-      bondSigCache.set(addr, sig);
-    }
-    return sig;
-  }, [b.address, signMessage]);
-
-  // Back up the "Your access" list to its own wallet vault (encrypted, opaque), so the list follows the wallet.
-  // Best-effort and silent (rides the cached handle signature, so it never prompts on its own).
+  // Back up the "Your access" list to its wallet vault so it follows the wallet (the "Your access" tab reads
+  // it). Best-effort and silent: it rides the cached handle signature, so it never prompts on its own.
   const backupGrants = useCallback(async (accessorOverride?: string) => {
     const acc = accessorOverride ?? identity?.accessor;
     if (!b.connected || !acc) return;
-    setAccessSync("syncing");
     try {
-      const sig = await getBondSig();
-      const blob = await encryptBondGrants(sig, readBondGrants(acc));
-      await putBondGrantsVault(await deriveBondGrantsVaultId(sig), blob);
-      if (alive.current) setAccessSync("synced");
+      await pushGrantsVault(await getBondSig(b.address, signMessage), acc);
     } catch {
-      if (alive.current) setAccessSync("error");
+      /* best-effort; the local list is intact regardless */
     }
-  }, [b.connected, identity?.accessor, getBondSig]);
+  }, [b.connected, identity?.accessor, b.address, signMessage]);
 
-  // Pull the access list saved by THIS wallet and merge it into the local records under `accessor` (the records
-  // belong to that handle). Takes the signature + accessor explicitly so it can run during a handle restore,
-  // before the identity state has updated. The accessor-change effect then refreshes the live view.
-  const restoreGrants = useCallback(async (sig: Uint8Array, accessor: string) => {
-    setAccessSync("syncing");
-    try {
-      const res = await getBondGrantsVault(await deriveBondGrantsVaultId(sig));
-      if (res.found && res.blob) {
-        const recs = await decryptBondGrants(sig, res.blob);
-        for (const r of recs) recordBondGrant(accessor, r);
-      }
-      if (alive.current) setAccessSync("synced");
-    } catch {
-      if (alive.current) setAccessSync("error");
+  // Poll the on-chain status of each background proof still in flight for this handle. When one lands
+  // (is_granted), record it into "Your access", drop it from pending, and push the updated list to the wallet.
+  // A failed or queued proof simply stays pending until it lands or the page surfaces a retry after the window.
+  const refreshPending = useCallback(async () => {
+    const acc = identity?.accessor;
+    if (!acc) {
+      setPending([]);
+      return;
     }
-  }, []);
+    const list = readPending(acc);
+    setPending(list);
+    if (list.length === 0) return;
+    let changed = false;
+    for (const p of list) {
+      try {
+        const s = await getBondStatus(acc, p.reqId);
+        if (s.is_granted) {
+          recordBondGrant(acc, { reqId: p.reqId, tokenSymbol: p.tokenSymbol, minAmount: p.minAmount, decimals: p.decimals, deadline: p.deadline });
+          removePending(acc, p.reqId);
+          changed = true;
+        }
+      } catch {
+        /* keep it pending; retry on the next poll */
+      }
+    }
+    if (changed && alive.current && identity?.accessor === acc) {
+      setPending(readPending(acc));
+      void backupGrants(); // push the updated list to the wallet vault for the "Your access" tab
+    }
+  }, [identity?.accessor, backupGrants]);
+  useEffect(() => {
+    void refreshPending();
+    const iv = setInterval(() => void refreshPending(), 6000);
+    return () => clearInterval(iv);
+  }, [refreshPending]);
 
   // Encrypt the handle under the wallet signature and store the opaque blob in the vault, so it follows the
   // wallet to other devices. Non-fatal: a decline or error leaves the local handle usable; the user can retry.
@@ -464,7 +352,7 @@ export default function BondedTier() {
     setSync("syncing");
     setSyncMsg("");
     try {
-      const sig = await getBondSig();
+      const sig = await getBondSig(b.address, signMessage);
       const blob = await encryptBondHandle(sig, h);
       await putBondHandleVault(await deriveBondHandleVaultId(sig), blob);
       if (alive.current) setSync("synced");
@@ -474,7 +362,7 @@ export default function BondedTier() {
         setSyncMsg((e as Error)?.message ?? "could not back up the handle");
       }
     }
-  }, [getBondSig]);
+  }, [b.address, signMessage]);
 
   // Restore a handle saved by THIS wallet on another device: sign, derive the vault id, pull + decrypt.
   // `userInitiated` is false for the silent auto-restore, so a returning user is not shown an unsolicited hint.
@@ -482,7 +370,7 @@ export default function BondedTier() {
     setSync("syncing");
     setSyncMsg("");
     try {
-      const sig = await getBondSig();
+      const sig = await getBondSig(b.address, signMessage);
       const res = await getBondHandleVault(await deriveBondHandleVaultId(sig));
       if (!res.found || !res.blob) {
         if (alive.current) {
@@ -493,8 +381,8 @@ export default function BondedTier() {
       }
       const h = await decryptBondHandle(sig, res.blob);
       localStorage.setItem(idKey(b.address), JSON.stringify(h));
-      // Pull the access list for this handle too, so it lands before the accessor-change refresh runs.
-      await restoreGrants(sig, h.accessor);
+      // Pull the access list for this handle too, so the "Your access" tab has it on a fresh device.
+      await pullGrantsVault(sig, h.accessor).catch(() => {});
       if (alive.current) {
         setIdentity(h);
         setSync("synced");
@@ -505,11 +393,11 @@ export default function BondedTier() {
         setSyncMsg((e as Error)?.message ?? "could not restore the handle");
       }
     }
-  }, [getBondSig, b.address, restoreGrants]);
+  }, [b.address, signMessage]);
 
   // No local handle but the wallet already signed this session: restore silently (no extra prompt, no hint).
   useEffect(() => {
-    if (!b.connected || identity || !b.address || !bondSigCache.has(b.address)) return;
+    if (!b.connected || identity || !b.address || !hasBondSig(b.address)) return;
     void restoreHandle(false);
   }, [b.connected, b.address, identity, restoreHandle]);
 
@@ -563,9 +451,8 @@ export default function BondedTier() {
       return;
     }
     setPhase("proving");
-    setMsg("Building the proof on the self-hosted prover. This is usually a few seconds.");
-    // Capture the requirement being proven (the user may edit the form while proving runs).
-    const provedDeadlineAt = deadlineAt;
+    setMsg("Sending the proof to the prover…");
+    // Capture the requirement being proven (the user may edit the form while it runs).
     const provedToken = selected;
     const provedMin = minAmountBase;
     const provedDeadline = deadlineUnix;
@@ -579,44 +466,29 @@ export default function BondedTier() {
         token: selected.contractId,
         minAmount: minAmountBase,
         deadline: deadlineUnix,
+        background: true, // the backend finishes (poll + submit), so the user can leave this page
       });
       if (!jobId) throw new Error(error || "could not start proving");
-      let bundle: Bundle | undefined;
-      // Poll generously: the GPU worker is ~seconds, the VM CPU fallback can take minutes. ~15 min covers it.
-      for (let i = 0; i < 225 && alive.current; i++) {
-        await new Promise((r) => setTimeout(r, 4000));
-        const st = await getProveStatus(jobId);
-        if (st.status === "done" && st.bundle) {
-          bundle = st.bundle;
-          break;
-        }
-        if (st.status === "error") throw new Error(st.error || "proving failed");
-      }
-      if (!alive.current) return;
-      if (!bundle) throw new Error("still proving on the fallback prover. Leave this tab open and re-check in a minute");
-      setPhase("submitting");
-      setMsg("Proof ready. Recording the anonymous grant.");
-      const r = await submitBond(bundle);
-      if (!r.ok) throw new Error(r.error || "the gate rejected the proof");
-      setPhase("done");
-      setMsg(`Access granted to your anonymous handle, valid until ${fmtDeadline(provedDeadlineAt)}. The record does not say which wallet or how much.`);
-      // Record the grant locally (the chain stores no token / amount label) so it shows in "Your access".
+      // Track it as in flight so the page shows progress (even across a reload) and records the grant when it
+      // lands. The backend does the wait + submit; the is_granted poll (refreshPending/refreshStatus) detects it.
       if (provedReqId) {
-        recordBondGrant(provedAccessor, {
+        addPending(provedAccessor, {
           reqId: provedReqId,
+          startedAt: Date.now(),
+          deadline: provedDeadline,
           tokenSymbol: provedToken.symbol,
           minAmount: provedMin,
           decimals: provedToken.decimals,
-          deadline: provedDeadline,
         });
+        if (alive.current) setPending(readPending(provedAccessor));
       }
-      await refreshStatus();
-      void refreshGrants();
-      void backupGrants(); // push the updated list to the wallet vault (best-effort)
+      if (!alive.current) return;
+      setPhase("done");
+      setMsg("Proof started. It runs on our prover and records on its own. You can leave this page; it shows up in the Your access tab when it is ready.");
     } catch (e) {
       if (!alive.current) return;
       setPhase("error");
-      setMsg((e as Error)?.message ?? "something went wrong");
+      setMsg((e as Error)?.message ?? "could not start proving");
     }
   };
 
@@ -877,12 +749,23 @@ export default function BondedTier() {
           </Button>
         }
       >
-        <div className="flex items-center gap-2 text-[14px]" data-testid="tier-anonset">
-          <Users className="size-4 text-muted-foreground" />
-          <span className="font-semibold">{anonSize}</span>
-          <span className="text-muted-foreground">bond{anonSize === 1 ? "" : "s"} in this set (need at least {minSet})</span>
+        <div className="flex min-h-[1.5rem] items-center" data-testid="tier-anonset">
+          {qualLoading ? (
+            <div className="flex items-center gap-2" data-testid="tier-anonset-loading">
+              <div className="relative h-0.5 w-28 overflow-hidden rounded-full bg-muted">
+                <div className="absolute inset-y-0 w-2/5 rounded-full bg-brand motion-safe:animate-indeterminate" />
+              </div>
+              <span className="text-[13px] text-muted-foreground">Checking the anonymity set…</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-[14px]">
+              <Users className="size-4 text-muted-foreground" />
+              <span className="font-semibold">{anonSize}</span>
+              <span className="text-muted-foreground">bond{anonSize === 1 ? "" : "s"} in this set (need at least {minSet})</span>
+            </div>
+          )}
         </div>
-        {belowMin && (
+        {belowMin && !qualLoading && (
           <p className="mt-2 inline-flex items-start gap-1.5 text-[12px] text-warning" data-testid="tier-anonset-warning">
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
             A set this small can give you away. A set of one points straight at you. Wait until at least {minSet}
@@ -910,92 +793,50 @@ export default function BondedTier() {
         <div className="mt-4">
           <Button
             variant="brand"
-            disabled={!hasIdentity || !reqValid || !info?.standaloneSetId || busyFlow || belowMin || expired || granted}
+            disabled={!hasIdentity || !reqValid || !info?.standaloneSetId || qualLoading || belowMin || expired || granted || proveInFlight || busyFlow}
             onClick={() => void prove()}
             data-testid="tier-prove"
           >
-            {busyFlow ? <Loader2 className="size-4 animate-spin" /> : <ShieldCheck className="size-4" />}
-            {granted ? "You already have access" : "Prove access"}
+            {busyFlow || proveInFlight ? <Loader2 className="size-4 animate-spin" /> : <ShieldCheck className="size-4" />}
+            {granted
+              ? "You already have access"
+              : belowMin || qualLoading || expired
+                ? "Prove access"
+                : proveStale
+                  ? "Try again"
+                  : proveInFlight
+                    ? "Proof in progress"
+                    : "Prove access"}
           </Button>
-          {busyFlow && (
-            <div className="mt-2 grid gap-1" data-testid="tier-prove-async">
-              <p className="text-[12px] text-muted-foreground">
-                Proving runs on the self-hosted prover. This takes a few seconds on the GPU, or a few minutes on
-                the fallback. You do not need to wait here. The result appears on its own when it is ready.
-              </p>
-              <p className="inline-flex items-start gap-1.5 text-[12px] text-warning">
-                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
-                Keep this tab open until it finishes. The check runs in this tab, so leaving the page stops a
-                proof that is still in progress.
-              </p>
-            </div>
-          )}
-          {granted && !busyFlow && (
+          {/* Exactly one helper line, by precedence: granted -> deadline-passed -> below-floor -> stale -> in-flight -> ready. */}
+          {granted ? (
             <p className="mt-2 text-[12px] text-muted-foreground" data-testid="tier-granted-help">
               This handle already has access for this requirement, valid until {fmtDeadline(deadlineAt)}. Each
               requirement can be proven once per handle.
             </p>
-          )}
-          {belowMin && hasIdentity && !expired && !granted && !busyFlow && (
+          ) : expired ? (
+            <p className="mt-2 text-[12px] text-warning">This requirement's deadline has passed.</p>
+          ) : belowMin && !qualLoading && hasIdentity ? (
             <p className="mt-2 text-[12px] text-muted-foreground">Proving stays locked until the set reaches {minSet}.</p>
-          )}
+          ) : proveStale ? (
+            <p className="mt-2 inline-flex items-start gap-1.5 text-[12px] text-warning" data-testid="tier-prove-stale">
+              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+              The proof did not land in time. It may have failed on the prover. You can try again.
+            </p>
+          ) : proveInFlight ? (
+            <div className="mt-2 grid gap-1" data-testid="tier-prove-inflight">
+              <p className="text-[12px] text-muted-foreground">Your proof is running on our prover and records on its own.</p>
+              <p className="text-[12px] text-muted-foreground">
+                You can close this tab. It shows up in the{" "}
+                <Link to="/app/bonded/access" className="text-brand hover:underline">Your access</Link> tab when
+                the proof lands. If the prover is busy this can take a while.
+              </p>
+            </div>
+          ) : busyFlow ? null : hasIdentity ? (
+            <p className="mt-2 text-[12px] text-muted-foreground">Prove you locked a qualifying bond, then your access appears on its own.</p>
+          ) : null}
         </div>
       </Panel>
-
-      {/* The handle's active grants. The list is recorded locally per accessor and live-checked on-chain. */}
-      {hasIdentity && (
-        <Panel
-          title="Your access"
-          aside={
-            <Button variant="outline" size="sm" onClick={() => void refreshGrants()} data-testid="tier-access-refresh">
-              <RefreshCw className="size-4" /> Refresh
-            </Button>
-          }
-        >
-          <div data-testid="tier-access">
-            {grantRows.length === 0 ? (
-              <p className="text-[13px] text-muted-foreground" data-testid="tier-access-empty">
-                No access yet for this handle. Prove a requirement above, and the grant it earns shows up here.
-              </p>
-            ) : (
-              <div className="grid gap-0.5">
-                {accessActive.map(renderAccessRow)}
-                {accessExpired.length > 0 && (
-                  <div className="mt-2 flex items-center gap-3 pt-1">
-                    <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Inactive</span>
-                    <span className="h-px flex-1 bg-border" />
-                  </div>
-                )}
-                {accessExpired.map(renderAccessRow)}
-              </div>
-            )}
-            <div className="grid gap-1.5 pt-3">
-              <p className="text-[12px] text-muted-foreground">
-                The token and amount come from this browser's record of what you proved. The on-chain grant
-                stores only the requirement hash and the deadline, so it cannot label itself.
-              </p>
-              {hasShareable && (
-                <p className="text-[12px] text-muted-foreground" data-testid="tier-access-share-note">
-                  A share link carries your anonymous handle id and the requirement, never your wallet.
-                </p>
-              )}
-              {accessSync === "synced" ? (
-                <span className="inline-flex items-center gap-1.5 text-[12px] text-success" data-testid="tier-access-sync">
-                  <ShieldCheck className="size-3.5" /> This list is encrypted under your wallet, so it follows you to other devices.
-                </span>
-              ) : accessSync === "syncing" ? (
-                <span className="inline-flex items-center gap-1.5 text-[12px] text-muted-foreground" data-testid="tier-access-sync">
-                  <Loader2 className="size-3.5 animate-spin" /> Saving this list to your wallet…
-                </span>
-              ) : (
-                <span className="text-[12px] text-muted-foreground" data-testid="tier-access-sync">
-                  Once your wallet backs up your handle, this list rides along to your other devices.
-                </span>
-              )}
-            </div>
-          </div>
-        </Panel>
-      )}
 
       {/* Once the handle exists it lives here, at the bottom, as a reference. */}
       {hasIdentity && handlePanel}

@@ -4793,9 +4793,62 @@ app.post("/bonded/bond/qual-root", async (req, res) => {
   }
 });
 
+// Optional server-side finish for a bond proof: poll the prover to completion and submit the bundle to the
+// gate, so the client can fire-and-forget (no need to keep its tab open). The bond submit is permissionless
+// (the in-guest holder signature is the consent), so the backend relays exactly what the client would have.
+// In-memory guard against double-spawn per job; best-effort (a submit error like NullifierUsed, e.g. when a
+// client also submitted, is logged and ignored).
+const bondBgJobs = new Set<string>();
+const BOND_BG_TIMEOUT_MS = (() => {
+  const n = Number(process.env.BOND_BG_TIMEOUT_MS);
+  return Number.isFinite(n) && n > 0 ? n : 20 * 60_000;
+})();
+async function pollAndSubmitBond(jobId: string): Promise<void> {
+  if (!PROVER_URL || !BOND_GATE_ID || bondBgJobs.has(jobId)) return;
+  bondBgJobs.add(jobId);
+  const until = Date.now() + BOND_BG_TIMEOUT_MS;
+  try {
+    while (Date.now() < until) {
+      await new Promise((r) => setTimeout(r, 4000));
+      let st: { status?: string; bundle?: Bundle; error?: string };
+      try {
+        const r = await fetch(`${PROVER_URL}/prove/${jobId}`);
+        st = (await r.json()) as typeof st;
+      } catch {
+        continue; // transient; keep polling
+      }
+      if (st.status === "error") {
+        console.error(`[bond-bg] prove ${jobId} failed: ${st.error ?? "unknown"}`);
+        return;
+      }
+      if (st.status === "done" && st.bundle) {
+        const b = st.bundle;
+        if (!b.seal || !b.image_id || !b.journal) {
+          console.error(`[bond-bg] prove ${jobId} done but bundle incomplete`);
+          return;
+        }
+        const { seal, image_id, journal } = b; // narrowed non-null above; capture for the nested closure
+        try {
+          // Serialize on the shared relay key (same chain as set_qual_root + the client submit), so concurrent
+          // background submits do not fetch the same sequence number and lose to txBadSeq.
+          await withTierAdminLock(() => invokeContract(BOND_GATE_ID, "submit_bond_proof", [scBytes(seal), scBytes(image_id), scBytes(journal)]));
+          console.log(`[bond-bg] submitted ${jobId}`);
+        } catch (e) {
+          console.error(`[bond-bg] submit ${jobId} failed: ${err(e)}`); // e.g. NullifierUsed if also client-submitted
+        }
+        return;
+      }
+    }
+    console.error(`[bond-bg] prove ${jobId} timed out after ${BOND_BG_TIMEOUT_MS}ms`);
+  } finally {
+    bondBgJobs.delete(jobId);
+  }
+}
+
 // Build the bond witness (the ROOM's enrolled-member path + the live qualifying-lock path for the
 // requirement) + the NEW-5 holder sig, auto-publish the qual root, and enqueue the bond proof (kind=bond)
-// worker-first. The member must already be enrolled in the room (DR2). Poll /prove-status/:id.
+// worker-first. The member must already be enrolled in the room (DR2). Poll /prove-status/:id, OR pass
+// `background:true` to have the backend finish it (poll + submit) so the caller can leave.
 app.post("/bonded/bond/prove", async (req, res) => {
   if (!PROVER_URL) return res.status(503).json({ error: "PROVER_URL not configured" });
   if (!BOND_GATE_ID) return res.status(503).json({ error: "BOND_GATE_ID not configured" });
@@ -4833,11 +4886,15 @@ app.post("/bonded/bond/prove", async (req, res) => {
     });
     const j = (await r.json()) as { job_id?: string; error?: string };
     if (!r.ok || !j.job_id) return res.status(502).json({ error: j.error || "prover submit failed" });
+    const background = Boolean(req.body?.background);
+    if (background) void pollAndSubmitBond(j.job_id); // detached: finish + submit server-side
     res.json({
       jobId: j.job_id, roomId: roomIdHex, reqId, memberRoot: built.memberRoot, qualRoot: built.qualRoot,
       nullifier: built.nullifier, accessor: built.accessor, token, minAmount: minAmount.toString(), deadline,
-      anonSetSize: built.qualSize,
-      note: "poll /prove-status/<jobId>; on done, POST /bonded/bond/submit {seal,image_id,journal}",
+      anonSetSize: built.qualSize, background,
+      note: background
+        ? "the backend will finish + submit this proof; poll /bonded/bond/status for is_granted"
+        : "poll /prove-status/<jobId>; on done, POST /bonded/bond/submit {seal,image_id,journal}",
     });
   } catch (e) {
     res.status(502).json({ error: err(e) });
@@ -4863,8 +4920,11 @@ app.post("/bonded/bond/submit", async (req, res) => {
   if (b.image_id.toLowerCase() !== BOND_IMAGE_ID.toLowerCase()) {
     return res.status(400).json({ error: "image_id is not the pinned bond guest image" });
   }
+  const { seal, image_id, journal } = b; // validated as raw hex above; capture for the nested closure
   try {
-    const out = await invokeContract(BOND_GATE_ID, "submit_bond_proof", [scBytes(b.seal), scBytes(b.image_id), scBytes(b.journal)]);
+    // Serialize on the shared relay key (same chain as the background submit + set_qual_root) to avoid a
+    // sequence-number race when a client submit and a background submit land at once.
+    const out = await withTierAdminLock(() => invokeContract(BOND_GATE_ID, "submit_bond_proof", [scBytes(seal), scBytes(image_id), scBytes(journal)]));
     res.json({ ok: true, txHash: out.hash, cost: out.cost, grant: jsonSafe(out.returnValue), bondGateId: BOND_GATE_ID });
   } catch (e) {
     res.json({ ok: false, error: err(e), bondGateId: BOND_GATE_ID });
