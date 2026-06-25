@@ -5,6 +5,7 @@ import AppShell from "./shells/AppShell";
 import Landing from "./pages/marketing/Landing";
 import Docs from "./pages/marketing/Docs";
 import Verify from "./pages/marketing/Verify";
+import VerifyBond from "./pages/marketing/VerifyBond";
 import Explorer from "./pages/marketing/Explorer";
 // app (sidebar)
 import Home from "./pages/app/Home";
@@ -49,6 +50,8 @@ export default function App() {
         <Route path="/docs" element={<Docs />} />
         <Route path="/docs/:section" element={<Docs />} />
         <Route path="/verify" element={<Verify />} />
+        {/* Static /verify/bond outranks the dynamic /verify/:issuer in React Router v6. */}
+        <Route path="/verify/bond" element={<VerifyBond />} />
         <Route path="/verify/:issuer" element={<Verify />} />
         <Route path="/explorer" element={<Explorer />} />
         <Route path="*" element={<Landing />} />

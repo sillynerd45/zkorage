@@ -275,6 +275,15 @@ test("tier: a granted requirement disables Prove and shows up in Your access", a
   await expect(row).toContainText("active until");
   await expect(row).toContainText("2030");
   await expect(row).toContainText("loaded");
+
+  // The active grant is shareable: the copied link points at the public /verify/bond page.
+  await expect(page.getByTestId("tier-access-share-note")).toBeVisible();
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.getByTestId("tier-access-share").click();
+  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  expect(copied).toContain(`/verify/bond?accessor=${ACCESSOR}`);
+  expect(copied).toContain(`req=${REQ}`);
+  await expect(page.getByTestId("tier-access-share")).toContainText("Copied");
 });
 
 test("tier: switching wallets in Freighter drops the previous wallet's handle", async ({ page }) => {
@@ -335,4 +344,6 @@ test("tier: the handle backs up to the wallet and restores on another device", a
   await expect(page.getByTestId("tier-identity")).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId("tier-identity")).toContainText(handle);
   await expect(page.getByTestId("tier-sync")).toContainText("Backed up to your wallet", { timeout: 15_000 });
+  // Restoring the handle also pulls the access list, so its sync hint reports it follows the wallet.
+  await expect(page.getByTestId("tier-access-sync")).toContainText("follows you to other devices", { timeout: 15_000 });
 });

@@ -58,6 +58,14 @@ function statusOf(l: LockView): { label: string; cls: string } {
   return { label: "Unlocked", cls: "bg-success/10 text-success" };
 }
 
+// Sort live funds to the top: Unlocked (withdrawable now) first, then Locked (still committed), then Released
+// (done). Within a status, keep creation order (lock id ascending), so the list is stable across refreshes.
+function statusRank(l: LockView): number {
+  if (l.released) return 2;
+  if (l.is_locked) return 1;
+  return 0;
+}
+
 // The highlighted unlock block's tint, matched to the status pill: Locked = brand, Unlocked = success,
 // Released = muted. The status pill carries the state word, so the block has no verb of its own.
 function unlockTone(l: LockView): { wrap: string; rel: string } {
@@ -174,7 +182,7 @@ export default function BondedBalances() {
         </Panel>
       )}
 
-      {b.locks.map((l) => {
+      {[...b.locks].sort((a, c) => statusRank(a) - statusRank(c) || a.id - c.id).map((l) => {
         const st = statusOf(l);
         const ut = unlockTone(l);
         const isSelf = l.role === "self";

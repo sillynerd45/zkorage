@@ -19,6 +19,9 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 // two namespaces never share a file even though their handles are derived from different HKDF info anyway.
 const DATA_FILE = process.env.DR_VAULT_FILE || resolve(HERE, "../data/dr-rooms-vault.json");
 const BOND_FILE = process.env.BOND_HANDLE_VAULT_FILE || resolve(HERE, "../data/bonded-handle-vault.json");
+// The standalone Bonded Access "Your access" list (the handle's grant records), encrypted under the wallet so
+// it follows the wallet to other devices. Same opaque-blob shape; its own file + its own HKDF-derived handle.
+const BOND_GRANTS_FILE = process.env.BOND_GRANTS_VAULT_FILE || resolve(HERE, "../data/bonded-grants-vault.json");
 
 // The opaque encrypted blob (the frontend RoomsBackupFile shape; the backend never inspects its meaning).
 export interface VaultBlob {
@@ -104,3 +107,8 @@ export const deleteVault = (handle: string): boolean => delBlob(DATA_FILE, handl
 export const getBondHandleVault = (handle: string): VaultBlob | null => getBlob(BOND_FILE, handle);
 export const putBondHandleVault = (handle: string, blob: VaultBlob, nowMs: number): void => putBlob(BOND_FILE, handle, blob, nowMs);
 export const deleteBondHandleVault = (handle: string): boolean => delBlob(BOND_FILE, handle);
+
+// Standalone Bonded Access "Your access" list vault (its own file; the encrypted grant records follow the wallet).
+export const getBondGrantsVault = (handle: string): VaultBlob | null => getBlob(BOND_GRANTS_FILE, handle);
+export const putBondGrantsVault = (handle: string, blob: VaultBlob, nowMs: number): void => putBlob(BOND_GRANTS_FILE, handle, blob, nowMs);
+export const deleteBondGrantsVault = (handle: string): boolean => delBlob(BOND_GRANTS_FILE, handle);

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Wallet, ShieldCheck, Loader2, AlertTriangle, RefreshCw, UserPlus, Lock, Users, CalendarClock } from "lucide-react";
+import { Wallet, ShieldCheck, Loader2, AlertTriangle, RefreshCw, UserPlus, Lock, Users, CalendarClock, Link2, Check } from "lucide-react";
 import { useBonded } from "@/lib/hooks/useBonded";
 import { useWallet } from "@/lib/wallet/WalletContext";
 import { Panel, DataRow } from "@/components/app/blocks";
@@ -17,6 +17,8 @@ import {
   getProveStatus,
   getBondHandleVault,
   putBondHandleVault,
+  getBondGrantsVault,
+  putBondGrantsVault,
   fmtAmount,
   toBaseUnits,
   type BondInfo,
@@ -28,6 +30,7 @@ import {
 } from "@/lib/api";
 import { loadWalletTokens, plainAmount, type TokenOption } from "@/lib/bonded/tokens";
 import { readBondGrants, recordBondGrant, type BondGrantRecord } from "@/lib/bonded/grants";
+import { encryptBondGrants, decryptBondGrants, deriveBondGrantsVaultId } from "@/lib/bonded/grantsVault";
 import { encryptBondHandle, decryptBondHandle, deriveBondHandleVaultId, BOND_HANDLE_VAULT_MESSAGE, type BondHandle } from "@/lib/bonded/handleVault";
 import { short } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -115,6 +118,11 @@ export default function BondedTier() {
   // The handle's bonded-access grants, recorded locally per accessor (the on-chain grant carries no token /
   // amount label) and live-checked on-chain. `active` is null while the check is in flight.
   const [grantRows, setGrantRows] = useState<{ rec: BondGrantRecord; active: boolean | null }[]>([]);
+  // Backup state for the "Your access" list vault (its own, so the hint never claims "synced" when only the
+  // handle made it). It rides the handle's signature, so it never prompts on its own.
+  const [accessSync, setAccessSync] = useState<"idle" | "syncing" | "synced" | "error">("idle");
+  // The req_id whose share link was just copied (for the brief "Copied" feedback on that row).
+  const [copiedReq, setCopiedReq] = useState<string | null>(null);
   const alive = useRef(true);
   // Bumped whenever the requirement changes, so a read started for an OLD requirement that resolves late is
   // ignored (it would otherwise re-show a stale anon-set / grant for a different requirement).
@@ -297,6 +305,32 @@ export default function BondedTier() {
   // "Your access": active (or still-checking) grants first, lapsed ones grouped below.
   const accessActive = grantRows.filter((r) => r.active !== false);
   const accessExpired = grantRows.filter((r) => r.active === false);
+  const hasShareable = accessActive.some((r) => r.active === true) && Boolean(identity?.accessor);
+
+  // A verification link for a grant: the public /verify/bond page live-reads is_granted from the gate. It
+  // carries the anonymous handle id + the public requirement, never the wallet.
+  const shareLink = (rec: BondGrantRecord): string => {
+    const u = new URL("/verify/bond", window.location.origin);
+    u.searchParams.set("accessor", identity?.accessor ?? "");
+    u.searchParams.set("req", rec.reqId);
+    if (rec.tokenSymbol) u.searchParams.set("symbol", rec.tokenSymbol);
+    u.searchParams.set("amount", rec.minAmount);
+    u.searchParams.set("decimals", String(rec.decimals));
+    u.searchParams.set("deadline", String(rec.deadline));
+    return u.toString();
+  };
+  const shareGrant = async (rec: BondGrantRecord) => {
+    try {
+      await navigator.clipboard.writeText(shareLink(rec));
+      setCopiedReq(rec.reqId);
+      setTimeout(() => {
+        if (alive.current) setCopiedReq((c) => (c === rec.reqId ? null : c));
+      }, 1500);
+    } catch {
+      /* clipboard blocked; nothing to do */
+    }
+  };
+
   const renderAccessRow = ({ rec, active }: { rec: BondGrantRecord; active: boolean | null }) => {
     const isLoaded = !!reqId && rec.reqId === reqId.toLowerCase();
     return (
@@ -312,7 +346,7 @@ export default function BondedTier() {
           <span className="font-medium tabular-nums">{fmtAmount(rec.minAmount, rec.decimals)}</span> {rec.tokenSymbol}
           {isLoaded && <span className="ml-2 text-[11px] text-brand">loaded</span>}
         </span>
-        <span className="text-[12px]">
+        <span className="flex items-center gap-2 text-[12px]">
           {active === null ? (
             <span className="inline-flex items-center gap-1.5 text-muted-foreground">
               <Loader2 className="size-3.5 animate-spin" /> checking
@@ -324,6 +358,23 @@ export default function BondedTier() {
           ) : (
             // is_granted is false but the deadline has not passed: the chain has no live grant for it.
             <span className="text-muted-foreground">not active</span>
+          )}
+          {active === true && identity?.accessor && (
+            copiedReq === rec.reqId ? (
+              <span className="inline-flex items-center gap-1 text-[11px] text-success" data-testid="tier-access-share">
+                <Check className="size-3.5" /> Copied
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void shareGrant(rec)}
+                aria-label="Copy a verification link for this grant"
+                data-testid="tier-access-share"
+                className="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                <Link2 className="size-3.5" />
+              </button>
+            )
           )}
         </span>
       </div>
@@ -373,6 +424,39 @@ export default function BondedTier() {
     return sig;
   }, [b.address, signMessage]);
 
+  // Back up the "Your access" list to its own wallet vault (encrypted, opaque), so the list follows the wallet.
+  // Best-effort and silent (rides the cached handle signature, so it never prompts on its own).
+  const backupGrants = useCallback(async (accessorOverride?: string) => {
+    const acc = accessorOverride ?? identity?.accessor;
+    if (!b.connected || !acc) return;
+    setAccessSync("syncing");
+    try {
+      const sig = await getBondSig();
+      const blob = await encryptBondGrants(sig, readBondGrants(acc));
+      await putBondGrantsVault(await deriveBondGrantsVaultId(sig), blob);
+      if (alive.current) setAccessSync("synced");
+    } catch {
+      if (alive.current) setAccessSync("error");
+    }
+  }, [b.connected, identity?.accessor, getBondSig]);
+
+  // Pull the access list saved by THIS wallet and merge it into the local records under `accessor` (the records
+  // belong to that handle). Takes the signature + accessor explicitly so it can run during a handle restore,
+  // before the identity state has updated. The accessor-change effect then refreshes the live view.
+  const restoreGrants = useCallback(async (sig: Uint8Array, accessor: string) => {
+    setAccessSync("syncing");
+    try {
+      const res = await getBondGrantsVault(await deriveBondGrantsVaultId(sig));
+      if (res.found && res.blob) {
+        const recs = await decryptBondGrants(sig, res.blob);
+        for (const r of recs) recordBondGrant(accessor, r);
+      }
+      if (alive.current) setAccessSync("synced");
+    } catch {
+      if (alive.current) setAccessSync("error");
+    }
+  }, []);
+
   // Encrypt the handle under the wallet signature and store the opaque blob in the vault, so it follows the
   // wallet to other devices. Non-fatal: a decline or error leaves the local handle usable; the user can retry.
   const backupHandle = useCallback(async (h: BondHandle) => {
@@ -409,6 +493,8 @@ export default function BondedTier() {
       }
       const h = await decryptBondHandle(sig, res.blob);
       localStorage.setItem(idKey(b.address), JSON.stringify(h));
+      // Pull the access list for this handle too, so it lands before the accessor-change refresh runs.
+      await restoreGrants(sig, h.accessor);
       if (alive.current) {
         setIdentity(h);
         setSync("synced");
@@ -419,7 +505,7 @@ export default function BondedTier() {
         setSyncMsg((e as Error)?.message ?? "could not restore the handle");
       }
     }
-  }, [getBondSig, b.address]);
+  }, [getBondSig, b.address, restoreGrants]);
 
   // No local handle but the wallet already signed this session: restore silently (no extra prompt, no hint).
   useEffect(() => {
@@ -438,7 +524,12 @@ export default function BondedTier() {
       localStorage.setItem(idKey(b.address), JSON.stringify(r.minted));
       setIdentity(r.minted);
       // Back it up to the wallet so it follows you to other devices (one signature). Best-effort.
-      if (b.connected) void backupHandle(r.minted);
+      if (b.connected) {
+        void backupHandle(r.minted);
+        // Overwrite the access-list vault for the NEW handle (empty here), so a re-minted handle never
+        // inherits a previous handle's stale records when restored on another device.
+        void backupGrants(r.minted.accessor);
+      }
     } catch (e) {
       setPhase("error");
       setMsg((e as Error)?.message ?? "could not create an identity");
@@ -521,6 +612,7 @@ export default function BondedTier() {
       }
       await refreshStatus();
       void refreshGrants();
+      void backupGrants(); // push the updated list to the wallet vault (best-effort)
     } catch (e) {
       if (!alive.current) return;
       setPhase("error");
@@ -877,10 +969,30 @@ export default function BondedTier() {
                 {accessExpired.map(renderAccessRow)}
               </div>
             )}
-            <p className="pt-3 text-[12px] text-muted-foreground">
-              The token and amount come from this browser's record of what you proved. The on-chain grant stores
-              only the requirement hash and the deadline, so it cannot label itself.
-            </p>
+            <div className="grid gap-1.5 pt-3">
+              <p className="text-[12px] text-muted-foreground">
+                The token and amount come from this browser's record of what you proved. The on-chain grant
+                stores only the requirement hash and the deadline, so it cannot label itself.
+              </p>
+              {hasShareable && (
+                <p className="text-[12px] text-muted-foreground" data-testid="tier-access-share-note">
+                  A share link carries your anonymous handle id and the requirement, never your wallet.
+                </p>
+              )}
+              {accessSync === "synced" ? (
+                <span className="inline-flex items-center gap-1.5 text-[12px] text-success" data-testid="tier-access-sync">
+                  <ShieldCheck className="size-3.5" /> This list is encrypted under your wallet, so it follows you to other devices.
+                </span>
+              ) : accessSync === "syncing" ? (
+                <span className="inline-flex items-center gap-1.5 text-[12px] text-muted-foreground" data-testid="tier-access-sync">
+                  <Loader2 className="size-3.5 animate-spin" /> Saving this list to your wallet…
+                </span>
+              ) : (
+                <span className="text-[12px] text-muted-foreground" data-testid="tier-access-sync">
+                  Once your wallet backs up your handle, this list rides along to your other devices.
+                </span>
+              )}
+            </div>
           </div>
         </Panel>
       )}
