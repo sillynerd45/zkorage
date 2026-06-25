@@ -10,4 +10,4 @@ risc0-build = { version = "=5.0.0-rc.1" }
 risc0-binfmt = { version = "=5.0.0-rc.1" }
 
 [package.metadata.risc0]
-methods = ["guest", "guest-identity", "guest-compliance", "guest-payroll", "guest-accredited", "guest-dataroom-seal", "guest-membership", "guest-docauth", "guest-solvency", "guest-tier", "guest-bond"]
+methods = ["guest", "guest-identity", "guest-compliance", "guest-payroll", "guest-accredited", "guest-dataroom-seal", "guest-membership", "guest-docauth", "guest-solvency", "guest-tier", "guest-bond", "guest-bond-open"]
