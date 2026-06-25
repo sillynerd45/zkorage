@@ -206,18 +206,18 @@ test("tier: load a bond you already hold, and the already-held detection", async
   await page.goto("/app/bonded/tier");
   await expect(page.getByTestId("bonded-tier")).toBeVisible();
 
-  // The requirement starts at the default (100 of the first wallet token). The existing bond is offered as a
-  // chip but not yet loaded, so it is not marked active.
+  // The requirement starts at the default (100 of the first wallet token). The existing bond is offered in the
+  // "use a bond you already hold" dropdown but not yet loaded, so nothing is selected.
   await expect(page.getByTestId("tier-amount")).toHaveValue("100");
-  const chip = page.getByTestId("tier-mybond-99");
-  await expect(chip).toBeVisible({ timeout: 30_000 });
-  await expect(chip).toHaveAttribute("aria-pressed", "false");
+  const bondSelect = page.getByTestId("tier-mybonds-select");
+  await expect(bondSelect).toBeVisible({ timeout: 30_000 });
+  await expect(bondSelect).toHaveValue("");
 
-  // Load the bond: its token, amount, and deadline populate the requirement, and the chip marks active.
-  await chip.click();
+  // Load the bond: its token, amount, and deadline populate the requirement, and the dropdown shows it selected.
+  await bondSelect.selectOption("99");
   await expect(page.getByTestId("tier-amount")).toHaveValue("2500");
   await expect(page.getByTestId("tier-deadline-trigger")).toContainText("2030");
-  await expect(chip).toHaveAttribute("aria-pressed", "true");
+  await expect(bondSelect).toHaveValue("99");
 
   // Mint the handle whose tag matches the bond, so the page recognizes the bond is already held.
   await page.getByTestId("tier-create-identity").click();
@@ -233,6 +233,36 @@ test("tier: load a bond you already hold, and the already-held detection", async
   expect(errs, errs.join("\n")).toHaveLength(0);
 });
 
+test("tier: switching wallets in Freighter drops the previous wallet's handle", async ({ page }) => {
+  const WALLET_B = TUSD_ISSUER; // a different valid testnet address
+  await page.addInitScript(mock(DEPLOYER));
+  await stubHorizon(page);
+  stubBond(page);
+
+  await page.goto("/app/bonded/tier");
+  await expect(page.getByTestId("bonded-tier")).toBeVisible();
+
+  // Create a handle for wallet A (the connected DEPLOYER).
+  await page.getByTestId("tier-create-identity").click();
+  await expect(page.getByTestId("tier-identity")).toBeVisible({ timeout: 15_000 });
+
+  // Switch the Freighter account to wallet B and let the app revalidate on the window focus event (the wallet
+  // context re-reads the address on focus, which is how it catches an in-extension account switch).
+  await page.evaluate(({ b, sig }) => {
+    const m = (window as unknown as { __freighterMock: Record<string, unknown> }).__freighterMock;
+    m.getAddress = async () => ({ address: b });
+    m.requestAccess = async () => ({ address: b });
+    m.getNetwork = async () => ({ network: "TESTNET", networkPassphrase: "Test SDF Network ; September 2015" });
+    m.signTransaction = async (xdr: string) => ({ signedTxXdr: xdr, signerAddress: b });
+    m.signMessage = async () => ({ signedMessage: sig, signerAddress: b });
+    window.dispatchEvent(new Event("focus"));
+  }, { b: WALLET_B, sig: SIG_B64 });
+
+  // Wallet B has its own (empty) handle slot, so the page returns to the create state and A's handle is gone.
+  await expect(page.getByTestId("tier-create-identity")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("tier-identity")).toHaveCount(0);
+});
+
 test("tier: the handle backs up to the wallet and restores on another device", async ({ page }) => {
   await page.addInitScript(mock(DEPLOYER));
   await stubHorizon(page);
@@ -246,8 +276,12 @@ test("tier: the handle backs up to the wallet and restores on another device", a
   const handle = (await page.getByTestId("tier-identity").innerText()).match(/[0-9a-f]{6}…[0-9a-f]{6}/)?.[0] ?? "";
   expect(handle).not.toBe("");
 
-  // Simulate a fresh device: drop the local handle + the in-memory signature, reload.
-  await page.evaluate(() => localStorage.removeItem("zkorage-bond-identity"));
+  // Simulate a fresh device: drop the local handle (now stored per wallet) + the in-memory signature, reload.
+  await page.evaluate(() => {
+    Object.keys(localStorage)
+      .filter((k) => k.startsWith("zkorage-bond-identity"))
+      .forEach((k) => localStorage.removeItem(k));
+  });
   await page.reload();
   await expect(page.getByTestId("tier-create-identity")).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId("tier-identity")).toHaveCount(0);
