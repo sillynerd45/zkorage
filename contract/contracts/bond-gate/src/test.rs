@@ -539,3 +539,211 @@ fn setup_no_auth(env: &Env) -> Fixture<'static> {
     env.mock_auths(&[]);
     f
 }
+
+// ============================ TRUE bond-only (claim_type 15) ============================
+
+const OPEN_IMAGE: [u8; 32] = [0xC1u8; 32];
+const CLAIM_TYPE_OPEN: u32 = 15;
+const RECIP: [u8; 32] = [0x44u8; 32];
+
+/// A well-formed bond-OPEN journal (221 bytes, the open layout: no member_root, recipient_pub at the end).
+#[allow(clippy::too_many_arguments)]
+fn make_open_journal(
+    env: &Env,
+    result: u8,
+    claim_type: u32,
+    qual_root: &[u8; 32],
+    token: &[u8; 32],
+    min_amount: i128,
+    deadline: u64,
+    context: &[u8; 32],
+    nullifier: &[u8; 32],
+    accessor: &[u8; 32],
+    recipient_pub: &[u8; 32],
+) -> Bytes {
+    let mut a = [0u8; 221];
+    a[0] = result;
+    a[1..5].copy_from_slice(&claim_type.to_be_bytes());
+    a[5..37].copy_from_slice(qual_root);
+    a[37..69].copy_from_slice(token);
+    a[69..85].copy_from_slice(&min_amount.to_be_bytes());
+    a[85..93].copy_from_slice(&deadline.to_be_bytes());
+    a[93..125].copy_from_slice(context);
+    a[125..157].copy_from_slice(nullifier);
+    a[157..189].copy_from_slice(accessor);
+    a[189..221].copy_from_slice(recipient_pub);
+    Bytes::from_array(env, &a)
+}
+
+/// Setup + pin the bond-open image; returns the fixture and the open image used.
+fn setup_open(env: &Env) -> (Fixture<'static>, BytesN<32>) {
+    let f = setup(env);
+    let open_image = b(env, &OPEN_IMAGE);
+    f.gate.set_open_image_id(&open_image);
+    (f, open_image)
+}
+
+fn good_open_journal(env: &Env, f: &Fixture, nullifier: &[u8; 32], accessor: &[u8; 32]) -> Bytes {
+    make_open_journal(
+        env, 1, CLAIM_TYPE_OPEN, &QUAL_ROOT, &TOKEN, MIN_AMOUNT, DEADLINE, &f.req_id, nullifier,
+        accessor, &RECIP,
+    )
+}
+
+#[test]
+fn test_open_happy_then_is_open_granted() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(1_000);
+    let (f, open_image) = setup_open(&env);
+    let req = b(&env, &f.req_id);
+
+    assert!(!f.gate.is_open_granted(&b(&env, &ACC1), &req));
+    let g = f.gate.submit_bond_open_proof(&f.seal, &open_image, &good_open_journal(&env, &f, &NF1, &ACC1));
+    assert_eq!(g.accessor, b(&env, &ACC1));
+    assert_eq!(g.req_id, req);
+    assert_eq!(g.recipient_pub, b(&env, &RECIP));
+    assert_eq!(g.min_amount, MIN_AMOUNT);
+    assert_eq!(g.deadline, DEADLINE);
+    assert_eq!(g.index, 0);
+
+    // live decision (no member_root binding) + the keeper read
+    assert!(f.gate.is_open_granted(&b(&env, &ACC1), &req));
+    assert_eq!(f.gate.get_open_recipient_pub(&b(&env, &ACC1), &req), Some(b(&env, &RECIP)));
+    assert!(f.gate.is_open_nullifier_used(&b(&env, &NF1)));
+    assert_eq!(f.gate.get_open_count(), 1);
+    // The bond-implies-membership read is a SEPARATE keyspace -> NOT granted by a bond-open proof.
+    assert!(!f.gate.is_granted(&b(&env, &ACC1), &req));
+}
+
+#[test]
+fn test_open_image_not_set_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(1_000);
+    let f = setup(&env); // no set_open_image_id
+    let res = f.gate.try_submit_bond_open_proof(
+        &f.seal,
+        &b(&env, &OPEN_IMAGE),
+        &good_open_journal(&env, &f, &NF1, &ACC1),
+    );
+    assert_eq!(res, Err(Ok(BondError::OpenImageNotSet.into())));
+}
+
+#[test]
+fn test_open_wrong_claim_type_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(1_000);
+    let (f, open_image) = setup_open(&env);
+    // claim_type 14 in the open layout -> ClaimTypeMismatch
+    let j = make_open_journal(
+        &env, 1, CLAIM_TYPE, &QUAL_ROOT, &TOKEN, MIN_AMOUNT, DEADLINE, &f.req_id, &NF1, &ACC1, &RECIP,
+    );
+    let res = f.gate.try_submit_bond_open_proof(&f.seal, &open_image, &j);
+    assert_eq!(res, Err(Ok(BondError::ClaimTypeMismatch.into())));
+}
+
+#[test]
+fn test_open_nullifier_reuse_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(1_000);
+    let (f, open_image) = setup_open(&env);
+    f.gate.submit_bond_open_proof(&f.seal, &open_image, &good_open_journal(&env, &f, &NF1, &ACC1));
+    let res = f.gate.try_submit_bond_open_proof(
+        &f.seal,
+        &open_image,
+        &good_open_journal(&env, &f, &NF1, &ACC2),
+    );
+    assert_eq!(res, Err(Ok(BondError::NullifierUsed.into())));
+}
+
+#[test]
+fn test_open_deadline_passed_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(DEADLINE + 1);
+    let (f, open_image) = setup_open(&env);
+    let res = f.gate.try_submit_bond_open_proof(
+        &f.seal,
+        &open_image,
+        &good_open_journal(&env, &f, &NF1, &ACC1),
+    );
+    assert_eq!(res, Err(Ok(BondError::DeadlinePassed.into())));
+}
+
+#[test]
+fn test_open_qual_root_unknown_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(1_000);
+    let (f, open_image) = setup_open(&env);
+    let j = make_open_journal(
+        &env, 1, CLAIM_TYPE_OPEN, &[0x99u8; 32], &TOKEN, MIN_AMOUNT, DEADLINE, &f.req_id, &NF1, &ACC1,
+        &RECIP,
+    );
+    let res = f.gate.try_submit_bond_open_proof(&f.seal, &open_image, &j);
+    assert_eq!(res, Err(Ok(BondError::QualRootUnknown.into())));
+}
+
+#[test]
+fn test_open_context_mismatch_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(1_000);
+    let (f, open_image) = setup_open(&env);
+    // context != req_id -> ContextMismatch
+    let j = make_open_journal(
+        &env, 1, CLAIM_TYPE_OPEN, &QUAL_ROOT, &TOKEN, MIN_AMOUNT, DEADLINE, &[0x77u8; 32], &NF1, &ACC1,
+        &RECIP,
+    );
+    let res = f.gate.try_submit_bond_open_proof(&f.seal, &open_image, &j);
+    assert_eq!(res, Err(Ok(BondError::ContextMismatch.into())));
+}
+
+#[test]
+fn test_open_min_amount_zero_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(1_000);
+    let (f, open_image) = setup_open(&env);
+    // min_amount 0 -> a different req_id; publish its qual root, then it must still reject BadMinAmount.
+    let rid0 = req_id_of(&env, &TOKEN, 0, DEADLINE);
+    f.gate.set_qual_root(&b(&env, &rid0), &b(&env, &QUAL_ROOT));
+    let j = make_open_journal(
+        &env, 1, CLAIM_TYPE_OPEN, &QUAL_ROOT, &TOKEN, 0, DEADLINE, &rid0, &NF1, &ACC1, &RECIP,
+    );
+    let res = f.gate.try_submit_bond_open_proof(&f.seal, &open_image, &j);
+    assert_eq!(res, Err(Ok(BondError::BadMinAmount.into())));
+}
+
+#[test]
+fn test_open_independent_from_bond_path() {
+    // The same accessor + same req_id + SAME nullifier bytes can hold BOTH a bond-implies-membership grant
+    // and a bond-open grant: the two paths use separate nullifier + grant keyspaces, so no false collision.
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(1_000);
+    let (f, open_image) = setup_open(&env);
+    let req = b(&env, &f.req_id);
+
+    // bond (membership) path
+    f.gate.submit_bond_proof(&f.seal, &f.image, &good_journal(&env, &f, &NF1, &ACC1));
+    assert!(f.gate.is_granted(&b(&env, &ACC1), &req));
+    assert!(!f.gate.is_open_granted(&b(&env, &ACC1), &req));
+
+    // bond-open path with the SAME nullifier bytes -> still succeeds (separate keyspace)
+    f.gate.submit_bond_open_proof(&f.seal, &open_image, &good_open_journal(&env, &f, &NF1, &ACC1));
+    assert!(f.gate.is_open_granted(&b(&env, &ACC1), &req));
+    assert_eq!(f.gate.get_count(), 1);
+    assert_eq!(f.gate.get_open_count(), 1);
+}
+
+#[test]
+fn test_set_open_image_id_requires_admin() {
+    let env = Env::default();
+    let f = setup_no_auth(&env);
+    let res = f.gate.try_set_open_image_id(&b(&env, &OPEN_IMAGE));
+    assert!(res.is_err());
+}

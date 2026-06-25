@@ -19,12 +19,12 @@ self-tested on Stellar testnet. The Data Room has since been redesigned into one
 from your wallet so you open on any device. It adds a public discovery directory and, in its load-bearing
 slice, a timing defense that batches and shuffles the on-chain access records, so the room sees that an
 approved member accessed in a window, not which member or exactly when. The Data Room now also supports
-**Bonded Access**: a room owner can require readers to lock an anonymous on-chain bond (a token, a minimum
-amount, a deadline) before opening the room's documents. A reader who locked a qualifying non-revocable bond
-proves it without revealing which wallet, which lock, or the exact amount, and the bond proof also proves room
-membership. Privacy needs at least three qualifying bonders for a requirement. A reader records two grants on
-open (a membership grant provides the proof-bound key the keepers seal to, the bond grant provides admission),
-and the document is released by the 2-of-3 keeper committee. Frontend is **v0.12.33**. A
+**Bonded Access**: a room now uses one access model, set by the owner in a new **Room Management** tab, either
+approved membership or a bond anyone can lock. In bonded-access mode the owner sets a requirement (a token, a
+minimum amount, a deadline) and anyone who locks a qualifying non-revocable bond opens the room's documents
+**with no approval and no member list**. The reader proves the bond without revealing which wallet, which lock,
+or the exact amount; the proof carries its own key, so the 2-of-3 keeper committee seals the document key to it
+directly. Privacy needs at least three qualifying bonders for a requirement. Frontend is **v0.12.34**. A
 **Bonded Proofs** pillar (a Soroban-native time-locked escrow plus two
 live ZK products: a **solvency proof that dies when you pull your collateral** and a **standalone Bonded
 Access tier**) is also live; see below. The standalone Bonded Access tier now takes **any wallet token** for

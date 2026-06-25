@@ -70,22 +70,25 @@ export async function isDocAdmitted(
 }
 
 /**
- * The proof-bound x25519 recipient key (hex) NEW-5 committed in the DR2 grant, or null if there is no grant.
- * The keyper seals its share ONLY to this key — never to a client-supplied key — so a released share is
- * decryptable by no one but the holder of the recipient secret the eligibility proof bound.
+ * The proof-bound x25519 recipient key (hex) the keeper must seal its share to, or null if there is no
+ * admitting record. Reads the DataRoom's unified `admission_recipient_pub`, which returns the right key for
+ * either access model: for a TRUE bond-only room it is the `recipient_pub` committed in the bond-OPEN proof
+ * (the DataRoom cross-calls the bond gate), and for a membership room it is the DR2 grant's `recipient_pub`.
+ * Either way the key is proof-bound, so a released share is decryptable by no one but the holder of the
+ * recipient secret the proof bound — never a client-supplied key.
  */
 export async function getGrantRecipientPub(
   contractId: string,
   roomIdHex: string,
   accessorHex: string,
 ): Promise<string | null> {
-  const grant = (await readContract(contractId, "get_grant", [scBytes(roomIdHex), scBytes(accessorHex)])) as
-    | { recipient_pub?: unknown }
-    | null;
-  if (!grant || grant.recipient_pub == null) return null;
-  const rp = grant.recipient_pub;
+  const rp = (await readContract(contractId, "admission_recipient_pub", [
+    scBytes(roomIdHex),
+    scBytes(accessorHex),
+  ])) as unknown;
+  if (rp == null) return null;
   const buf = Buffer.isBuffer(rp) ? rp : Buffer.from(rp as Uint8Array);
-  if (buf.length !== 32) throw new Error(`grant.recipient_pub is ${buf.length} bytes, expected 32`);
+  if (buf.length !== 32) throw new Error(`admission_recipient_pub is ${buf.length} bytes, expected 32`);
   return buf.toString("hex");
 }
 

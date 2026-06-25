@@ -77,18 +77,8 @@ test("membership: member derives + requests; owner approves (light)", async ({ p
   await page.getByTestId("enroll-approve").click();
   await expect(page.getByTestId("enroll-no-pending")).toBeVisible({ timeout: 15_000 });
 
-  // M5: set the room's discovery tier to listed + a public name, then save.
-  await expect(page.getByTestId("enroll-visibility")).toBeVisible();
-  // Save starts disabled: the room is Private and the selected tier is also Private (nothing changed).
-  await expect(page.getByTestId("vis-save")).toBeDisabled();
-  await page.getByTestId("vis-listed").click();
-  await expect(page.getByTestId("vis-name")).toBeVisible(); // name input appears once not private
-  await page.getByTestId("vis-name").fill("Acme board");
-  await expect(page.getByTestId("vis-save")).toBeEnabled(); // changing the tier makes the form dirty
-  await page.getByTestId("vis-save").click();
-  await expect(page.getByTestId("vis-saved")).toBeVisible({ timeout: 15_000 });
-  // after saving, the snapshot matches the form again -> Save goes back to disabled.
-  await expect(page.getByTestId("vis-save")).toBeDisabled();
+  // Room settings (visibility + Bonded Access) moved to Room Management; Approve points there.
+  await expect(page.getByText(/moved to the Room Management tab/i)).toBeVisible();
 
   await page.screenshot({ path: "tests/membership.png", fullPage: true });
   expect(errs, errs.join("\n")).toHaveLength(0);

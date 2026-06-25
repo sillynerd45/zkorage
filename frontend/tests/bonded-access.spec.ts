@@ -197,39 +197,43 @@ async function stubOwnerCommon(page: import("@playwright/test").Page, memberCoun
   await page.route("**/escrow/token-balance**", (r) => r.fulfill(json({ owner: ADDR, token: TOKEN, balance: "0", decimals: 7, symbol: "TUSD" })));
 }
 
-test("BA4: the owner Bond-to-enter section warns + blocks when no members are approved", async ({ page }) => {
+test("Room Management: Bonded Access needs no approved members (no member gate)", async ({ page }) => {
   await page.addInitScript(mock);
-  await stubOwnerCommon(page, 0);
-  await page.route("**/dataroom/bond-requirement/**", (r) => (r.request().method() === "GET" ? r.fulfill(json({ found: false })) : r.continue()));
+  await stubOwnerCommon(page, 0); // ZERO approved members
+  await page.route("**/dataroom/bond-requirement/**", (r) => (r.request().method() === "GET" ? r.fulfill(json({ found: false, bondOpen: false })) : r.continue()));
   await page.route("**/bonded/bond/qual-set**", (r) => r.fulfill(json(qualSet(0, []))));
 
-  await page.goto("/app/dataroom/membership#approve");
-  await page.getByTestId("enroll-owner-room").first().click();
-  await expect(page.getByTestId("bond-section")).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByTestId("bond-need-members")).toContainText("Approve at least one member");
-  await expect(page.getByTestId("bond-set")).toBeDisabled();
+  await page.goto("/app/dataroom/manage");
+  await page.getByTestId("manage-owner-room").first().click();
+  await expect(page.getByTestId("manage-access-model")).toBeVisible({ timeout: 30_000 });
+  // Pick the Bonded Access model -> the requirement editor shows, with NO "approve a member first" gate.
+  await page.getByTestId("manage-model-bond").click();
+  await expect(page.getByTestId("bond-section")).toBeVisible();
+  await expect(page.getByTestId("bond-need-members")).toHaveCount(0); // the old member gate is gone
 });
 
-test("BA4: the owner sets a bond requirement via a classic asset", async ({ page }) => {
+test("Room Management: the owner sets Bonded Access via a classic asset", async ({ page }) => {
   const errs: string[] = [];
   page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/i.test(m.text())) errs.push(m.text()); });
   await page.addInitScript(mock);
-  await stubOwnerCommon(page, 3);
+  await stubOwnerCommon(page, 0); // bond-only needs no members
   let set = false;
   await page.route("**/dataroom/bond-requirement/**", (r) => {
     if (r.request().method() !== "GET") return r.continue();
     return r.fulfill(set
-      ? json({ found: true, scope: "room", gate: "C".repeat(56), reqId: "ab".repeat(32), token: TOKEN, minAmount: MIN, deadline: DEADLINE })
-      : json({ found: false }));
+      ? json({ found: true, scope: "room", bondOpen: true, mode: "open", gate: "C".repeat(56), reqId: "ab".repeat(32), token: TOKEN, minAmount: MIN, deadline: DEADLINE })
+      : json({ found: false, bondOpen: false }));
   });
   await page.route("**/bonded/bond/qual-set**", (r) => r.fulfill(json(qualSet(0, []))));
   await page.route("**/dataroom/bond-requirement", (r) => r.fulfill(json({ ok: true, mode: "xdr", xdr: "AAAA", source: ADDR, reqId: "ab".repeat(32) })));
   await page.route("**/tx/submit", (r) => { set = true; return r.fulfill(json({ ok: true, txHash: "ab".repeat(8) })); });
   await page.route("**/bonded/bond/qual-root", (r) => r.fulfill(json({ ok: true, txHash: "cd".repeat(8) })));
 
-  await page.goto("/app/dataroom/membership#approve");
-  await page.getByTestId("enroll-owner-room").first().click();
-  await expect(page.getByTestId("bond-section")).toBeVisible({ timeout: 30_000 });
+  await page.goto("/app/dataroom/manage");
+  await page.getByTestId("manage-owner-room").first().click();
+  await expect(page.getByTestId("manage-access-model")).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId("manage-model-bond").click();
+  await expect(page.getByTestId("bond-section")).toBeVisible();
 
   // Use the classic-asset path (no Horizon dependency): code + issuer -> SAC derived client-side.
   await page.getByTestId("bond-token-source").selectOption("classic");
@@ -239,7 +243,45 @@ test("BA4: the owner sets a bond requirement via a classic asset", async ({ page
   await expect(page.getByTestId("bond-section")).toContainText("Resolved to SAC");
 
   await page.getByTestId("bond-set").click();
-  await expect(page.getByTestId("bond-set-done")).toContainText("Bond requirement set", { timeout: 30_000 });
+  await expect(page.getByTestId("bond-set-done")).toContainText("Bonded Access set", { timeout: 30_000 });
   await expect(page.getByTestId("bond-current")).toBeVisible();
   expect(errs, errs.join("\n")).toHaveLength(0);
+});
+
+// ── TRUE bond-only reader (no approval, no enrollment) ──
+const bondReqOpen = json({ found: true, scope: "room", bondOpen: true, mode: "open", gate: "C".repeat(56), reqId: "ab".repeat(32), token: TOKEN, minAmount: MIN, deadline: DEADLINE });
+
+test("bond-only: a non-member reader goes straight to deposit (no approval needed)", async ({ page }) => {
+  await page.addInitScript(mock);
+  await stubReaderCommon(page, "none"); // NOT enrolled, never asked to join
+  await page.route("**/dataroom/bond-requirement/**", (r) => (r.request().method() === "GET" ? r.fulfill(bondReqOpen) : r.continue()));
+  // 3 other bonders (at the floor), reader not among them -> they must deposit.
+  await page.route("**/bonded/bond/qual-set**", (r) => r.fulfill(json(qualSet(3, [decoy(1), decoy(2), decoy(3)]))));
+
+  await openTheDoc(page);
+  // The key difference from the membership-bond path: a non-member is NOT dead-ended at "bond-not-member".
+  await expect(page.getByTestId("access-status")).toHaveAttribute("data-phase", "bond-deposit", { timeout: 30_000 });
+  await expect(page.getByTestId("access-bond-deposit")).toBeVisible();
+});
+
+test("bond-only: prove runs ONLY the bond-open proof, never a membership proof", async ({ page }) => {
+  await page.addInitScript(mock);
+  await stubReaderCommon(page, "none");
+  await page.route("**/dataroom/bond-requirement/**", (r) => (r.request().method() === "GET" ? r.fulfill(bondReqOpen) : r.continue()));
+  // The reader already holds a qualifying bond (their commitment is in the set), at the floor.
+  await page.route("**/bonded/bond/qual-set**", (r) => r.fulfill(json(qualSet(3, [mine(10), decoy(2), decoy(3)]))));
+  let openProve = 0;
+  let memberProve = 0;
+  await page.route("**/bonded/bond-open/prove", (r) => { openProve++; return r.fulfill(json({ jobId: "bo-job", reqId: "ab".repeat(32), accessor: "cd".repeat(32), recipientPub: "ef".repeat(32) })); });
+  await page.route("**/dataroom/membership/prove-access", (r) => { memberProve++; return r.fulfill(json({ jobId: "mem-job" })); });
+  // Keep the prover job pending so the flow parks in "proving" after the prove call (we only assert routing).
+  await page.route("**/prove-status/**", (r) => r.fulfill(json({ status: "pending" })));
+
+  await openTheDoc(page);
+  await expect(page.getByTestId("access-status")).toHaveAttribute("data-phase", "bond-ready", { timeout: 30_000 });
+  await page.getByTestId("access-bond-prove").click();
+  await expect(page.getByTestId("access-status")).toHaveAttribute("data-phase", "proving", { timeout: 30_000 });
+  // Only the bond-open proof runs; the membership proof is never started (no enrollment for a bond-only room).
+  await expect.poll(() => openProve, { timeout: 15_000 }).toBeGreaterThan(0);
+  expect(memberProve).toBe(0);
 });

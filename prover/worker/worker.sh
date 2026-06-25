@@ -17,6 +17,7 @@ HOST_DOCAUTH_BIN="${HOST_DOCAUTH_BIN:-/prover/target/release/host_docauth}"     
 HOST_SOLVENCY_BIN="${HOST_SOLVENCY_BIN:-/prover/target/release/host_solvency}"                 # solvency (BP3)
 HOST_TIER_BIN="${HOST_TIER_BIN:-/prover/target/release/host_tier}"                             # tier (BP5)
 HOST_BOND_BIN="${HOST_BOND_BIN:-/prover/target/release/host_bond}"                             # bond (BA1)
+HOST_BOND_OPEN_BIN="${HOST_BOND_OPEN_BIN:-/prover/target/release/host_bond_open}"              # bond-open (Room Mgmt)
 POLL="${POLL_SECONDS:-3}"
 AUTH=(); [ -n "$TOKEN" ] && AUTH=(-H "X-Worker-Token: $TOKEN")
 # Witness hygiene: keep the per-job witness file in RAM (tmpfs) when available, and remove it after every job
@@ -48,6 +49,7 @@ while true; do
     solvency)      BIN="$HOST_SOLVENCY_BIN";      FIELDS=("${COMMON[@]}" '.threshold' '.escrow_hex' '.lock_id' '.min_amount' '.bond_token_hex' '.supply_token_hex') ;;
     tier)          BIN="$HOST_TIER_BIN";          FIELDS=('.sig_hex' '.pk_hex' '.accessor_hex' '.id_secret_hex' '.id_trapdoor_hex' '.context_hex' '.threshold' '.unlock_after' '.member_siblings_hex' '.member_leaf_index' '.qual_siblings_hex' '.qual_leaf_index') ;;
     bond)          BIN="$HOST_BOND_BIN";          FIELDS=('.sig_hex' '.pk_hex' '.accessor_hex' '.id_secret_hex' '.id_trapdoor_hex' '.context_hex' '.token_hex' '.min_amount' '.deadline' '.member_siblings_hex' '.member_leaf_index' '.qual_siblings_hex' '.qual_leaf_index') ;;
+    bond-open)     BIN="$HOST_BOND_OPEN_BIN";     FIELDS=('.sig_hex' '.pk_hex' '.accessor_hex' '.recipient_pub_hex' '.id_secret_hex' '.id_trapdoor_hex' '.context_hex' '.token_hex' '.min_amount' '.deadline' '.qual_siblings_hex' '.qual_leaf_index') ;;
     *)             BIN="$HOST_BIN";               FIELDS=("${COMMON[@]}" '.threshold') ;;
   esac
   # Build the job file, FAIL-CLOSED on any missing field: `jq -e` exits non-zero on null, so a field-list

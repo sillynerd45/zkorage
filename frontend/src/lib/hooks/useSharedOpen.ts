@@ -15,6 +15,8 @@ import {
   escrowDeposit,
   proveBond,
   submitBond,
+  proveBondOpen,
+  submitBondOpen,
   type DataroomDoc,
   type Bundle,
   type BondRequirement,
@@ -436,8 +438,13 @@ export function useSharedOpen() {
       const qual = await getBondQualSet(req.token!, req.minAmount!, req.deadline!).catch(() => null);
       if (cancelled.current) return;
       setBondCount(qual ? qual.anonSetSize : null);
-      if (memberState === "pending") { setPhase("pending"); return; }
-      if (memberState !== "eligible") { setPhase("bond-not-member"); return; }
+      // TRUE bond-only (no-approval): the bond is the only gate, so skip the membership check entirely. A
+      // reader who never asked to join can deposit + prove straight away. The legacy bond-implies-membership
+      // path still requires an approved member (the bond proof also proves membership there).
+      if (!req.bondOpen) {
+        if (memberState === "pending") { setPhase("pending"); return; }
+        if (memberState !== "eligible") { setPhase("bond-not-member"); return; }
+      }
       const mine = bondAccessCommitment(id.idSecret).toLowerCase();
       const hasBond = !!qual && qual.locks.some((l) => l.commitment.toLowerCase() === mine);
       if (!hasBond) { setPhase("bond-deposit"); return; }
@@ -519,6 +526,29 @@ export function useSharedOpen() {
     setPhase("proving");
     setProveStep("Setting up your access on the self-hosted prover. This runs once for the room and can take a few minutes.");
     try {
+      // TRUE bond-only (no-approval): ONE bond-open proof. It carries its own proof-bound recipient_pub, so
+      // the keepers can seal the document key without a membership grant. No enrollment, no membership proof.
+      if (bondReq.bondOpen) {
+        const bp = await proveBondOpen({
+          idSecret: identity.idSecret,
+          idTrapdoor: identity.idTrapdoor,
+          holderSeed: identity.accessorSeed,
+          recipientPub: identity.recipientPub,
+          token: bondReq.token,
+          minAmount: bondReq.minAmount,
+          deadline: bondReq.deadline,
+        });
+        if (!bp.jobId) throw new Error(bp.error || "could not start the bond proof");
+        const bondBundle = await pollProveBundle(bp.jobId);
+        if (cancelled.current) return;
+        setPhase("queuing");
+        setProveStep("Recording your access on-chain.");
+        const r = await submitBondOpen(bondBundle);
+        if (cancelled.current) return;
+        if (!r.ok) throw new Error(r.error || "could not record your access on-chain");
+        await doOpen(openDocId, identity, BOND_FLOOR);
+        return;
+      }
       // The key leg: the keepers seal the document key to the recipient_pub recorded by a MEMBERSHIP grant. If
       // this identity already has one (it opened a doc in this room before the bond requirement), skip the
       // membership proof; the nullifier is per-room, so re-proving would be rejected anyway.

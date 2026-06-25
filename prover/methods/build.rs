@@ -52,6 +52,7 @@ fn main() {
     let solvency = env::var("ZKORAGE_SOLVENCY_ELF").ok();
     let tier = env::var("ZKORAGE_TIER_ELF").ok();
     let bond = env::var("ZKORAGE_BOND_ELF").ok();
+    let bond_open = env::var("ZKORAGE_BOND_OPEN_ELF").ok();
 
     if por.is_some()
         || identity.is_some()
@@ -64,6 +65,7 @@ fn main() {
         || solvency.is_some()
         || tier.is_some()
         || bond.is_some()
+        || bond_open.is_some()
     {
         // Canonical path — require ALL so every bin in the host crate gets correct image_ids.
         let por = por.expect("ZKORAGE_GUEST_ELF must be set alongside the other guest ELFs");
@@ -85,6 +87,8 @@ fn main() {
             solvency.expect("ZKORAGE_SOLVENCY_ELF must be set alongside the other guest ELFs");
         let tier = tier.expect("ZKORAGE_TIER_ELF must be set alongside the other guest ELFs");
         let bond = bond.expect("ZKORAGE_BOND_ELF must be set alongside the other guest ELFs");
+        let bond_open =
+            bond_open.expect("ZKORAGE_BOND_OPEN_ELF must be set alongside the other guest ELFs");
         let out_dir = env::var("OUT_DIR").unwrap();
 
         let por_rs = embed_prebuilt(&out_dir, "claim_predicate", "CLAIM_PREDICATE", &por);
@@ -110,11 +114,17 @@ fn main() {
         let sol_rs = embed_prebuilt(&out_dir, "solvency_predicate", "SOLVENCY_PREDICATE", &solvency);
         let tier_rs = embed_prebuilt(&out_dir, "tier_predicate", "TIER_PREDICATE", &tier);
         let bond_rs = embed_prebuilt(&out_dir, "bond_predicate", "BOND_PREDICATE", &bond);
+        let bond_open_rs = embed_prebuilt(
+            &out_dir,
+            "bond_open_predicate",
+            "BOND_OPEN_PREDICATE",
+            &bond_open,
+        );
 
         fs::write(
             Path::new(&out_dir).join("methods.rs"),
             format!(
-                "{por_rs}{id_rs}{comp_rs}{pay_rs}{acc_rs}{ds_rs}{mem_rs}{da_rs}{sol_rs}{tier_rs}{bond_rs}"
+                "{por_rs}{id_rs}{comp_rs}{pay_rs}{acc_rs}{ds_rs}{mem_rs}{da_rs}{sol_rs}{tier_rs}{bond_rs}{bond_open_rs}"
             ),
         )
         .unwrap();
@@ -129,6 +139,7 @@ fn main() {
         println!("cargo:rerun-if-env-changed=ZKORAGE_SOLVENCY_ELF");
         println!("cargo:rerun-if-env-changed=ZKORAGE_TIER_ELF");
         println!("cargo:rerun-if-env-changed=ZKORAGE_BOND_ELF");
+        println!("cargo:rerun-if-env-changed=ZKORAGE_BOND_OPEN_ELF");
         println!("cargo:rerun-if-changed={por}");
         println!("cargo:rerun-if-changed={identity}");
         println!("cargo:rerun-if-changed={compliance}");
@@ -140,6 +151,7 @@ fn main() {
         println!("cargo:rerun-if-changed={solvency}");
         println!("cargo:rerun-if-changed={tier}");
         println!("cargo:rerun-if-changed={bond}");
+        println!("cargo:rerun-if-changed={bond_open}");
     } else {
         risc0_build::embed_methods();
     }

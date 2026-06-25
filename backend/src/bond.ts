@@ -33,6 +33,10 @@ export const BOND_GATE_ID =
 export const BOND_IMAGE_ID =
   process.env.BOND_IMAGE_ID ||
   "dc4da02d887b3f388ffee26860a8416b393d4cfea982831183d15d5bfcf1f6c4";
+/** TRUE bond-only (no-approval) guest image: the bond-open guest the gate pins via set_open_image_id. */
+export const BOND_OPEN_IMAGE_ID =
+  process.env.BOND_OPEN_IMAGE_ID ||
+  "a035500d61ee7be7164c23e44c7a5df87a3b38d1e6bb931d7612ccf81de58b78";
 /** Minimum qualifying-set size before the backend will build a proof (anonymity guard; a set of 1
  *  de-anonymizes by elimination). Off-chain by necessity — a Merkle root carries no member count. */
 export const BOND_MIN_ANON_SET = Number(process.env.BOND_MIN_ANON_SET || 3);
@@ -47,6 +51,9 @@ export { ESCROW_ID };
 
 const ZERO32 = new Uint8Array(32);
 const BOND_SIG_DOMAIN = new TextEncoder().encode("zkorage-bond-access-v1");
+// TRUE bond-only holder-sig domain (distinct from the bond + DR2 domains, so a signature for one path can
+// never be replayed as another). Signs DOMAIN ‖ context ‖ accessor ‖ recipient_pub.
+const BOND_OPEN_SIG_DOMAIN = new TextEncoder().encode("zkorage-bond-open-v1");
 const SCAN_BATCH = 8;
 const SCAN_MAX = Number(process.env.ESCROW_MAX_SCAN || 200);
 
@@ -300,6 +307,92 @@ export async function buildBondJob(args: {
   };
 }
 
+/** NEW-5 for TRUE bond-only: the accessor's own ed25519 key signs DOMAIN ‖ context ‖ accessor ‖
+ *  recipient_pub. Binding recipient_pub lets the DR3 keepers seal the document key to it even though the
+ *  accessor is public (the key is part of the signed, committed statement). */
+export function bondOpenHolderSign(
+  holderSeed: Uint8Array,
+  context: Uint8Array,
+  recipientPub: Uint8Array,
+): { accessor: Uint8Array; sig: Uint8Array } {
+  const accessor = ed.getPublicKey(need32(holderSeed, "holder_seed"));
+  const msg = concat(BOND_OPEN_SIG_DOMAIN, need32(context, "context"), accessor, need32(recipientPub, "recipient_pub"));
+  const sig = ed.sign(msg, holderSeed);
+  return { accessor, sig };
+}
+
+/**
+ * Build a complete `bond-open` prover job (the 12 gateway fields) + the public outputs for the TRUE bond-only
+ * path. Unlike `buildBondJob`, there is NO member tree (no membership/approval): the proof asserts only a
+ * qualifying bond for the requirement, plus a proof-bound `recipient_pub` for the keepers. `context == req_id`
+ * (the gate enforces it). The qualifying set is rebuilt live and must contain the member's qual commitment.
+ */
+export async function buildBondOpenJob(args: {
+  idSecret: Uint8Array;
+  idTrapdoor: Uint8Array;
+  holderSeed: Uint8Array;
+  recipientPub: Uint8Array;
+  token: string;
+  minAmount: bigint;
+  deadline: number;
+}): Promise<{
+  job: Record<string, string | number>;
+  qualRoot: string;
+  reqId: string;
+  nullifier: string;
+  accessor: string;
+  recipientPub: string;
+  qualSize: number;
+}> {
+  const { idSecret, idTrapdoor, holderSeed, recipientPub, token, minAmount, deadline } = args;
+  if (minAmount <= 0n) throw new Error("minAmount must be positive");
+  need32(recipientPub, "recipient_pub");
+  // The qualifying set (live from the escrow, for THIS requirement). The member's qual commitment must be in it.
+  const qual = await buildBondQualSet(token, minAmount, deadline);
+  if (qual.size < BOND_MIN_ANON_SET) {
+    throw new Error(
+      `qualifying set too small (${qual.size} < ${BOND_MIN_ANON_SET}); a proof now would weaken anonymity — wait for more qualifying bonds for this requirement`,
+    );
+  }
+  const qc = toHex(qualCommitment(idSecret));
+  const qualIndex = qual.commitments.indexOf(qc);
+  if (qualIndex < 0) {
+    throw new Error(
+      "no qualifying bonded lock for this identity — deposit a non-revocable lock with commitment = sha256(0x03‖id_secret‖'escrow'), the required token, amount >= min_amount, unlock_time >= deadline",
+    );
+  }
+
+  const context = reqId(token, minAmount, deadline);
+  const { witness: qualWitness } = buildSparseTree(qual.commitments.map((h) => fromHex(h)), ZERO32);
+  const q = qualWitness(qualIndex);
+  const { accessor, sig } = bondOpenHolderSign(holderSeed, context, recipientPub);
+  const nf = nullifierOf(idSecret, context);
+
+  return {
+    job: {
+      kind: "bond-open",
+      sig_hex: toHex(sig),
+      pk_hex: toHex(accessor),
+      accessor_hex: toHex(accessor),
+      recipient_pub_hex: toHex(recipientPub),
+      id_secret_hex: toHex(idSecret),
+      id_trapdoor_hex: toHex(idTrapdoor),
+      context_hex: toHex(context),
+      token_hex: contractIdHex(token),
+      min_amount: minAmount.toString(),
+      deadline: String(deadline),
+      qual_siblings_hex: toHex(q.siblings),
+      qual_leaf_index: q.leafIndex,
+    },
+    qualRoot: qual.root,
+    reqId: toHex(context),
+    nullifier: toHex(nf),
+    accessor: toHex(accessor),
+    recipientPub: toHex(recipientPub),
+    qualSize: qual.size,
+  };
+}
+
 // ---- on-chain reads (key-free; the gate is permissionless to read) ----
 
 function requireGate(): string {
@@ -357,6 +450,45 @@ export async function getBondConfig(): Promise<unknown> {
 
 export async function getBondGrantCount(): Promise<number> {
   const { value } = await readContract(requireGate(), "get_count");
+  return Number(value ?? 0);
+}
+
+// ---- TRUE bond-only reads ----
+
+/** The bond-only decision the DataRoom mirrors for a bond-only room: an unexpired bond-OPEN grant for
+ *  (accessor, req_id). No member-root binding. */
+export async function isBondOpenGranted(accessorHex: string, reqIdHex: string): Promise<boolean> {
+  const { value } = await readContract(requireGate(), "is_open_granted", [
+    scBytes(accessorHex),
+    scBytes(reqIdHex),
+  ]);
+  return Boolean(value);
+}
+
+export async function getBondOpenGrant(accessorHex: string, reqIdHex: string): Promise<unknown | null> {
+  const { value } = await readContract(requireGate(), "get_open_grant", [
+    scBytes(accessorHex),
+    scBytes(reqIdHex),
+  ]);
+  return value ? jsonSafe(value) : null;
+}
+
+/** The proof-bound recipient_pub (hex) the keepers seal to for a bond-only grant, or null. */
+export async function getBondOpenRecipientPub(accessorHex: string, reqIdHex: string): Promise<string | null> {
+  const { value } = await readContract(requireGate(), "get_open_recipient_pub", [
+    scBytes(accessorHex),
+    scBytes(reqIdHex),
+  ]);
+  return value == null ? null : toHex(new Uint8Array(value as Uint8Array));
+}
+
+export async function isBondOpenNullifierUsed(nullifierHex: string): Promise<boolean> {
+  const { value } = await readContract(requireGate(), "is_open_nullifier_used", [scBytes(nullifierHex)]);
+  return Boolean(value);
+}
+
+export async function getBondOpenCount(): Promise<number> {
+  const { value } = await readContract(requireGate(), "get_open_count");
   return Number(value ?? 0);
 }
 

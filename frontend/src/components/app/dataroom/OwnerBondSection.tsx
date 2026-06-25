@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, Info, KeyRound, ShieldCheck } from "lucide-react";
+import { Info, KeyRound, ShieldCheck } from "lucide-react";
 import { useWallet, useTxSigner } from "@/lib/wallet/WalletContext";
 import {
   getBondRequirementApi,
@@ -21,10 +21,11 @@ import { DataRow } from "@/components/app/blocks";
 import { BondTokenPicker } from "@/components/app/dataroom/BondTokenPicker";
 import { BondCount, Callout, CopyIconButton, SectionLabel } from "@/components/app/dataroom/kit";
 
-// BA4 — the owner sets ONE room-level Bonded Access requirement: a token, a minimum amount, and a deadline.
-// A reader must then lock a qualifying bond (and prove it anonymously) to open the room's documents, which
-// REPLACES plain membership. Self-contained: reads the current requirement + the live qualifying-bonder count,
-// resolves the token three ways (wallet / paste / classic asset), and writes via the wallet (room-owner auth).
+// Room Management — TRUE bond-only (no-approval) Bonded Access. The owner sets ONE room-level requirement: a
+// token, a minimum amount, and a deadline. Anyone who locks a qualifying bond (and proves it anonymously)
+// opens the room's documents, with NO approval and NO member list. Self-contained: reads the current
+// requirement + the live qualifying-bonder count, resolves the token three ways (wallet / paste / classic
+// asset), and writes via the wallet (room-owner auth) using the bond-only path (mode "open").
 
 // now + 30 days, formatted for a datetime-local input (local time, minute precision).
 function defaultDeadline(): string {
@@ -37,7 +38,7 @@ function fmtDeadline(unix: number): string {
   return new Date(unix * 1000).toLocaleString();
 }
 
-export function OwnerBondSection({ roomId, memberCount }: { roomId: string; memberCount: number }) {
+export function OwnerBondSection({ roomId, onChanged }: { roomId: string; onChanged?: () => void }) {
   const { address } = useWallet();
   const signer = useTxSigner();
 
@@ -53,8 +54,6 @@ export function OwnerBondSection({ roomId, memberCount }: { roomId: string; memb
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [pubFailed, setPubFailed] = useState(false);
-
-  const noMembers = memberCount === 0;
 
   // Load the current requirement + the live qualifying-bonder count + the token's symbol/decimals for display.
   const loadReq = useCallback(async () => {
@@ -76,7 +75,6 @@ export function OwnerBondSection({ roomId, memberCount }: { roomId: string; memb
     setErr(null);
     setMsg(null);
     setPubFailed(false);
-    if (noMembers) return setErr("Approve at least one member before you set a bond requirement.");
     if (!token) return setErr("Pick a token to require.");
     const base = toBaseUnits(amount, token.decimals);
     if (!base) return setErr(`Enter a minimum amount (up to ${token.decimals} decimals).`);
@@ -85,7 +83,7 @@ export function OwnerBondSection({ roomId, memberCount }: { roomId: string; memb
     if (!signer) return setErr("Connect your wallet on testnet first.");
     setBusy(true);
     try {
-      const r = await setBondRequirement(roomId, { token: token.contractId, minAmount: base, deadline: deadlineUnix }, signer);
+      const r = await setBondRequirement(roomId, { token: token.contractId, minAmount: base, deadline: deadlineUnix }, signer, "open");
       if (!r.ok) {
         setErr(r.error ?? "Could not set the requirement.");
         return;
@@ -98,14 +96,15 @@ export function OwnerBondSection({ roomId, memberCount }: { roomId: string; memb
       } catch {
         setPubFailed(true);
       }
-      setMsg("Bond requirement set. Readers must lock a qualifying bond to open this room.");
+      setMsg("Bonded Access set. Anyone who locks a qualifying bond can open this room, with no approval needed.");
       await loadReq();
+      onChanged?.();
     } catch (e) {
       setErr(String((e as Error).message ?? e));
     } finally {
       setBusy(false);
     }
-  }, [noMembers, token, amount, deadline, signer, roomId, loadReq]);
+  }, [token, amount, deadline, signer, roomId, loadReq, onChanged]);
 
   const onClear = useCallback(async () => {
     setErr(null);
@@ -119,16 +118,17 @@ export function OwnerBondSection({ roomId, memberCount }: { roomId: string; memb
         setErr(r.error ?? "Could not clear the requirement.");
         return;
       }
-      setMsg("Cleared. This room is back to plain membership.");
+      setMsg("Cleared. This room is back to approved membership.");
       setReq(null);
       setCount(null);
       setReqMeta(null);
+      onChanged?.();
     } catch (e) {
       setErr(String((e as Error).message ?? e));
     } finally {
       setBusy(false);
     }
-  }, [signer, roomId]);
+  }, [signer, roomId, onChanged]);
 
   return (
     <div className="space-y-3" data-testid="bond-section">
@@ -139,16 +139,9 @@ export function OwnerBondSection({ roomId, memberCount }: { roomId: string; memb
         </span>
       </SectionLabel>
       <p className="text-sm leading-relaxed text-muted-foreground">
-        Require a reader to lock an on-chain bond before they can open this room's documents. The reader proves
-        the bond anonymously. You never see which reader opened a file.
+        Anyone who locks a qualifying on-chain bond can open this room's documents, with no approval and no
+        member list. The reader proves the bond anonymously, so you never see which reader opened a file.
       </p>
-
-      {noMembers && (
-        <Callout icon={AlertTriangle} testId="bond-need-members">
-          Approve at least one member before you set a bond requirement. The bond gate checks the reader against
-          your approved list, so with no members approved it lets no one in.
-        </Callout>
-      )}
 
       {/* The current requirement, if one is set. */}
       {req && req.token && req.minAmount && req.deadline && (
@@ -195,8 +188,8 @@ export function OwnerBondSection({ roomId, memberCount }: { roomId: string; memb
           <p className="mt-1 text-[12px] text-muted-foreground">A qualifying bond cannot be released before this time. Pick a date that outlives the access you are granting.</p>
         </div>
 
-        <Button onClick={() => void onSet()} disabled={busy || noMembers || !token} data-testid="bond-set">
-          {busy ? "Setting…" : "Set bond requirement"}
+        <Button onClick={() => void onSet()} disabled={busy || !token} data-testid="bond-set">
+          {busy ? "Setting…" : "Set bonded access"}
         </Button>
       </div>
 
@@ -208,8 +201,8 @@ export function OwnerBondSection({ roomId, memberCount }: { roomId: string; memb
       )}
 
       <Callout icon={Info} testId="bond-consequence">
-        Setting a bond replaces plain membership for this room. An approved member who has not locked a
-        qualifying bond can no longer open these documents until they lock one.
+        With Bonded Access on, the bond is the only gate: anyone who locks a qualifying bond opens this room,
+        and nobody needs your approval. Clearing it returns the room to approved membership.
       </Callout>
 
       <Callout icon={ShieldCheck} testId="bond-privacy">

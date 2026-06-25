@@ -76,6 +76,19 @@ const CLAIM_TYPE_BOND: u32 = 14;
 const REQ_LO: usize = 69;
 const REQ_HI: usize = 125;
 
+/// TRUE bond-only (no-approval) Bonded Access — the `bond_open_predicate` guest (claim_type 15). Same 221-byte
+/// length, but the layout DROPS the member tree and ADDS a proof-bound `recipient_pub`, so a reader opens a
+/// room with NO owner approval and NO membership enrollment. The req_id span (token ‖ min_amount ‖ deadline)
+/// is byte-identical to `bond_predicate`'s, so the SAME `QualRing(req_id)` applies — one indexer serves both.
+/// bond-open journal wire layout (221 bytes, big-endian):
+///   [0]result · [1..5]claim_type(15) · [5..37]qual_root · [37..69]token · [69..85]min_amount(i128 16 BE) ·
+///   [85..93]deadline(u64 8 BE) · [93..125]context · [125..157]nullifier · [157..189]accessor ·
+///   [189..221]recipient_pub
+const CLAIM_TYPE_BOND_OPEN: u32 = 15;
+/// The contiguous (token ‖ min_amount ‖ deadline) span in the bond-OPEN journal hashed to form `req_id`.
+const REQ_OPEN_LO: usize = 37;
+const REQ_OPEN_HI: usize = 93;
+
 /// How many recent accepted `qual_root`s the gate keeps per requirement (kills the publish-then-prove race).
 /// Accepting an OLDER ring root stays sound (see the module docs): a non-revocable, extend-only qualifying
 /// lock cannot LEAVE the set while `now < deadline` (withdraw/claim need `now >= unlock_time >= deadline`),
@@ -112,6 +125,8 @@ pub enum BondError {
     /// `min_amount <= 0`: a zero/negative floor is not a bond claim (closes a direct-submit bypass).
     BadMinAmount = 12,
     NotAdmin = 13,
+    /// `submit_bond_open_proof` was called before the bond-OPEN guest image was pinned (`set_open_image_id`).
+    OpenImageNotSet = 14,
 }
 
 #[contracttype]
@@ -131,6 +146,22 @@ pub enum DataKey {
     Count,
     /// The i-th grant in the append-only history (persistent).
     Log(u32),
+    // ---- TRUE bond-only (no-approval) path. SEPARATE keyspaces from the bond-implies-membership path above,
+    // so a person can hold both an `is_granted` (membership-bound) grant AND an `is_open_granted` grant for
+    // the same req_id without a false NullifierUsed collision. ----
+    /// The pinned bond-OPEN guest image (persistent). Distinct from `Config.image_id` (the bond image).
+    OpenImageId,
+    /// A used bond-OPEN nullifier (persistent). Presence == used. Separate from `Nullifier`.
+    NullifierOpen(BytesN<32>),
+    /// A bond-OPEN grant keyed by (accessor, req_id) (persistent). Presence == admitted; validity is
+    /// `now < deadline` (see `is_open_granted`). Carries the proof-bound `recipient_pub`.
+    OpenGrant(BytesN<32>, BytesN<32>),
+    /// Latest bond-OPEN grant (persistent).
+    OpenLatest,
+    /// Total number of bond-OPEN grants appended (instance).
+    OpenCount,
+    /// The i-th bond-OPEN grant in the append-only history (persistent).
+    OpenLog(u32),
 }
 
 #[contracttype]
@@ -172,6 +203,48 @@ pub struct BondGrant {
 
 #[contractevent]
 pub struct BondGranted {
+    #[topic]
+    pub accessor: BytesN<32>,
+    #[topic]
+    pub req_id: BytesN<32>,
+    pub index: u32,
+    pub min_amount: i128,
+    pub deadline: u64,
+    pub ledger: u32,
+}
+
+/// A TRUE bond-only grant (claim_type 15). Like `BondGrant` but it records NO `member_root` (there is no
+/// membership requirement) and it DOES record the proof-bound `recipient_pub` the DR3 keepers seal the
+/// document key to (read back via `get_open_recipient_pub`).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BondOpenGrant {
+    /// Position in the bond-open append-only history (0-based).
+    pub index: u32,
+    /// The consenting accessor's raw 32-byte ed25519 key (committed in-proof + bound by the holder sig).
+    pub accessor: BytesN<32>,
+    /// The requirement id = sha256(token ‖ min_amount ‖ deadline) this grant is bound to.
+    pub req_id: BytesN<32>,
+    /// The bond token's 32-byte contract id (audit; component of req_id).
+    pub token: BytesN<32>,
+    /// The requirement's minimum amount (audit; component of req_id).
+    pub min_amount: i128,
+    /// = deadline: the bonded freshness boundary; ALSO this grant's expiry (`is_open_granted` true iff
+    /// `now < deadline`).
+    pub deadline: u64,
+    /// The recorded bond-open nullifier (one grant per identity per requirement, separate keyspace).
+    pub nullifier: BytesN<32>,
+    /// The qualifying-set root the proof was checked against (audit; recomputable from public state).
+    pub qual_root: BytesN<32>,
+    /// The proof-bound x25519 receiving key the DR3 keepers seal the document key to (bound by the in-guest
+    /// holder signature, so it cannot be swapped even though the accessor is public).
+    pub recipient_pub: BytesN<32>,
+    pub ledger: u32,
+    pub timestamp: u64,
+}
+
+#[contractevent]
+pub struct BondOpenGranted {
     #[topic]
     pub accessor: BytesN<32>,
     #[topic]
@@ -387,6 +460,149 @@ impl BondGate {
         Ok(grant)
     }
 
+    /// TRUE bond-only (no-approval) admission. Verifies a `bond_open_predicate` proof (claim_type 15),
+    /// recompute `req_id`, bind it to a recent qualifying root + the deadline, reject bond-open nullifier
+    /// reuse, and record a grant keyed to `(accessor, req_id)` that carries the proof-bound `recipient_pub`.
+    /// NO `member_root` is recorded or required (that is what makes it approval-free). Reuses the SAME
+    /// `QualRing(req_id)` as `submit_bond_proof` (identical req_id span), so one indexer serves both paths.
+    /// PERMISSIONLESS (the in-guest holder sig is the consent).
+    pub fn submit_bond_open_proof(
+        env: Env,
+        seal: Bytes,
+        image_id: BytesN<32>,
+        journal: Bytes,
+    ) -> Result<BondOpenGrant, BondError> {
+        let cfg = load_config(&env)?;
+
+        // (1) image pin against the SEPARATE bond-open image (set via set_open_image_id). Fails closed if
+        // the bond-open guest was never pinned.
+        let open_image: BytesN<32> = env
+            .storage()
+            .instance()
+            .get(&DataKey::OpenImageId)
+            .ok_or(BondError::OpenImageNotSet)?;
+        if image_id != open_image {
+            return Err(BondError::ImageMismatch);
+        }
+
+        // (2) recompute the journal digest on-chain (binds parsed fields to the proof).
+        if journal.len() != JOURNAL_LEN {
+            return Err(BondError::MalformedJournal);
+        }
+        let digest: BytesN<32> = env.crypto().sha256(&journal).into();
+
+        // (3) cross-verify against the bare Groth16 verifier.
+        let verifier = RiscZeroVerifierClient::new(&env, &cfg.verifier);
+        match verifier.try_verify(&seal, &image_id, &digest) {
+            Ok(Ok(())) => {}
+            _ => return Err(BondError::ProofInvalid),
+        }
+
+        // (4) parse + policy-check the bond-open journal layout.
+        let mut jb = [0u8; 221];
+        journal.copy_into_slice(&mut jb);
+        if jb[0] != 1 {
+            return Err(BondError::ResultNotTrue);
+        }
+        let claim_type = be_u32(&jb, 1);
+        if claim_type != CLAIM_TYPE_BOND_OPEN {
+            return Err(BondError::ClaimTypeMismatch);
+        }
+        let qual_root = bytes32(&env, &jb, 5);
+        let token = bytes32(&env, &jb, 37);
+        let min_amount = be_i128(&jb, 69);
+        let deadline = be_u64(&jb, 85);
+        let context = bytes32(&env, &jb, 93);
+        let nullifier = bytes32(&env, &jb, 125);
+        let accessor = bytes32(&env, &jb, 157);
+        let recipient_pub = bytes32(&env, &jb, 189);
+
+        // (5) a zero/negative floor is not a bond claim (closes a direct-submit bypass of the backend guard).
+        if min_amount <= 0 {
+            return Err(BondError::BadMinAmount);
+        }
+
+        // (6) recompute req_id over the bond-open contiguous span (token ‖ min_amount ‖ deadline), and require
+        // the nullifier context to be bound to it (so the nullifier is per-requirement).
+        let req_input = Bytes::from_slice(&env, &jb[REQ_OPEN_LO..REQ_OPEN_HI]);
+        let req_id: BytesN<32> = env.crypto().sha256(&req_input).into();
+        if context != req_id {
+            return Err(BondError::ContextMismatch);
+        }
+
+        // (7) qualifying-set binding — the proven root must be a recent accepted root for THIS requirement
+        // (the SAME ring the bond-implies-membership path publishes; identical req_id span).
+        let ring: Vec<BytesN<32>> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::QualRing(req_id.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+        if !ring.iter().any(|r| r == qual_root) {
+            return Err(BondError::QualRootUnknown);
+        }
+
+        // (8) freshness — deadline-encoded (sound because qualifying locks are non-revocable).
+        let now = env.ledger().timestamp();
+        if now >= deadline {
+            return Err(BondError::DeadlinePassed);
+        }
+
+        // (9) bond-open nullifier — one grant per identity per requirement (separate keyspace).
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::NullifierOpen(nullifier.clone()))
+        {
+            return Err(BondError::NullifierUsed);
+        }
+
+        // (10) record the nullifier + the grant (keyed to (accessor, req_id), expiring at deadline) + log + emit.
+        let index: u32 = env.storage().instance().get(&DataKey::OpenCount).unwrap_or(0);
+        let grant = BondOpenGrant {
+            index,
+            accessor: accessor.clone(),
+            req_id: req_id.clone(),
+            token,
+            min_amount,
+            deadline,
+            nullifier: nullifier.clone(),
+            qual_root,
+            recipient_pub,
+            ledger: env.ledger().sequence(),
+            timestamp: now,
+        };
+
+        let pstore = env.storage().persistent();
+        pstore.set(&DataKey::NullifierOpen(nullifier), &true);
+        pstore.extend_ttl(&DataKey::NullifierOpen(grant.nullifier.clone()), THRESHOLD, BUMP);
+        pstore.set(&DataKey::OpenLog(index), &grant);
+        pstore.extend_ttl(&DataKey::OpenLog(index), THRESHOLD, BUMP);
+        pstore.set(&DataKey::OpenLatest, &grant);
+        pstore.extend_ttl(&DataKey::OpenLatest, THRESHOLD, BUMP);
+        pstore.set(&DataKey::OpenGrant(accessor.clone(), req_id.clone()), &grant);
+        pstore.extend_ttl(
+            &DataKey::OpenGrant(accessor.clone(), req_id.clone()),
+            THRESHOLD,
+            BUMP,
+        );
+        env.storage()
+            .instance()
+            .set(&DataKey::OpenCount, &index.saturating_add(1));
+        bump_instance(&env);
+
+        BondOpenGranted {
+            accessor,
+            req_id,
+            index,
+            min_amount,
+            deadline,
+            ledger: grant.ledger,
+        }
+        .publish(&env);
+
+        Ok(grant)
+    }
+
     // ---- reads ----
 
     /// **The live Bonded-Access decision the DataRoom reads.** True iff `accessor` holds a grant for `req_id`
@@ -430,6 +646,56 @@ impl BondGate {
     /// for the live decision).
     pub fn get_grant(env: Env, accessor: BytesN<32>, req_id: BytesN<32>) -> Option<BondGrant> {
         env.storage().persistent().get(&DataKey::Grant(accessor, req_id))
+    }
+
+    /// **The live TRUE bond-only decision the DataRoom reads.** True iff `accessor` holds a bond-open grant
+    /// for `req_id` whose deadline has not passed. There is NO `member_root` binding here (that is the point):
+    /// a reader who proved a qualifying bond is admitted with no approval. Deadline-encoded (sound because
+    /// qualifying locks are non-revocable). Permissionless.
+    pub fn is_open_granted(env: Env, accessor: BytesN<32>, req_id: BytesN<32>) -> bool {
+        let grant: BondOpenGrant = match env
+            .storage()
+            .persistent()
+            .get(&DataKey::OpenGrant(accessor, req_id))
+        {
+            Some(g) => g,
+            None => return false,
+        };
+        env.ledger().timestamp() < grant.deadline
+    }
+
+    /// The raw stored bond-open grant for `(accessor, req_id)`.
+    pub fn get_open_grant(env: Env, accessor: BytesN<32>, req_id: BytesN<32>) -> Option<BondOpenGrant> {
+        env.storage().persistent().get(&DataKey::OpenGrant(accessor, req_id))
+    }
+
+    /// The proof-bound `recipient_pub` for a bond-open grant (the 32 bytes the DR3 keepers seal to). Returns
+    /// `None` if there is no grant. A cheap cross-contract read for the DataRoom's `admission_recipient_pub`.
+    pub fn get_open_recipient_pub(
+        env: Env,
+        accessor: BytesN<32>,
+        req_id: BytesN<32>,
+    ) -> Option<BytesN<32>> {
+        env.storage()
+            .persistent()
+            .get::<DataKey, BondOpenGrant>(&DataKey::OpenGrant(accessor, req_id))
+            .map(|g| g.recipient_pub)
+    }
+
+    pub fn is_open_nullifier_used(env: Env, nullifier: BytesN<32>) -> bool {
+        env.storage().persistent().has(&DataKey::NullifierOpen(nullifier))
+    }
+
+    pub fn get_open_latest(env: Env) -> Option<BondOpenGrant> {
+        env.storage().persistent().get(&DataKey::OpenLatest)
+    }
+
+    pub fn get_open_count(env: Env) -> u32 {
+        env.storage().instance().get(&DataKey::OpenCount).unwrap_or(0)
+    }
+
+    pub fn get_open_by_index(env: Env, index: u32) -> Option<BondOpenGrant> {
+        env.storage().persistent().get(&DataKey::OpenLog(index))
     }
 
     pub fn is_nullifier_used(env: Env, nullifier: BytesN<32>) -> bool {
@@ -533,6 +799,20 @@ impl BondGate {
         cfg.image_id = image_id;
         env.storage().instance().set(&DataKey::Config, &cfg);
         bump_instance(&env);
+    }
+
+    /// Pin the canonical bond-OPEN guest image (claim_type 15), enabling `submit_bond_open_proof`. Stored
+    /// separately from `Config.image_id` (the bond image). Admin-gated.
+    pub fn set_open_image_id(env: Env, image_id: BytesN<32>) {
+        let cfg = Self::get_config(env.clone());
+        cfg.admin.require_auth();
+        env.storage().instance().set(&DataKey::OpenImageId, &image_id);
+        bump_instance(&env);
+    }
+
+    /// The pinned bond-OPEN guest image, if set (else `None` — `submit_bond_open_proof` fails closed).
+    pub fn get_open_image_id(env: Env) -> Option<BytesN<32>> {
+        env.storage().instance().get(&DataKey::OpenImageId)
     }
 
     pub fn set_verifier(env: Env, verifier: Address) {
