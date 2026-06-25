@@ -233,6 +233,50 @@ test("tier: load a bond you already hold, and the already-held detection", async
   expect(errs, errs.join("\n")).toHaveLength(0);
 });
 
+test("tier: a granted requirement disables Prove and shows up in Your access", async ({ page }) => {
+  const ACCESSOR = "04".repeat(32);
+  const REQ = "cd".repeat(32);
+  await page.addInitScript(mock(DEPLOYER));
+  // Seed a local grant record for this handle (the chain carries no token/amount label, so the list reads it
+  // from here). Keyed by the accessor the enroll stub mints.
+  const seed = JSON.stringify([{ reqId: REQ, tokenSymbol: "TUSD", minAmount: "25000000000", decimals: 7, deadline: LOCK_UNLOCK }]);
+  await page.addInitScript(`localStorage.setItem(${JSON.stringify(`zkorage-bond-grants.${ACCESSOR}`)}, ${JSON.stringify(seed)});`);
+  await stubHorizon(page);
+  stubBond(page);
+  // Override the status read to GRANTED (registered after stubBond, so it wins).
+  await page.route("**/bonded/bond/status**", (route) =>
+    route.fulfill({
+      json: {
+        accessor: ACCESSOR,
+        reqId: REQ,
+        is_granted: true,
+        grant: { index: 0, accessor: ACCESSOR, req_id: REQ, deadline: String(LOCK_UNLOCK), nullifier: HEX32(0x00), member_root: HEX32(0x00), qual_root: HEX32(0x00), ledger: 1, timestamp: "0" },
+        bondGateId: "G",
+      },
+    }),
+  );
+
+  await page.goto("/app/bonded/tier");
+  await expect(page.getByTestId("bonded-tier")).toBeVisible();
+  await page.getByTestId("tier-create-identity").click();
+  await expect(page.getByTestId("tier-identity")).toBeVisible({ timeout: 15_000 });
+
+  // Granted -> Prove is disabled and reads "You already have access", with the helper line.
+  const prove = page.getByTestId("tier-prove");
+  await expect(prove).toBeDisabled({ timeout: 15_000 });
+  await expect(prove).toContainText("You already have access");
+  await expect(page.getByTestId("tier-granted-help")).toBeVisible();
+
+  // The access list shows the live-checked, currently-loaded grant.
+  await expect(page.getByTestId("tier-access")).toBeVisible();
+  const row = page.getByTestId("tier-access-row");
+  await expect(row).toHaveCount(1);
+  await expect(row).toContainText("2,500 TUSD");
+  await expect(row).toContainText("active until");
+  await expect(row).toContainText("2030");
+  await expect(row).toContainText("loaded");
+});
+
 test("tier: switching wallets in Freighter drops the previous wallet's handle", async ({ page }) => {
   const WALLET_B = TUSD_ISSUER; // a different valid testnet address
   await page.addInitScript(mock(DEPLOYER));
