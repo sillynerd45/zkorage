@@ -1314,6 +1314,25 @@ export class ZkorageClient {
     return Boolean(await this.simRead(this.cfg.contracts.bondGate, "is_granted_for", [scBytes(accessorHex), scBytes(reqIdHex), scBytes(memberRootHex)]));
   }
 
+  /** The bond gate's TRUE bond-only decision for (accessor, req_id): an unexpired bond-OPEN grant exists. No
+   *  member-root binding (no membership/approval) — used by a bond-only room. */
+  async isBondOpenGranted(accessorHex: string, reqIdHex: string): Promise<boolean> {
+    return Boolean(await this.simRead(this.cfg.contracts.bondGate, "is_open_granted", [scBytes(accessorHex), scBytes(reqIdHex)]));
+  }
+
+  /** The proof-bound `recipient_pub` (hex) recorded by a bond-OPEN grant, or null if there is no grant. The
+   *  key the DR3 keepers seal the document key to for a bond-only room. */
+  async getBondOpenRecipientPub(accessorHex: string, reqIdHex: string): Promise<string | null> {
+    const v = await this.simRead(this.cfg.contracts.bondGate, "get_open_recipient_pub", [scBytes(accessorHex), scBytes(reqIdHex)]);
+    return v == null ? null : bytesToHex(v);
+  }
+
+  /** Whether a room is in TRUE bond-only (no-approval) mode: opening its documents requires only a qualifying
+   *  bond proven anonymously, with no owner approval and no membership enrollment. */
+  async isBondOpenRoom(roomIdHex: string): Promise<boolean> {
+    return Boolean(await this.simRead(this.cfg.contracts.dataroom, "is_bond_open", [scBytes(roomIdHex)]));
+  }
+
   /** The bond gate's accepted `qual_root` ring (oldest first) for a requirement. */
   async getBondQualRing(reqIdHex: string): Promise<string[]> {
     const v = await this.simRead(this.cfg.contracts.bondGate, "get_qual_ring", [scBytes(reqIdHex)]);

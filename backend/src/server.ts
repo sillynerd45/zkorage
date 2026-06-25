@@ -85,9 +85,10 @@ import {
   isTierGranted, getTierGrant, isTierNullifierUsed, getTierConfig, getTierMemberRoot, getTierQualRing, getTierGrantCount,
 } from "./tier.js";
 import {
-  BOND_GATE_ID, BOND_IMAGE_ID, BOND_MIN_ANON_SET, BOND_STANDALONE_SET_ID,
-  buildBondJob, buildBondQualSet, reqIdHex as bondReqIdHex, qualCommitment as bondQualCommitment,
+  BOND_GATE_ID, BOND_IMAGE_ID, BOND_OPEN_IMAGE_ID, BOND_MIN_ANON_SET, BOND_STANDALONE_SET_ID,
+  buildBondJob, buildBondOpenJob, buildBondQualSet, reqIdHex as bondReqIdHex, qualCommitment as bondQualCommitment,
   isBondGrantedFor, isBondGranted, getBondGrant, isBondNullifierUsed, getBondQualRing, getBondConfig, getBondGrantCount,
+  isBondOpenGranted, getBondOpenGrant, getBondOpenRecipientPub, getBondOpenCount,
 } from "./bond.js";
 import { verifyBundle, cliRecipe, type AuditContext } from "./audit.js";
 
@@ -4961,6 +4962,142 @@ app.get("/bonded/bond/nullifier/:nullifier", async (req, res) => {
   }
 });
 
+// ───────────── TRUE bond-only (no-approval) Bonded Access ─────────────
+// Same requirement + qual-root indexer as the bond path, but the proof DROPS the member tree (no membership/
+// approval) and carries a proof-bound recipient_pub. A reader who locked a qualifying bond opens a bond-only
+// room with NO owner approval and NO enrollment; the grant (keyed accessor+req_id) admits is_doc_admitted and
+// the keepers seal the document key to the proof-bound recipient_pub.
+
+// Background: poll the prover for a bond-open job and submit submit_bond_open_proof, serialized on the shared
+// relay key (so concurrent submits don't race the sequence number). Mirrors pollAndSubmitBond.
+async function pollAndSubmitBondOpen(jobId: string): Promise<void> {
+  if (!PROVER_URL || !BOND_GATE_ID || bondBgJobs.has(jobId)) return;
+  bondBgJobs.add(jobId);
+  const until = Date.now() + BOND_BG_TIMEOUT_MS;
+  try {
+    while (Date.now() < until) {
+      await new Promise((r) => setTimeout(r, 4000));
+      let st: { status?: string; bundle?: Bundle; error?: string };
+      try {
+        const r = await fetch(`${PROVER_URL}/prove/${jobId}`);
+        st = (await r.json()) as typeof st;
+      } catch {
+        continue;
+      }
+      if (st.status === "error") {
+        console.error(`[bond-open-bg] prove ${jobId} failed: ${st.error ?? "unknown"}`);
+        return;
+      }
+      if (st.status === "done" && st.bundle) {
+        const b = st.bundle;
+        if (!b.seal || !b.image_id || !b.journal) {
+          console.error(`[bond-open-bg] prove ${jobId} done but bundle incomplete`);
+          return;
+        }
+        const { seal, image_id, journal } = b;
+        try {
+          await withTierAdminLock(() => invokeContract(BOND_GATE_ID, "submit_bond_open_proof", [scBytes(seal), scBytes(image_id), scBytes(journal)]));
+          console.log(`[bond-open-bg] submitted ${jobId}`);
+        } catch (e) {
+          console.error(`[bond-open-bg] submit ${jobId} failed: ${err(e)}`);
+        }
+        return;
+      }
+    }
+    console.error(`[bond-open-bg] prove ${jobId} timed out after ${BOND_BG_TIMEOUT_MS}ms`);
+  } finally {
+    bondBgJobs.delete(jobId);
+  }
+}
+
+// Build the bond-open witness (the live qualifying-lock path for the requirement, NO member tree) + the NEW-5
+// holder sig over the recipient_pub, auto-publish the qual root, and enqueue the bond-open proof
+// (kind=bond-open) worker-first. No enrollment needed. Poll /prove-status/:id, OR pass background:true.
+app.post("/bonded/bond-open/prove", async (req, res) => {
+  if (!PROVER_URL) return res.status(503).json({ error: "PROVER_URL not configured" });
+  if (!BOND_GATE_ID) return res.status(503).json({ error: "BOND_GATE_ID not configured" });
+  let idSecret: Uint8Array, idTrapdoor: Uint8Array, holderSeed: Uint8Array, recipientPub: Uint8Array;
+  let token: string, minAmount: bigint, deadline: number, reqId: string;
+  try {
+    idSecret = hex32(req.body?.idSecret, "idSecret");
+    idTrapdoor = hex32(req.body?.idTrapdoor, "idTrapdoor");
+    holderSeed = hex32(req.body?.holderSeed, "holderSeed");
+    recipientPub = hex32(req.body?.recipientPub, "recipientPub");
+    ({ token, minAmount, deadline, reqId } = parseBondReq(req.body ?? {}));
+  } catch (e) {
+    return res.status(400).json({ error: err(e) });
+  }
+  try {
+    const built = await buildBondOpenJob({ idSecret, idTrapdoor, holderSeed, recipientPub, token, minAmount, deadline });
+    const ring = await getBondQualRing(reqId).catch(() => [] as string[]);
+    if (!ring.includes(built.qualRoot)) {
+      await withTierAdminLock(() => invokeContract(BOND_GATE_ID, "set_qual_root", [scBytes(reqId), scBytes(built.qualRoot)]));
+    }
+    const r = await fetch(`${PROVER_URL}/prove`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(built.job),
+    });
+    const j = (await r.json()) as { job_id?: string; error?: string };
+    if (!r.ok || !j.job_id) return res.status(502).json({ error: j.error || "prover submit failed" });
+    const background = Boolean(req.body?.background);
+    if (background) void pollAndSubmitBondOpen(j.job_id);
+    res.json({
+      jobId: j.job_id, reqId, qualRoot: built.qualRoot, nullifier: built.nullifier, accessor: built.accessor,
+      recipientPub: built.recipientPub, token, minAmount: minAmount.toString(), deadline, anonSetSize: built.qualSize,
+      background,
+      note: background
+        ? "the backend will finish + submit this proof; poll /bonded/bond-open/status for is_granted"
+        : "poll /prove-status/<jobId>; on done, POST /bonded/bond-open/submit {seal,image_id,journal}",
+    });
+  } catch (e) {
+    res.status(502).json({ error: err(e) });
+  }
+});
+
+// Submit a bond-open proof: submit_bond_open_proof (PERMISSIONLESS — the in-guest NEW-5 holder sig is consent).
+app.post("/bonded/bond-open/submit", async (req, res) => {
+  if (!BOND_GATE_ID) return res.status(503).json({ error: "BOND_GATE_ID not configured" });
+  const b = req.body as Bundle;
+  if (!b?.seal || !b?.image_id || !b?.journal) {
+    return res.status(400).json({ error: "seal, image_id, journal (raw hex) required" });
+  }
+  const isHex = (s: string) => /^[0-9a-fA-F]*$/.test(s) && s.length % 2 === 0;
+  if (!isHex(b.seal) || !isHex(b.image_id) || !isHex(b.journal)) {
+    return res.status(400).json({ error: "seal/image_id/journal must be raw hex" });
+  }
+  if (b.journal.length !== 442) {
+    return res.status(400).json({ error: "journal must be the 221-byte bond-open journal (442 hex chars)" });
+  }
+  if (b.image_id.toLowerCase() !== BOND_OPEN_IMAGE_ID.toLowerCase()) {
+    return res.status(400).json({ error: "image_id is not the pinned bond-open guest image" });
+  }
+  const { seal, image_id, journal } = b;
+  try {
+    const out = await withTierAdminLock(() => invokeContract(BOND_GATE_ID, "submit_bond_open_proof", [scBytes(seal), scBytes(image_id), scBytes(journal)]));
+    res.json({ ok: true, txHash: out.hash, cost: out.cost, grant: jsonSafe(out.returnValue), bondGateId: BOND_GATE_ID });
+  } catch (e) {
+    res.json({ ok: false, error: err(e), bondGateId: BOND_GATE_ID });
+  }
+});
+
+// The live bond-only decision for an accessor + requirement (no member_root: bond-only has no membership).
+app.get("/bonded/bond-open/status", async (req, res) => {
+  if (!BOND_GATE_ID) return res.status(503).json({ error: "BOND_GATE_ID not configured" });
+  try {
+    const accessorHex = toHex(hex32(req.query.accessor, "accessor"));
+    const reqId = toBytes32(req.query.req_id);
+    const [granted, grant, recipientPub] = await Promise.all([
+      isBondOpenGranted(accessorHex, reqId),
+      getBondOpenGrant(accessorHex, reqId),
+      getBondOpenRecipientPub(accessorHex, reqId),
+    ]);
+    res.json({ accessor: accessorHex, reqId, is_granted: granted, recipientPub, grant, bondGateId: BOND_GATE_ID });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
 // BA4/BA5 — the Data Room's Bonded Access requirement (room-owner config). The room owner sets ONE bond
 // requirement per room (token, min amount, deadline); a reader opening any of the room's documents must then
 // prove a qualifying anonymous bond (which ALSO proves room membership — Option A), so the bond leg REPLACES
@@ -4993,13 +5130,18 @@ app.get("/dataroom/bond-requirement/:roomId", async (req, res) => {
       ({ value } = await readContract(DATAROOM_ID, "get_bond_requirement", [scBytes(roomIdHex)]));
       if (value) scope = "room";
     }
-    if (!value) return res.json({ found: false, roomId: roomIdHex, doc: docIdHex });
+    // Whether the room is in TRUE bond-only (no-approval) mode (the open gate leg, no membership). Read it
+    // regardless of scope so the reader UI knows to skip the membership/enrollment path.
+    const { value: bondOpenVal } = await readContract(DATAROOM_ID, "is_bond_open", [scBytes(roomIdHex)]);
+    const bondOpen = Boolean(bondOpenVal);
+    if (!value) return res.json({ found: false, roomId: roomIdHex, doc: docIdHex, bondOpen });
     const r = jsonSafe(value) as { gate?: string; req_id?: string; token?: string; min_amount?: string; deadline?: string };
     const token = String(r.token ?? "");
     const minAmount = String(r.min_amount ?? "0");
     const deadline = Number(r.deadline ?? 0);
     res.json({
-      found: true, roomId: roomIdHex, doc: docIdHex, scope,
+      found: true, roomId: roomIdHex, doc: docIdHex, scope, bondOpen,
+      mode: bondOpen ? "open" : "membership",
       gate: r.gate ?? BOND_GATE_ID,
       reqId: r.req_id ?? bondReqIdHex(token, BigInt(minAmount), deadline),
       token, minAmount, deadline,
@@ -5036,13 +5178,17 @@ app.post("/dataroom/bond-requirement", async (req, res) => {
     const room = roomVal ? (jsonSafe(roomVal) as { owner?: string }) : null;
     if (!room) return res.status(404).json({ error: "room not found" });
     if (room.owner !== owner) return res.status(403).json({ error: "only the room owner may set a bond requirement" });
+    // mode "open" = TRUE bond-only (no approval, no membership): use set_bond_open_requirement. Default
+    // "membership" = the legacy bond-implies-membership path (needs an approved member set / eligible_root).
+    const mode = String(req.body?.mode ?? "membership") === "open" ? "open" : "membership";
+    const fn = mode === "open" ? "set_bond_open_requirement" : "set_bond_requirement";
     const memberCount = getEligible(roomIdHex).length;
-    const idField = { roomId: roomIdHex, gate: BOND_GATE_ID, reqId, token, minAmount: minAmount.toString(), deadline: String(deadline), memberCount: String(memberCount) };
+    const idField = { roomId: roomIdHex, gate: BOND_GATE_ID, reqId, token, minAmount: minAmount.toString(), deadline: String(deadline), mode, memberCount: String(memberCount) };
     const args = [scBytes(roomIdHex), scAddress(BOND_GATE_ID), scBytes(reqId), scAddress(token), scI128(minAmount), scU64(deadline)];
     if (source) {
-      if (await maybeXdr(req, res, DATAROOM_ID, "set_bond_requirement", args, idField)) return;
+      if (await maybeXdr(req, res, DATAROOM_ID, fn, args, idField)) return;
     }
-    const out = await invokeContract(DATAROOM_ID, "set_bond_requirement", args);
+    const out = await invokeContract(DATAROOM_ID, fn, args);
     res.json({ ok: true, txHash: out.hash, cost: out.cost, ...idField });
   } catch (e) {
     res.json({ ok: false, error: err(e), roomId: roomIdHex });

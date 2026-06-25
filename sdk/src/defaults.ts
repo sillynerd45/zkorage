@@ -249,6 +249,15 @@ export const BOND_IMAGE_ID =
 /** Bonded Access claim_type (enrolled room member ∧ qualifying bond for a requirement, anonymous). */
 export const CLAIM_TYPE_BOND = 14;
 
+/** TRUE bond-only (no-approval) Bonded Access: the canonical bond-OPEN guest image_id the gate pins via
+ * `set_open_image_id`. Same requirement binding as the bond guest, but it DROPS the member tree (no
+ * membership/approval) and ADDS a proof-bound recipient_pub so the DR3 keepers can seal the document key. */
+export const BOND_OPEN_IMAGE_ID =
+  "a035500d61ee7be7164c23e44c7a5df87a3b38d1e6bb931d7612ccf81de58b78";
+
+/** TRUE bond-only Bonded Access claim_type (qualifying bond for a requirement, anonymous, no membership). */
+export const CLAIM_TYPE_BOND_OPEN = 15;
+
 /** A stable demo anonymous-tier GRANT anchored on testnet (gate `tier_gate_BP5`). The fixed demo member
  * (id 0x11/0x22, holder 0x03 -> accessor `ed4928c6`, the same demo member as DR2/DR3/DR6) proved the demo
  * tier ANONYMOUSLY: an enrolled member AND a non-revocable qualifying bond (floor 100 zkUSD, locked until X).

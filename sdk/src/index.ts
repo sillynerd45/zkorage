@@ -48,6 +48,8 @@ export {
   DEMO_TIER,
   BOND_IMAGE_ID,
   CLAIM_TYPE_BOND,
+  BOND_OPEN_IMAGE_ID,
+  CLAIM_TYPE_BOND_OPEN,
 } from "./defaults.js";
 export { bondReqId, bondAccessCommitment } from "./client.js";
 export type { BondRequirementView } from "./client.js";
