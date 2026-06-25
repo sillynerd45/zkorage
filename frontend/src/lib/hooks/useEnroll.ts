@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useWallet, useTxSigner } from "@/lib/wallet/WalletContext";
 import { useDataRoomIdentity } from "@/lib/hooks/useDataRoomIdentity";
 import {
@@ -17,6 +17,19 @@ import {
 } from "@/lib/api";
 import { isHex32 } from "@/lib/format";
 import { type JoinRequest, requestsKey, readJoinRequests } from "@/lib/dataroom/requests";
+
+// Module-level caches for the owner view (the rooms you own + each room's pending list + your last selection),
+// so leaving and returning to Room Management (or the Approve sub-tab) repaints the room list, the selected
+// room, and its loaded data at once, then a background refresh swaps in any change. They survive the unmount
+// within one app session (a full reload clears them) and only hold public on-chain / off-chain index data,
+// never a key or a secret. This mirrors the bonded locks cache in useBonded.
+const ownerRoomsCache = new Map<string, MyRoom[]>(); // keyed by wallet address
+const selectedOwnerCache = new Map<string, string>(); // keyed by wallet address -> last selected owner room
+const pendingCache = new Map<string, { pending: EnrollRequestItem[]; memberCount: number }>(); // keyed by room id
+
+// A background refresh that found nothing new should not re-render the list, so compare before swapping.
+const sameRooms = (a: MyRoom[], b: MyRoom[]) =>
+  a.length === b.length && JSON.stringify(a) === JSON.stringify(b);
 
 // M1 — request-then-approve enrollment. Member side: derive your per-room id_commitment from your wallet
 // (sign-to-derive, M0), then request to join in ONE step. Owner side: see pending requests for a room you own
@@ -139,79 +152,135 @@ export function useEnroll() {
   }, [address, id, persistRequests]);
 
   // --- owner: approve members of a room you own ---
-  const [myRooms, setMyRooms] = useState<MyRoom[]>([]);
-  const [ownerRoom, setOwnerRoom] = useState("");
-  const [pending, setPending] = useState<EnrollRequestItem[]>([]);
-  const [memberCount, setMemberCount] = useState(0);
-  const [ownerBusy, setOwnerBusy] = useState(false);
+  // Seed the owner view from the module caches so the selected room + its pending list survive a tab switch
+  // (an unmount). The visibility seeds below read the same cached room record. Computed each render; only the
+  // useState initializers (first render) consume them.
+  const seededRooms = connected && address ? ownerRoomsCache.get(address) ?? [] : [];
+  const seededOwnerRoom = connected && address ? selectedOwnerCache.get(address) ?? "" : "";
+  const seededRec = seededOwnerRoom ? seededRooms.find((r) => r.roomId === seededOwnerRoom) : undefined;
+  const seededVis = (seededRec?.visibility as RoomVisibility) ?? "private";
+  const seededName = (seededRec?.name ?? "").trim();
+  const seededDesc = (seededRec?.description ?? "").trim();
+  const seededPending = seededOwnerRoom ? pendingCache.get(seededOwnerRoom) : undefined;
+
+  const [myRooms, setMyRooms] = useState<MyRoom[]>(seededRooms);
+  const [myRoomsLoading, setMyRoomsLoading] = useState(false); // cold: loading the owner room list (skeleton)
+  const [myRoomsRefreshing, setMyRoomsRefreshing] = useState(false); // warm: refreshing the cached room list
+  const [ownerRoom, setOwnerRoom] = useState(seededOwnerRoom);
+  const [pending, setPending] = useState<EnrollRequestItem[]>(seededPending?.pending ?? []);
+  const [memberCount, setMemberCount] = useState(seededPending?.memberCount ?? 0);
+  const [ownerBusy, setOwnerBusy] = useState(false); // cold: loading a room's pending with nothing cached
+  const [pendingRefreshing, setPendingRefreshing] = useState(false); // warm: refreshing the cached pending list
   const [ownerErr, setOwnerErr] = useState<string | null>(null);
   const [acting, setActing] = useState<string | null>(null);
   const [approvingAll, setApprovingAll] = useState(false);
+  // The most recently requested room, so a slow pending response for room A cannot overwrite room B's list.
+  const pendingReq = useRef(seededOwnerRoom);
 
-  useEffect(() => {
-    if (!connected || !address) {
-      setMyRooms([]);
-      return;
-    }
-    getMyRooms(address).then((r) => setMyRooms(r.rooms)).catch(() => setMyRooms([]));
-  }, [connected, address]);
+  // Load the rooms the wallet owns: paint the cached list at once when we have one (then refresh in the
+  // background), otherwise show the skeleton while the first read runs.
+  const loadOwnerRooms = useCallback((addr: string | null) => {
+    if (!addr) { setMyRooms([]); setMyRoomsLoading(false); setMyRoomsRefreshing(false); return; }
+    const cached = ownerRoomsCache.get(addr);
+    if (cached) { setMyRooms(cached); setMyRoomsLoading(false); setMyRoomsRefreshing(true); }
+    else { setMyRoomsLoading(true); setMyRoomsRefreshing(false); }
+    getMyRooms(addr)
+      .then((r) => { ownerRoomsCache.set(addr, r.rooms); setMyRooms((prev) => (sameRooms(prev, r.rooms) ? prev : r.rooms)); })
+      .catch(() => { if (!cached) setMyRooms([]); }) // keep the cached list on a refresh error
+      .finally(() => { setMyRoomsLoading(false); setMyRoomsRefreshing(false); });
+  }, []);
 
   // Load the local "your requests" history for the connected wallet (last-known statuses; no prompt).
   useEffect(() => { loadRequests(connected ? address : null); }, [connected, address, loadRequests]);
 
+  // Load a room's pending requests + member count: paint the cached values at once when we have them (then
+  // refresh in the background), otherwise show the loading state while the first read runs. A race guard drops
+  // a stale response so selecting room B while room A is loading never shows A's list under B.
   const loadPending = useCallback(async (room: string) => {
-    if (!isHex32(room)) {
-      setPending([]);
-      setMemberCount(0);
-      return;
-    }
-    setOwnerBusy(true);
+    if (!isHex32(room)) { setPending([]); setMemberCount(0); setOwnerBusy(false); setPendingRefreshing(false); return; }
+    const r = room.trim();
+    pendingReq.current = r;
+    const cached = pendingCache.get(r);
+    if (cached) { setPending(cached.pending); setMemberCount(cached.memberCount); setOwnerBusy(false); setPendingRefreshing(true); }
+    else { setOwnerBusy(true); setPendingRefreshing(false); }
     setOwnerErr(null);
     try {
-      const r = await getEnrollRequests(room.trim());
-      setPending(r.pending);
-      setMemberCount(r.memberCount);
+      const resp = await getEnrollRequests(r);
+      pendingCache.set(r, { pending: resp.pending, memberCount: resp.memberCount });
+      if (pendingReq.current !== r) return; // a newer room was selected; ignore this stale response
+      setPending(resp.pending);
+      setMemberCount(resp.memberCount);
     } catch (e) {
-      setOwnerErr(String((e as Error).message ?? e));
+      if (pendingReq.current === r) {
+        setOwnerErr(String((e as Error).message ?? e));
+        if (!cached) { setPending([]); setMemberCount(0); } // keep the cached list on a refresh error
+      }
     } finally {
-      setOwnerBusy(false);
+      if (pendingReq.current === r) { setOwnerBusy(false); setPendingRefreshing(false); }
     }
   }, []);
 
   // --- owner: room visibility (discovery tier) ---
-  const [vis, setVis] = useState<RoomVisibility>("private");
-  const [visName, setVisName] = useState("");
-  const [visDescription, setVisDescription] = useState("");
+  // Seeded from the cached room record so a restored selection keeps its visibility form without a flash.
+  const [vis, setVis] = useState<RoomVisibility>(seededVis);
+  const [visName, setVisName] = useState(seededName);
+  const [visDescription, setVisDescription] = useState(seededDesc);
   const [visBusy, setVisBusy] = useState(false);
   const [visErr, setVisErr] = useState<string | null>(null);
   const [visSaved, setVisSaved] = useState(false);
   // The last-saved snapshot, so the UI can disable Save when nothing changed (e.g. Private -> Private). Names
   // are compared trimmed, with null/undefined treated as "" so a stored-null and an empty input read as equal.
-  const [savedVis, setSavedVis] = useState<RoomVisibility>("private");
-  const [savedName, setSavedName] = useState("");
-  const [savedDescription, setSavedDescription] = useState("");
+  const [savedVis, setSavedVis] = useState<RoomVisibility>(seededVis);
+  const [savedName, setSavedName] = useState(seededName);
+  const [savedDescription, setSavedDescription] = useState(seededDesc);
 
-  const selectOwnerRoom = useCallback(
-    (room: string) => {
+  // Apply an owner-room selection: set it, prefill the visibility form from the room's own record, and load
+  // its pending list. It reads the room record from the module cache (not the myRooms state) so it stays
+  // stable and the restore effect can call it without re-running on every list refresh.
+  const applyOwnerSelection = useCallback(
+    (room: string, addr: string | null) => {
       setOwnerRoom(room);
-      // Prefill the visibility control from the owner's own room record (the /dataroom/rooms read), and seed
-      // the saved snapshot from the same record so Save starts disabled until something actually changes.
-      const rec = myRooms.find((r) => r.roomId === room);
+      setVisErr(null);
+      setVisSaved(false);
+      if (!room) {
+        setVis("private"); setVisName(""); setVisDescription("");
+        setSavedVis("private"); setSavedName(""); setSavedDescription("");
+        setPending([]); setMemberCount(0);
+        pendingReq.current = "";
+        return;
+      }
+      const rec = (addr ? ownerRoomsCache.get(addr) : undefined)?.find((r) => r.roomId === room);
       const v = (rec?.visibility as RoomVisibility) ?? "private";
       const n = (rec?.name ?? "").trim();
       const dsc = (rec?.description ?? "").trim();
-      setVis(v);
-      setVisName(n);
-      setVisDescription(dsc);
-      setSavedVis(v);
-      setSavedName(n);
-      setSavedDescription(dsc);
-      setVisErr(null);
-      setVisSaved(false);
+      setVis(v); setVisName(n); setVisDescription(dsc);
+      setSavedVis(v); setSavedName(n); setSavedDescription(dsc);
       loadPending(room);
     },
-    [loadPending, myRooms],
+    [loadPending],
   );
+
+  // Pick a room you own (from a click). Remember it so it is restored on return, then apply the selection.
+  const selectOwnerRoom = useCallback(
+    (room: string) => {
+      if (address) selectedOwnerCache.set(address, room);
+      applyOwnerSelection(room, address);
+    },
+    [address, applyOwnerSelection],
+  );
+
+  // On connect/return (or wallet switch), refresh the owner room list and restore the last-selected room so
+  // Room Management and the Approve sub-tab keep the room and its loaded data across a tab switch. The state
+  // is already seeded from cache for the first paint; this re-affirms it and runs the background refresh.
+  useEffect(() => {
+    const addr = connected ? address : null;
+    loadOwnerRooms(addr);
+    // Restore the last-selected room only if the wallet still owns it (loadOwnerRooms seeds the cache
+    // synchronously above), so a room that was removed never restores as a phantom selection.
+    const restored = addr ? selectedOwnerCache.get(addr) ?? "" : "";
+    const stillOwned = addr ? (ownerRoomsCache.get(addr) ?? []).some((r) => r.roomId === restored) : false;
+    applyOwnerSelection(stillOwned ? restored : "", addr);
+  }, [connected, address, loadOwnerRooms, applyOwnerSelection]);
 
   const saveVisibility = useCallback(async () => {
     if (!ownerRoom) return;
@@ -240,7 +309,7 @@ export function useEnroll() {
       setSavedVis(r.visibility);
       setSavedName(n);
       setSavedDescription(dsc);
-      if (address) getMyRooms(address).then((x) => setMyRooms(x.rooms)).catch(() => {});
+      if (address) getMyRooms(address).then((x) => { ownerRoomsCache.set(address, x.rooms); setMyRooms((prev) => (sameRooms(prev, x.rooms) ? prev : x.rooms)); }).catch(() => {});
     } catch (e) {
       setVisErr(String((e as Error).message ?? e));
     } finally {
@@ -333,11 +402,14 @@ export function useEnroll() {
     refreshRequests,
     // owner
     myRooms,
+    myRoomsLoading,
+    myRoomsRefreshing,
     ownerRoom,
     selectOwnerRoom,
     pending,
     memberCount,
     ownerBusy,
+    pendingRefreshing,
     ownerErr,
     acting,
     approvingAll,

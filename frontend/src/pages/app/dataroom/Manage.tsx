@@ -8,7 +8,8 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
-import { Callout, CopyIconButton, SectionLabel } from "@/components/app/dataroom/kit";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Callout, CopyIconButton, RefreshBar, RoomChipsSkeleton, SectionLabel } from "@/components/app/dataroom/kit";
 import { OwnerBondSection } from "@/components/app/dataroom/OwnerBondSection";
 
 // Room Management — the owner's settings for a room they own, kept apart from the member-facing
@@ -25,56 +26,148 @@ const VIS_TIERS: { key: RoomVisibility; label: string; desc: string; icon: typeo
 
 type AccessModel = "membership" | "bond";
 
+// Module-level cache of each room's bond state, so returning to Room Management (or re-selecting a room)
+// repaints the access model at once instead of flashing the cold/null state, then a background refresh
+// confirms it. Survives the unmount within one app session; only holds public on-chain flags.
+const bondReqCache = new Map<string, { found: boolean; bondOpen: boolean }>();
+
+// The selected-room detail skeleton, shown on the COLD path (the room's access model + member count have not
+// loaded yet, and nothing is cached). It mirrors the access-model card (meta row + two option tiles) and the
+// visibility card (three tiles + a Save button), so the swap to the real cards does not shift layout. The
+// static section headings render as real text, which reads as "this section is loading".
+function ManageDetailSkeleton() {
+  return (
+    <div className="space-y-5" aria-busy="true" data-testid="manage-detail-skeleton">
+      <span className="sr-only" role="status">Loading room settings</span>
+      <Card className="rounded-2xl p-6">
+        <div className="mb-3 flex items-center gap-2">
+          <Skeleton className="h-3.5 w-24 rounded" />
+          <Skeleton className="h-3.5 w-44 rounded" />
+        </div>
+        <SectionLabel withRule>
+          <span className="inline-flex items-center gap-1.5">
+            <ShieldCheck className="size-4" aria-hidden="true" />
+            How readers get in
+          </span>
+        </SectionLabel>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          {[0, 1].map((i) => (
+            <div key={`am-${i}`} className="rounded-xl border border-border/70 bg-muted/40 p-3.5">
+              <Skeleton className="h-4 w-24 rounded" />
+              <Skeleton className="mt-2 h-3 w-full rounded" />
+              <Skeleton className="mt-1.5 h-3 w-3/4 rounded" />
+            </div>
+          ))}
+        </div>
+      </Card>
+      <Card className="rounded-2xl p-6">
+        <SectionLabel withRule>
+          <span className="inline-flex items-center gap-1.5">
+            <Compass className="size-4" aria-hidden="true" />
+            Who can find this room
+          </span>
+        </SectionLabel>
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          {[0, 1, 2].map((i) => (
+            <div key={`vis-${i}`} className="rounded-xl border border-border/70 bg-muted/40 p-3">
+              <Skeleton className="h-4 w-16 rounded" />
+              <Skeleton className="mt-2 h-3 w-full rounded" />
+            </div>
+          ))}
+        </div>
+        <div className="mt-3">
+          <Skeleton className="h-9 w-28 rounded-md" />
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 export default function RoomManagement() {
   const e = useEnroll();
   const signer = useTxSigner();
 
   // The room's on-chain bond state: `found` = any bond requirement is set, `bondOpen` = it is TRUE bond-only
-  // (no approval). Both null while loading. `picked` is the owner's choice of which panel to show. It syncs to
-  // the chain model ONCE per room (a `reqRefresh` after a set/clear updates the chain markers but must NOT yank
-  // the owner's pick), so the resync is keyed to the room id via `syncedRoom`.
-  const [found, setFound] = useState<boolean | null>(null);
-  const [bondOpen, setBondOpen] = useState<boolean | null>(null);
-  const [picked, setPicked] = useState<AccessModel>("membership");
+  // (no approval); both null only while the first (cold) read is in flight. `picked` is the owner's choice of
+  // which panel to show. All three seed from the module cache so a restored room repaints at once.
+  const cachedBond = e.ownerRoom ? bondReqCache.get(e.ownerRoom) : undefined;
+  const [found, setFound] = useState<boolean | null>(cachedBond ? cachedBond.found : null);
+  const [bondOpen, setBondOpen] = useState<boolean | null>(cachedBond ? cachedBond.bondOpen : null);
+  const [picked, setPicked] = useState<AccessModel>(cachedBond ? (cachedBond.found ? "bond" : "membership") : "membership");
+  const [bondRefreshing, setBondRefreshing] = useState(false); // a background refresh of an already-painted room
   const [reqRefresh, setReqRefresh] = useState(0);
   const [clearing, setClearing] = useState(false);
   const [clearErr, setClearErr] = useState<string | null>(null);
-  const syncedRoom = useRef<string | null>(null);
+  // syncedRoom: the room whose `picked` has been synced to the chain model (so a reqRefresh after a set/clear
+  // updates the markers but never yanks the owner's pick). shownRoom: the room currently displayed, so a
+  // reqRefresh bump for the SAME room refreshes silently (keeps the current values) instead of flashing the
+  // cold state. Both seed to the restored room when it is already cached.
+  const syncedRoom = useRef<string | null>(cachedBond ? e.ownerRoom : null);
+  const shownRoom = useRef<string | null>(cachedBond ? e.ownerRoom : null);
 
   // The current on-chain model: any bond requirement (bond-only OR a legacy bond-implies-membership one) reads
-  // as the "bond" model; no bond requirement reads as "membership".
+  // as the "bond" model; no bond requirement reads as "membership"; null only while the first read is in flight.
   const currentModel: AccessModel | null = found === null ? null : found ? "bond" : "membership";
+
+  // The selected room's core data is on its first (cold) load with nothing cached: show the detail skeleton.
+  // Once found is known (read or restored) and the member count has loaded, the real cards render.
+  const detailLoading = e.ownerRoom !== "" && (found === null || e.ownerBusy);
 
   useEffect(() => {
     if (!e.ownerRoom) {
       setFound(null);
       setBondOpen(null);
+      setBondRefreshing(false);
       syncedRoom.current = null;
+      shownRoom.current = null;
       return;
     }
     let live = true;
-    setFound(null);
-    setBondOpen(null);
+    // A different room: paint the cached value at once when we have one, else show the cold/null state
+    // (skeleton). A reqRefresh bump for the SAME room keeps the current values and refreshes silently.
+    if (shownRoom.current !== e.ownerRoom) {
+      const cached = bondReqCache.get(e.ownerRoom);
+      if (cached) {
+        setFound(cached.found);
+        setBondOpen(cached.bondOpen);
+        if (syncedRoom.current !== e.ownerRoom) {
+          setPicked(cached.found ? "bond" : "membership");
+          syncedRoom.current = e.ownerRoom;
+        }
+      } else {
+        setFound(null);
+        setBondOpen(null);
+      }
+      shownRoom.current = e.ownerRoom;
+    }
+    setBondRefreshing(true);
     getBondRequirementApi(e.ownerRoom)
       .then((r) => {
         if (!live) return;
-        setFound(Boolean(r.found));
-        setBondOpen(Boolean(r.bondOpen));
+        const f = Boolean(r.found);
+        const bo = Boolean(r.bondOpen);
+        bondReqCache.set(e.ownerRoom, { found: f, bondOpen: bo });
+        setFound(f);
+        setBondOpen(bo);
         // Sync the owner's pick to the chain model only on the FIRST read for this room; later refreshes
         // (after a set/clear) update the markers but leave the owner's pick alone.
         if (syncedRoom.current !== e.ownerRoom) {
-          setPicked(r.found ? "bond" : "membership");
+          setPicked(f ? "bond" : "membership");
           syncedRoom.current = e.ownerRoom;
         }
       })
       .catch(() => {
         if (!live) return;
-        setFound(false);
-        setBondOpen(false);
+        // A refresh error keeps the last values; only a first-ever read (nothing shown yet) fails closed.
+        setFound((prev) => (prev === null ? false : prev));
+        setBondOpen((prev) => (prev === null ? false : prev));
         if (syncedRoom.current !== e.ownerRoom) {
           setPicked("membership");
           syncedRoom.current = e.ownerRoom;
         }
+      })
+      .finally(() => {
+        if (live) setBondRefreshing(false);
       });
     return () => {
       live = false;
@@ -94,6 +187,11 @@ export default function RoomManagement() {
         setClearErr(r.error ?? "Could not switch to membership.");
         return;
       }
+      // Optimistically reflect the cleared requirement (membership) so the markers flip at once, then confirm
+      // it with a background refresh.
+      bondReqCache.set(e.ownerRoom, { found: false, bondOpen: false });
+      setFound(false);
+      setBondOpen(false);
       setReqRefresh((x) => x + 1);
     } catch (err) {
       setClearErr(String((err as Error).message ?? err));
@@ -119,14 +217,21 @@ export default function RoomManagement() {
       <Card className="rounded-2xl p-6">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h2 className="text-base font-semibold tracking-tight">Room Management</h2>
-          <span className="text-[11px] uppercase tracking-wide text-muted-foreground">rooms you own</span>
+          <span className="inline-flex items-center text-[11px] uppercase tracking-wide text-muted-foreground">
+            rooms you own
+            <RefreshBar active={e.myRoomsRefreshing} />
+          </span>
         </div>
         <p className="text-sm leading-relaxed text-muted-foreground">
           Pick a room, then choose its access model and visibility. The access model is one or the other:
           approve members, or let anyone with a qualifying bond in.
         </p>
 
-        {e.myRooms.length === 0 ? (
+        {e.myRoomsLoading ? (
+          <div className="mt-4">
+            <RoomChipsSkeleton testId="manage-my-rooms-skeleton" label="Loading the rooms you own" />
+          </div>
+        ) : e.myRooms.length === 0 ? (
           <p className="mt-4 text-sm leading-relaxed text-muted-foreground" data-testid="manage-no-rooms">
             You don't own any rooms yet. Create one in Documents, then manage it here.
           </p>
@@ -152,7 +257,9 @@ export default function RoomManagement() {
         )}
       </Card>
 
-      {e.ownerRoom && (
+      {e.ownerRoom && (detailLoading ? (
+        <ManageDetailSkeleton />
+      ) : (
         <>
           {/* ── Access model (Membership XOR Bonded Access) ── */}
           <Card className="rounded-2xl p-6" data-testid="manage-access-model">
@@ -163,6 +270,7 @@ export default function RoomManagement() {
               <span>Room id</span>
               <code className="font-mono text-xs text-foreground" title={e.ownerRoom}>{short(e.ownerRoom, 10)}</code>
               <CopyIconButton value={e.ownerRoom} label="room id" />
+              <RefreshBar active={e.pendingRefreshing || bondRefreshing} />
             </div>
 
             <SectionLabel withRule>
@@ -338,7 +446,7 @@ export default function RoomManagement() {
             {e.visErr && <p className="mt-2 text-sm text-destructive" data-testid="vis-error">{e.visErr}</p>}
           </Card>
         </>
-      )}
+      ))}
 
       {e.ownerErr && (
         <p className="text-sm text-destructive" data-testid="manage-owner-error">

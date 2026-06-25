@@ -128,3 +128,51 @@ test("manage: renders dark", async ({ page }) => {
   await page.getByTestId("manage-owner-room").first().click();
   await expect(page.getByTestId("manage-access-model")).toBeVisible({ timeout: 15_000 });
 });
+
+// Loading + persistence: the room list and the selected-room detail show shimmer skeletons while their reads
+// run (the stubs are delayed so the skeletons are observable), and the selection + its loaded data are
+// restored at once when the owner leaves and returns to Room Management (a client-side tab switch keeps the
+// in-memory cache; the data refreshes silently in the background, with no skeleton).
+test("manage: skeletons while loading, then the selection persists across a tab switch", async ({ page }) => {
+  await page.addInitScript(mock);
+  await page.route("**/dataroom/committee/info", (r) => r.fulfill(json({ online: 3, n: 3, threshold: 2 })));
+  await page.route("**/dataroom/rooms?owner=**", async (r) => {
+    await new Promise((res) => setTimeout(res, 600));
+    return r.fulfill(json({ owner: ADDR, count: 1, dataroomId: "", rooms: [{ roomId: OWNER_ROOM, label: "Acme board", owner: ADDR, docCount: 0, ledger: 1, visibility: "private", name: null, description: null }] }));
+  });
+  await page.route("**/dataroom/enroll/requests/**", async (r) => {
+    await new Promise((res) => setTimeout(res, 600));
+    return r.fulfill(json({ roomId: OWNER_ROOM, pending: [], memberCount: 2 }));
+  });
+  await page.route("**/dataroom/enroll/status/**", (r) => r.fulfill(json({ state: "none" })));
+  await page.route("**/dataroom/room/visibility", (r) => r.fulfill(json({ ok: true, roomId: OWNER_ROOM, visibility: "private", name: null, description: null })));
+  await page.route("**/dataroom/rooms-vault/**", (r) => r.fulfill(json({ found: false, blob: null })));
+  await page.route("**/bonded/bond/qual-set**", (r) => r.fulfill(json({ token: TOKEN, minAmount: MIN, deadline: DEADLINE, reqId: "ab".repeat(32), anonSetSize: 0, minAnonSet: 3, belowMin: true, computedRoot: "cd".repeat(32), published: false, ringLen: 0, locks: [] })));
+  await page.route("**/escrow/token-balance**", (r) => r.fulfill(json({ owner: ADDR, token: TOKEN, balance: "0", decimals: 7, symbol: "TUSD" })));
+  await page.route("**/dataroom/bond-requirement/**", async (r) => {
+    if (r.request().method() !== "GET") return r.continue();
+    await new Promise((res) => setTimeout(res, 600));
+    return r.fulfill(json({ found: false, bondOpen: false }));
+  });
+
+  await page.goto("/app/dataroom/manage");
+  // 1) the room-list skeleton shows while the owner rooms load, then the real chips replace it.
+  await expect(page.getByTestId("manage-my-rooms-skeleton")).toBeVisible();
+  await expect(page.getByTestId("manage-my-rooms")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("manage-my-rooms-skeleton")).toHaveCount(0);
+
+  // 2) selecting a room shows the detail skeleton while its settings load, then the real cards.
+  await page.getByTestId("manage-owner-room").first().click();
+  await expect(page.getByTestId("manage-detail-skeleton")).toBeVisible();
+  await expect(page.getByTestId("manage-access-model")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("manage-detail-skeleton")).toHaveCount(0);
+
+  // 3) leave Room Management (client-side nav) and come back: the selection and its loaded detail repaint at
+  //    once from cache, with no skeleton.
+  await page.getByRole("link", { name: "Overview", exact: true }).first().click();
+  await expect(page.getByTestId("dataroom-overview")).toBeVisible();
+  await page.getByRole("link", { name: "Room Management", exact: true }).first().click();
+  await expect(page.getByTestId("manage-access-model")).toBeVisible();
+  await expect(page.getByTestId("manage-detail-skeleton")).toHaveCount(0);
+  await expect(page.getByTestId("manage-owner-room").first()).toHaveAttribute("aria-pressed", "true");
+});

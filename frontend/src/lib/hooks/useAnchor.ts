@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getDataroomRoom,
   createRoom,
@@ -54,6 +54,23 @@ export const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
 // not a transaction, and the wallet must sign so the room/doc stay owned by it (not the server).
 export type StoreStage = "idle" | "room" | "key" | "encrypt" | "anchor" | "done";
 
+// Module-level caches for the "My files" browser, keyed so leaving and returning to Documents repaints the
+// room list, the selected room, and its document list at once, then a background refresh swaps in any change.
+// They survive the page unmount within one app session (a full browser reload clears them) and only ever hold
+// public on-chain data (room records + document records), never a key or a secret. This mirrors the bonded
+// locks cache in useBonded.
+const myRoomsCache = new Map<string, MyRoom[]>(); // keyed by wallet address
+// Keyed by room id (trimmed); grows with the number of distinct rooms browsed this session (cleared on reload).
+const docsCache = new Map<string, DataroomDoc[]>();
+const lastBrowseCache = new Map<string, string>(); // keyed by wallet address -> last selected room id
+
+// A background refresh that found nothing new should not re-render the list, so compare before swapping. Both
+// are flat records of primitives, so a stable-shape JSON compare is sufficient (matching useBonded).
+const sameDocs = (a: DataroomDoc[], b: DataroomDoc[]) =>
+  a.length === b.length && JSON.stringify(a) === JSON.stringify(b);
+const sameRooms = (a: MyRoom[], b: MyRoom[]) =>
+  a.length === b.length && JSON.stringify(a) === JSON.stringify(b);
+
 // The Data Room stores a document one way: an anonymous, policy-gated committee document (Model B). A fresh
 // per-doc key K (AES-256-GCM) encrypts the file IN THE BROWSER, K is split across the keeper committee, and
 // only a sha256(ciphertext) commitment goes on-chain. Anyone who proves room membership can open it later,
@@ -98,31 +115,81 @@ export function useAnchor() {
   // --- "my documents" browser: rooms the connected wallet owns ON-CHAIN ---
   const signer = useTxSigner();
   const { address, connected } = useWallet();
-  const [browseRoom, setBrowseRoom] = useState("");
-  const [docs, setDocs] = useState<DataroomDoc[]>([]);
-  const [myRooms, setMyRooms] = useState<MyRoom[]>([]);
-  const [roomsLoading, setRoomsLoading] = useState(false);
+  // Seed from the module caches so leaving and returning to Documents repaints at once (the selected room and
+  // its document list survive the unmount), then a background refresh swaps in any on-chain change.
+  const seededRoom = connected && address ? lastBrowseCache.get(address) ?? "" : "";
+  const [browseRoom, setBrowseRoom] = useState(seededRoom);
+  const [docs, setDocs] = useState<DataroomDoc[]>(seededRoom ? docsCache.get(seededRoom) ?? [] : []);
+  // docsLoading = the COLD path (fetching a room's docs with nothing cached -> skeleton). docsRefreshing = the
+  // WARM path (refreshing the already-painted cached docs in the background -> the thin refresh bar).
+  const [docsLoading, setDocsLoading] = useState(false);
+  const [docsRefreshing, setDocsRefreshing] = useState(false);
+  const [myRooms, setMyRooms] = useState<MyRoom[]>(connected && address ? myRoomsCache.get(address) ?? [] : []);
+  const [roomsLoading, setRoomsLoading] = useState(false); // cold: loading the room list with nothing cached
+  const [roomsRefreshing, setRoomsRefreshing] = useState(false); // warm: refreshing the cached room list
+  // The most recently requested browse room, so a slow response for room A cannot overwrite room B's docs.
+  const docsReq = useRef(seededRoom);
   // Owner re-open of a committee doc via the escrow copy (no membership proof, no anonymity floor): the
   // decrypted result, the in-flight doc id, and any error. Cleared whenever the browsed room changes.
   const [ownerOpened, setOwnerOpened] = useState<{ docId: string; result: OpenedDocument } | null>(null);
   const [ownerOpenErr, setOwnerOpenErr] = useState<string | null>(null);
   const [ownerOpeningId, setOwnerOpeningId] = useState<string | null>(null);
 
+  // Load a room's documents: paint the cached list at once when we have one (then refresh in the background),
+  // otherwise show the skeleton while the first read runs. A race guard (docsReq) drops a stale response so
+  // clicking room B while room A is still loading never shows A's documents under B.
   const refreshDocs = useCallback((room: string) => {
     setOwnerOpened(null); setOwnerOpenErr(null);
-    if (!/^[0-9a-fA-F]{64}$/.test(room.trim())) { setDocs([]); return; }
-    getDataroomDocuments(room.trim(), 0, 25).then((r) => setDocs(r.documents)).catch(() => setDocs([]));
+    const r = room.trim();
+    docsReq.current = r;
+    if (!/^[0-9a-fA-F]{64}$/.test(r)) { setDocs([]); setDocsLoading(false); setDocsRefreshing(false); return; }
+    const cached = docsCache.get(r);
+    if (cached) { setDocs(cached); setDocsLoading(false); setDocsRefreshing(true); }
+    else { setDocs([]); setDocsLoading(true); setDocsRefreshing(false); }
+    getDataroomDocuments(r, 0, 25)
+      .then((res) => {
+        docsCache.set(r, res.documents);
+        if (docsReq.current !== r) return; // a newer room was selected; ignore this stale response
+        setDocs((prev) => (sameDocs(prev, res.documents) ? prev : res.documents));
+      })
+      .catch(() => { if (docsReq.current === r && !cached) setDocs([]); }) // keep the cached list on a refresh error
+      .finally(() => { if (docsReq.current === r) { setDocsLoading(false); setDocsRefreshing(false); } });
   }, []);
 
+  // Select a room in the My files browser: remember it (so it is restored on return) and load its documents.
+  const selectBrowseRoom = useCallback((room: string) => {
+    setBrowseRoom(room);
+    if (address) lastBrowseCache.set(address, room);
+    refreshDocs(room);
+  }, [address, refreshDocs]);
+
+  // Load the rooms the wallet owns: paint the cached list at once when we have one (then refresh in the
+  // background), otherwise show the skeleton while the first read runs.
   const loadMyRooms = useCallback((addr: string | null) => {
-    if (!addr) { setMyRooms([]); return; }
-    setRoomsLoading(true);
-    getMyRooms(addr).then((r) => setMyRooms(r.rooms)).catch(() => setMyRooms([])).finally(() => setRoomsLoading(false));
+    if (!addr) { setMyRooms([]); setRoomsLoading(false); setRoomsRefreshing(false); return; }
+    const cached = myRoomsCache.get(addr);
+    if (cached) { setMyRooms(cached); setRoomsLoading(false); setRoomsRefreshing(true); }
+    else { setRoomsLoading(true); setRoomsRefreshing(false); }
+    getMyRooms(addr)
+      .then((r) => { myRoomsCache.set(addr, r.rooms); setMyRooms((prev) => (sameRooms(prev, r.rooms) ? prev : r.rooms)); })
+      .catch(() => { if (!cached) setMyRooms([]); }) // keep the cached list on a refresh error
+      .finally(() => { setRoomsLoading(false); setRoomsRefreshing(false); });
   }, []);
 
-  // "My rooms" follows the connected wallet (cleared on disconnect). Nothing seeded is auto-loaded, so a
-  // fresh wallet starts empty: you only ever see rooms you own.
-  useEffect(() => { loadMyRooms(connected ? address : null); }, [connected, address, loadMyRooms]);
+  // "My rooms" follows the connected wallet (cleared on disconnect). Nothing seeded is auto-loaded beyond the
+  // wallet's own rooms, so a fresh wallet starts empty. On connect/return, restore the last browsed room so
+  // its documents repaint from cache instead of forcing a re-pick.
+  useEffect(() => {
+    loadMyRooms(connected ? address : null);
+    // Restore the last-browsed room only if the wallet still owns it (loadMyRooms seeds the cache
+    // synchronously above), so a room that was removed never restores as a phantom selection.
+    const restored = connected && address ? lastBrowseCache.get(address) ?? "" : "";
+    const owned = connected && address ? (myRoomsCache.get(address) ?? []).some((r) => r.roomId === restored) : false;
+    const finalRoom = owned ? restored : "";
+    setBrowseRoom(finalRoom);
+    if (finalRoom) refreshDocs(finalRoom);
+    else { docsReq.current = ""; setDocs([]); setDocsLoading(false); setDocsRefreshing(false); }
+  }, [connected, address, loadMyRooms, refreshDocs]);
 
   // Clear the pre-submit validation message as soon as the user fixes the offending input (or connects),
   // so a stale "name a room" doesn't linger after they've named one.
@@ -351,10 +418,14 @@ export function useAnchor() {
     openBusy,
     browseRoom,
     setBrowseRoom,
+    selectBrowseRoom,
     docs,
+    docsLoading,
+    docsRefreshing,
     refreshDocs,
     myRooms,
     roomsLoading,
+    roomsRefreshing,
     loadMyRooms,
     connected,
     address,
