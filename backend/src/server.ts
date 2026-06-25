@@ -55,7 +55,7 @@ import { buildDocauthJob, bankIssuer } from "./docauth.js";
 import { getEligible, addEligible, addEligibleBatch, indexOfCommitment } from "./eligible-store.js";
 import { addRequest, listRequests, removeRequest, hasRequest } from "./enroll-store.js";
 import { putEscrow, getEscrow } from "./escrow-store.js";
-import { getVault, putVault, deleteVault, getBondHandleVault, putBondHandleVault, deleteBondHandleVault, type VaultBlob } from "./vault-store.js";
+import { getVault, putVault, deleteVault, getBondHandleVault, putBondHandleVault, deleteBondHandleVault, getBondGrantsVault, putBondGrantsVault, deleteBondGrantsVault, type VaultBlob } from "./vault-store.js";
 import {
   enqueue as enqueueBatch, getByTicket as getBatchTicket, listQueued as listBatchQueued,
   flush as flushBatch, nextFlushAt, queuedCount as batchQueuedCount, purgeTerminal as purgeBatchTerminal,
@@ -4714,6 +4714,44 @@ app.delete("/bonded/bond/handle-vault/:handle", (req, res) => {
   if (vaultRateLimited(clientIp(req), Date.now())) return res.status(429).json({ error: "too many vault writes; please try again later" });
   try {
     res.json({ ok: true, removed: deleteBondHandleVault(req.params.handle) });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+// The "Your access" list vault: the BROWSER encrypts the handle's grant records under a wallet-derived key and
+// stores the opaque ciphertext here under a wallet-derived pseudonym. Same opaque-blob shape, validation, rate
+// limit, and bearer-write caveat as the handle vault above; its own file so the two namespaces never mix.
+app.get("/bonded/bond/grants-vault/:handle", (req, res) => {
+  if (!isVaultHandle(req.params.handle)) return res.status(400).json({ error: "handle must be 32-byte hex" });
+  if (vaultRateLimited(clientIp(req), Date.now())) return res.status(429).json({ error: "too many vault reads; please try again later" });
+  try {
+    const blob = getBondGrantsVault(req.params.handle);
+    res.json({ found: blob !== null, blob });
+  } catch (e) {
+    res.status(500).json({ error: err(e) });
+  }
+});
+
+app.put("/bonded/bond/grants-vault/:handle", (req, res) => {
+  if (!isVaultHandle(req.params.handle)) return res.status(400).json({ error: "handle must be 32-byte hex" });
+  if (vaultRateLimited(clientIp(req), Date.now())) return res.status(429).json({ error: "too many vault writes; please try again later" });
+  const blob = req.body?.blob;
+  if (!validVaultBlob(blob)) return res.status(400).json({ error: "invalid vault blob" });
+  if (Buffer.byteLength(JSON.stringify(blob)) > VAULT_MAX_BYTES) return res.status(400).json({ error: "vault blob too large" });
+  try {
+    putBondGrantsVault(req.params.handle, blob, Date.now());
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: err(e) });
+  }
+});
+
+app.delete("/bonded/bond/grants-vault/:handle", (req, res) => {
+  if (!isVaultHandle(req.params.handle)) return res.status(400).json({ error: "handle must be 32-byte hex" });
+  if (vaultRateLimited(clientIp(req), Date.now())) return res.status(429).json({ error: "too many vault writes; please try again later" });
+  try {
+    res.json({ ok: true, removed: deleteBondGrantsVault(req.params.handle) });
   } catch (e) {
     res.status(400).json({ error: err(e) });
   }

@@ -91,6 +91,29 @@ test("bonded: my balances redisplays cached locks instantly on a return visit (n
   await expect(page.getByText(/Loading your locks/)).toHaveCount(0);
 });
 
+test("bonded: my balances sorts live funds above released (status, not creation order)", async ({ page }) => {
+  await page.addInitScript(mock(DEPLOYER));
+  // Locks in creation order 1,2,3 with mixed status: released, locked, unlocked. The page must surface the
+  // actionable ones first: unlocked (withdrawable) then locked, with released last.
+  const lock = (id: number, o: { released?: boolean; is_locked?: boolean }) => ({
+    id, depositor: DEPLOYER, claimant: DEPLOYER, token: "T", amount: String(id), unlock_time: o.is_locked ? 9999999999 : 1,
+    commitment: "00".repeat(32), revocable: false, released: !!o.released, is_locked: !!o.is_locked, role: "self",
+    tokenSymbol: "TUSD", tokenDecimals: 7,
+  });
+  await page.route("**/escrow/locks**", (route) =>
+    route.fulfill({ json: { owner: DEPLOYER, count: 3, escrowId: "E", locks: [
+      lock(1, { released: true }),
+      lock(2, { is_locked: true }),
+      lock(3, {}), // unlocked: not released, not locked
+    ] } }),
+  );
+  await page.route("**/escrow/balance**", (route) => route.fulfill({ json: { owner: DEPLOYER, balance: "0", bondTokenId: "" } }));
+  await page.goto("/app/bonded/balances");
+  await expect(page.getByTestId("lock-3")).toBeVisible({ timeout: 30_000 });
+  const order = await page.locator('[data-testid^="lock-"]').evaluateAll((els) => els.map((e) => e.getAttribute("data-testid")));
+  expect(order).toEqual(["lock-3", "lock-2", "lock-1"]);
+});
+
 // A real testnet issuer so the client-side SAC computation has a valid asset to hash. The deposit pipeline
 // is multi-token (proven on-chain separately); this test covers the picker UI deterministically by stubbing
 // the wallet's Horizon balances.

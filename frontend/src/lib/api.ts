@@ -1438,3 +1438,17 @@ export const putBondHandleVault = (handle: string, blob: BondHandleVaultBlob) =>
   }).then(j<{ ok: boolean }>);
 export const deleteBondHandleVault = (handle: string) =>
   fetch(`${BASE}/bonded/bond/handle-vault/${handle}`, { method: "DELETE" }).then(j<{ ok: boolean; removed: boolean }>);
+
+// The Bonded Access "Your access" list vault: the handle's grant records, encrypted under the same wallet
+// signature (distinct key/id) and stored under a wallet-derived pseudonym, so the list follows the wallet.
+export type BondGrantsVaultBlob = RoomsVaultBlob;
+export const getBondGrantsVault = (handle: string) =>
+  fetch(`${BASE}/bonded/bond/grants-vault/${handle}`).then(j<{ found: boolean; blob: BondGrantsVaultBlob | null }>);
+export const putBondGrantsVault = (handle: string, blob: BondGrantsVaultBlob) =>
+  fetch(`${BASE}/bonded/bond/grants-vault/${handle}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ blob }),
+  }).then(j<{ ok: boolean }>);
+export const deleteBondGrantsVault = (handle: string) =>
+  fetch(`${BASE}/bonded/bond/grants-vault/${handle}`, { method: "DELETE" }).then(j<{ ok: boolean; removed: boolean }>);
