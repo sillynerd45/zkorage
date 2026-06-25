@@ -31,6 +31,7 @@ COPY host_docauth /prover/target/release/host_docauth
 COPY host_solvency /prover/target/release/host_solvency
 COPY host_tier /prover/target/release/host_tier
 COPY host_bond /prover/target/release/host_bond
+COPY host_bond_open /prover/target/release/host_bond_open
 COPY worker.sh /worker.sh
 RUN sed -i 's/\r$//' /worker.sh \
     && chmod +x /worker.sh \
@@ -39,7 +40,7 @@ RUN sed -i 's/\r$//' /worker.sh \
     /prover/target/release/host_accredited /prover/target/release/host_dataroom_seal \
     /prover/target/release/host_membership /prover/target/release/host_docauth \
     /prover/target/release/host_solvency /prover/target/release/host_tier \
-    /prover/target/release/host_bond
+    /prover/target/release/host_bond /prover/target/release/host_bond_open
 ENV PROVER_DIR=/prover HOST_BIN=/prover/target/release/host \
     HOST_IDENTITY_BIN=/prover/target/release/host_identity \
     HOST_COMPLIANCE_BIN=/prover/target/release/host_compliance \
@@ -50,5 +51,6 @@ ENV PROVER_DIR=/prover HOST_BIN=/prover/target/release/host \
     HOST_DOCAUTH_BIN=/prover/target/release/host_docauth \
     HOST_SOLVENCY_BIN=/prover/target/release/host_solvency \
     HOST_TIER_BIN=/prover/target/release/host_tier \
-    HOST_BOND_BIN=/prover/target/release/host_bond
+    HOST_BOND_BIN=/prover/target/release/host_bond \
+    HOST_BOND_OPEN_BIN=/prover/target/release/host_bond_open
 ENTRYPOINT ["/worker.sh"]
