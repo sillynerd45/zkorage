@@ -4,13 +4,14 @@ import { Clock, Compass, FolderOpen, KeyRound, Search, Settings2, ShieldCheck, U
 import { useDirectory } from "@/lib/hooks/useDirectory";
 import { useWallet } from "@/lib/wallet/WalletContext";
 import { joinRequestStates } from "@/lib/dataroom/requests";
-import { short, explorer } from "@/lib/format";
+import { short } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Callout, CopyIconButton } from "@/components/app/dataroom/kit";
-import { getMyRooms, fmtAmount, type AnonTier, type DirectoryBond, type EnrollState } from "@/lib/api";
+import { BondRequirementDetail } from "@/components/app/dataroom/BondRequirementDetail";
+import { getMyRooms, type AnonTier, type DirectoryBond, type EnrollState } from "@/lib/api";
 
 // M5 — the public discovery surface. Wallet NOT required to browse. Visibility is a discovery convenience,
 // not the privacy mechanism (that is the membership proof + the k=5 floor + the keepers). The directory shows
@@ -135,31 +136,18 @@ function OwnRoomLink({ roomId }: { roomId: string }) {
 // must show what that bond is (which token, how much, until when), NOT a request-to-join. The token contract
 // and its classic issuer link to Stellar Expert; the box uses the same success tint as the owner's "Current
 // requirement" card. Amounts are 7 dp on Stellar. The deadline shows the date AND time (a lock cannot be
-// released before that exact moment, so the time matters).
+// released before that exact moment, so the time matters). Renders the shared BondRequirementDetail (compact).
 function BondRequirementBox({ bond }: { bond: DirectoryBond }) {
-  const until = new Date(bond.deadline * 1000).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
   return (
-    <div className="mt-2 rounded-lg border border-success/30 bg-success/5 px-3 py-2 text-[12px] leading-relaxed" data-testid="discover-bond-req">
-      <div className="font-medium text-foreground">
-        Bond {fmtAmount(bond.minAmount, bond.decimals)}{bond.symbol ? ` ${bond.symbol}` : ""}
-        <span className="font-normal text-muted-foreground"> · locked until {until}</span>
-      </div>
-      <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-muted-foreground">
-        <span>
-          Contract{" "}
-          <a href={explorer("contract", bond.token)} target="_blank" rel="noreferrer" className="font-mono text-brand hover:underline" title={bond.token}>
-            {short(bond.token, 6)} ↗
-          </a>
-        </span>
-        {bond.issuer && (
-          <span data-testid="discover-bond-issuer">
-            Issuer{" "}
-            <a href={explorer("account", bond.issuer)} target="_blank" rel="noreferrer" className="font-mono text-brand hover:underline" title={bond.issuer}>
-              {short(bond.issuer, 6)} ↗
-            </a>
-          </span>
-        )}
-      </div>
+    <div className="mt-2 rounded-lg border border-success/30 bg-success/5 px-3 py-2" data-testid="discover-bond-req">
+      <BondRequirementDetail
+        token={bond.token}
+        minAmount={bond.minAmount}
+        deadline={bond.deadline}
+        meta={{ symbol: bond.symbol, decimals: bond.decimals, issuer: bond.issuer }}
+        compact
+        idPrefix="discover-bond"
+      />
     </div>
   );
 }

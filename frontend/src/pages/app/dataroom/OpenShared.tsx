@@ -1,14 +1,15 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { ArrowRight, CheckCircle2, Clock, FileText, FolderOpen, Info, Loader2, Lock, RefreshCw, ShieldCheck } from "lucide-react";
+import { ArrowRight, CheckCircle2, Clock, FileText, FolderOpen, Info, KeyRound, Loader2, Lock, RefreshCw, ShieldCheck } from "lucide-react";
 import { useSharedOpen, type SyncState } from "@/lib/hooks/useSharedOpen";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
-import { DataRow, Verdict } from "@/components/app/blocks";
+import { Verdict } from "@/components/app/blocks";
 import { DecryptedFile } from "@/components/app/DecryptedFile";
 import { AnonymityMeter, ANON_FLOOR } from "@/components/app/dataroom/AnonymityMeter";
 import { BondCount, BOND_FLOOR, Callout, CopyIconButton, SectionLabel } from "@/components/app/dataroom/kit";
+import { BondRequirementDetail } from "@/components/app/dataroom/BondRequirementDetail";
 import { plainAmount } from "@/lib/bonded/tokens";
 import { fmtAmount, toBaseUnits } from "@/lib/api";
 import { short } from "@/lib/format";
@@ -223,6 +224,18 @@ export default function OpenShared() {
     );
   }
 
+  // The selected room's display name (directory name for a listed room, else your local label, else the id) and
+  // whether it is a bond-only room (drives the bond-aware panel below).
+  const roomMeta = s.room ? s.directory[s.room.toLowerCase()] : undefined;
+  const roomName =
+    roomMeta?.name ||
+    s.openableRooms.find((r) => r.roomId.toLowerCase() === s.room.toLowerCase())?.label ||
+    (s.room ? short(s.room, 8) : "");
+  const isBondRoom = Boolean(s.roomBond && s.roomBond.token && s.roomBond.minAmount && s.roomBond.deadline);
+  // A past deadline can never be satisfied (a qualifying lock needs unlock_time >= deadline AND now < unlock),
+  // so a new reader cannot get in; surface it on the panel instead of only after they try.
+  const bondDeadlinePassed = isBondRoom && (s.roomBond?.deadline ?? 0) * 1000 <= Date.now();
+
   return (
     <div data-testid="access-card" className="space-y-5">
       <Card className="rounded-2xl border-brand/40 p-6">
@@ -355,57 +368,113 @@ export default function OpenShared() {
         </Card>
       )}
 
-      {/* The selected room: its documents, each with one Open button + the live status of the active Open. */}
+      {/* The selected room. For a bond-only room this names it + shows its Bonded Access requirement and a
+          room-level set-up action; for a membership room it is the document list with per-document Open. */}
       {s.room && (
-        <Card className="rounded-2xl p-6" data-testid="access-room-detail">
+        <Card className={cn("rounded-2xl p-6", isBondRoom && "border-success/40")} data-testid="access-room-detail" data-bonded={isBondRoom ? "true" : "false"}>
+          {/* Header: the room NAME (so it is never mistaken for one of your already-accessible rooms) + a
+              Bonded Access badge for a bond-only room, then the room id. */}
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <SectionLabel className="flex-1">
               <span className="inline-flex items-center gap-1.5">
-                <FolderOpen className="size-4" aria-hidden="true" />
-                Documents in this room
+                {isBondRoom ? <KeyRound className="size-4 text-success" aria-hidden="true" /> : <FolderOpen className="size-4" aria-hidden="true" />}
+                <span data-testid="access-room-name">{isBondRoom ? `Bonded Access · ${roomName}` : roomName}</span>
               </span>
             </SectionLabel>
             <code className="font-mono text-xs text-muted-foreground" title={s.room}>{short(s.room, 8)}</code>
             <CopyIconButton value={s.room} label="room id" />
           </div>
 
+          {/* Bond-only room: the access panel. The requirement is shown in detail (standout), the live set
+              count gates proving, and ONE room-level action runs lock -> wait -> prove -> open. */}
+          {isBondRoom && s.roomBond?.token && s.roomBond.minAmount && s.roomBond.deadline && (
+            <div className="mb-5 space-y-3" data-testid="access-bond-panel">
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                This room uses Bonded Access. Lock a qualifying bond to open its documents. No approval, no
+                membership, and the owner never learns which bond opened a file.
+              </p>
+              <div className="rounded-xl border border-success/30 bg-success/5 p-4">
+                <BondRequirementDetail
+                  token={s.roomBond.token}
+                  minAmount={s.roomBond.minAmount}
+                  deadline={s.roomBond.deadline}
+                  meta={s.roomBondMeta}
+                  metaLoading={s.roomBondMetaLoading}
+                  idPrefix="access-bond-req"
+                />
+              </div>
+              {s.phase === "idle" ? (
+                <div className="space-y-2.5">
+                  <BondCount count={s.roomBondCount} />
+                  {bondDeadlinePassed && (
+                    <p className="text-sm text-warning" data-testid="access-bond-expired">
+                      This room's bond deadline has passed, so a new qualifying bond can no longer be locked. Ask
+                      the room owner to update the requirement.
+                    </p>
+                  )}
+                  <Button onClick={s.setupRoomAccess} disabled={s.roomDocs.length === 0 || bondDeadlinePassed} data-testid="access-bond-setup">
+                    <KeyRound aria-hidden="true" /> Set up access
+                  </Button>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-border/70 bg-accent/20 px-3.5 py-3" data-testid="access-status" data-phase={s.phase}>
+                  <OpenStatus s={s} />
+                </div>
+              )}
+            </div>
+          )}
+
           {s.docsLoading && s.roomDocs.length === 0 ? (
             <p className="text-sm text-muted-foreground" data-testid="access-docs-loading">Loading documents…</p>
           ) : s.roomDocs.length === 0 ? (
             <p className="text-sm text-muted-foreground" data-testid="access-no-docs">This room has no documents yet.</p>
           ) : (
-            <div className="divide-y divide-border/70 rounded-xl border" data-testid="access-doc-list">
-              {s.roomDocs.map((d) => {
-                const active = s.openDocId === d.doc_id;
-                return (
-                  <div key={d.doc_id} data-testid="access-doc-row">
-                    <div className="flex items-center gap-3 px-3 py-2.5">
-                      <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate font-mono text-xs">{short(d.doc_id, 8)}</div>
-                        <div className="truncate text-[11px] text-muted-foreground">fingerprint {short(d.content_hash, 6)}</div>
+            <>
+              {isBondRoom && (
+                <SectionLabel className="mb-2">
+                  <span className="inline-flex items-center gap-1.5">
+                    <FolderOpen className="size-4" aria-hidden="true" />
+                    Documents in this room
+                  </span>
+                </SectionLabel>
+              )}
+              <div className="divide-y divide-border/70 rounded-xl border" data-testid="access-doc-list">
+                {s.roomDocs.map((d) => {
+                  const active = s.openDocId === d.doc_id;
+                  return (
+                    <div key={d.doc_id} data-testid="access-doc-row">
+                      <div className="flex items-center gap-3 px-3 py-2.5">
+                        <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate font-mono text-xs">{short(d.doc_id, 8)}</div>
+                          <div className="truncate text-[11px] text-muted-foreground">fingerprint {short(d.content_hash, 6)}</div>
+                        </div>
+                        <Button size="sm" onClick={() => s.open(d.doc_id)} data-testid="access-open" disabled={active && s.phase !== "idle" && s.phase !== "opened" && s.phase !== "error"}>
+                          {active && s.phase === "opened" ? "Opened" : "Open"}
+                        </Button>
                       </div>
-                      <Button size="sm" onClick={() => s.open(d.doc_id)} data-testid="access-open" disabled={active && s.phase !== "idle" && s.phase !== "opened" && s.phase !== "error"}>
-                        {active && s.phase === "opened" ? "Opened" : "Open"}
-                      </Button>
+                      {/* For a bond-only room the live status shows at the room level above (one place for the
+                          flow); for a membership / legacy room it shows inline under the document. */}
+                      {!isBondRoom && active && s.phase !== "idle" && (
+                        <div className="border-t border-border/70 bg-accent/20 px-3 py-3" data-testid="access-status" data-phase={s.phase}>
+                          <OpenStatus s={s} />
+                        </div>
+                      )}
                     </div>
-                    {active && s.phase !== "idle" && (
-                      <div className="border-t border-border/70 bg-accent/20 px-3 py-3" data-testid="access-status" data-phase={s.phase}>
-                        <OpenStatus s={s} />
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            </>
           )}
         </Card>
       )}
 
-      {/* How this stays private: one compact, plain-language note (matches the Store "encrypted" badge style). */}
+      {/* How this stays private: one compact, plain-language note (bond-aware: a bonded room admits by a bond,
+          not by approved membership). */}
       <Callout icon={ShieldCheck} testId="access-privacy">
-        Only members the owner approved can open these files, and the owner never learns which member opened one.
-        The key is split across the keepers and reassembled in your browser.
+        {isBondRoom
+          ? "Anyone who locks a qualifying bond can open this room's files, with no approval, and the owner never learns which bond opened one. The key is split across the keepers and reassembled in your browser."
+          : "Only members the owner approved can open these files, and the owner never learns which member opened one. The key is split across the keepers and reassembled in your browser."}
       </Callout>
 
       {s.drift && (
@@ -473,15 +542,14 @@ function BondDeposit({ s }: { s: ReturnType<typeof useSharedOpen> }) {
   const below = s.bondCount !== null && s.bondCount < BOND_FLOOR;
   return (
     <div className="space-y-3" data-testid="access-bond-deposit">
-      <div className="space-y-1 rounded-xl border p-3 text-[13px]">
-        <p className="font-medium">This room requires a bond:</p>
-        <DataRow k="token">
-          <span className="font-mono">{symbol}</span>
-          <CopyIconButton value={req.token} label="token contract" />
-        </DataRow>
-        <DataRow k="at least">{fmtAmount(minBase, decimals)} {symbol}</DataRow>
-        <DataRow k="locked until at least" mono={false}>{fmtDeadline(req.deadline)}</DataRow>
-      </div>
+      {/* For a bond-only room the requirement is already shown in detail in the room-level panel above; for a
+          legacy bonded room (no room panel) show it here, in the same detailed standout card. */}
+      {!s.roomBond && (
+        <div className="rounded-xl border border-success/30 bg-success/5 p-3">
+          <p className="mb-1 text-[13px] font-medium">This room requires a bond:</p>
+          <BondRequirementDetail token={req.token} minAmount={minBase} deadline={req.deadline} meta={meta} idPrefix="access-deposit" />
+        </div>
+      )}
 
       <div>
         <label className="flex flex-col gap-1.5 text-[13px] text-muted-foreground">
