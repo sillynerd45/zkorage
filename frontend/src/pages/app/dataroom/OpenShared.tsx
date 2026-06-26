@@ -232,6 +232,9 @@ export default function OpenShared() {
     s.openableRooms.find((r) => r.roomId.toLowerCase() === s.room.toLowerCase())?.label ||
     (s.room ? short(s.room, 8) : "");
   const isBondRoom = Boolean(s.roomBond && s.roomBond.token && s.roomBond.minAmount && s.roomBond.deadline);
+  // A past deadline can never be satisfied (a qualifying lock needs unlock_time >= deadline AND now < unlock),
+  // so a new reader cannot get in; surface it on the panel instead of only after they try.
+  const bondDeadlinePassed = isBondRoom && (s.roomBond?.deadline ?? 0) * 1000 <= Date.now();
 
   return (
     <div data-testid="access-card" className="space-y-5">
@@ -403,7 +406,13 @@ export default function OpenShared() {
               {s.phase === "idle" ? (
                 <div className="space-y-2.5">
                   <BondCount count={s.roomBondCount} />
-                  <Button onClick={s.setupRoomAccess} disabled={s.roomDocs.length === 0} data-testid="access-bond-setup">
+                  {bondDeadlinePassed && (
+                    <p className="text-sm text-warning" data-testid="access-bond-expired">
+                      This room's bond deadline has passed, so a new qualifying bond can no longer be locked. Ask
+                      the room owner to update the requirement.
+                    </p>
+                  )}
+                  <Button onClick={s.setupRoomAccess} disabled={s.roomDocs.length === 0 || bondDeadlinePassed} data-testid="access-bond-setup">
                     <KeyRound aria-hidden="true" /> Set up access
                   </Button>
                 </div>

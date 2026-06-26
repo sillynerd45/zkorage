@@ -501,6 +501,8 @@ export function useSharedOpen() {
     const qual = await getBondQualSet(bondReq.token, bondReq.minAmount, bondReq.deadline).catch(() => null);
     if (cancelled.current) return;
     setBondCount(qual ? qual.anonSetSize : null);
+    // Keep the room-level panel's count in sync too (e.g. after this reader deposits, then dismisses to idle).
+    setRoomBondCount(qual ? qual.anonSetSize : null);
     const mine = bondAccessCommitment(identity.idSecret).toLowerCase();
     const hasBond = !!qual && qual.locks.some((l) => l.commitment.toLowerCase() === mine);
     if (!hasBond) { setPhase("bond-deposit"); return; }
