@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Copy,
   FolderLock,
+  Loader2,
   Star,
   Users,
   type LucideIcon,
@@ -358,24 +359,39 @@ export function DocListSkeleton({ label = "Loading documents", testId }: { label
   );
 }
 
-// A thin indeterminate sweep shown beside a section label while a BACKGROUND refresh of already-painted
-// (cached) content runs. The content stays live and interactive; this bar is the only signal that a refresh
-// is in flight, never a dim or overlay. The track always renders (so the label row does not jump); only the
-// inner sweep toggles with `active`. Decorative (aria-hidden); skeletons cover the cold path, this the warm.
+// A background-refresh indicator shown beside a section label while already-painted (cached) content refreshes.
+// The content stays live and interactive; this is the only signal a refresh is in flight, never a dim or
+// overlay. It renders NOTHING when idle (it sits at the end of its label line, so nothing reflows) so there is
+// no persistent stray mark. Responsive: a 64px horizontal sweep on sm+ (roomy), a compact spinner on phones.
+// Decorative (aria-hidden); skeletons cover the cold path, this the warm. Both animations are motion-safe.
 export function RefreshBar({ active }: { active: boolean }) {
+  if (!active) return null;
   return (
     <span
-      className="relative ml-2 inline-block h-0.5 w-16 overflow-hidden rounded-full bg-muted align-middle"
+      className="ml-2 inline-flex items-center align-middle"
       aria-hidden="true"
       data-testid="refresh-bar"
-      data-active={String(active)}
+      data-active="true"
     >
-      <span
-        className={cn(
-          "absolute inset-y-0 w-2/5 rounded-full bg-brand",
-          active ? "motion-safe:animate-indeterminate" : "opacity-0",
-        )}
-      />
+      {/* phones: a compact spinner instead of a thin bar that reads oddly at narrow widths */}
+      <Loader2 className="size-3 text-brand motion-safe:animate-spin sm:hidden" />
+      {/* sm and up: the horizontal sweep */}
+      <span className="relative hidden h-0.5 w-16 overflow-hidden rounded-full bg-muted sm:inline-block">
+        <span className="absolute inset-y-0 w-2/5 rounded-full bg-brand motion-safe:animate-indeterminate" />
+      </span>
+    </span>
+  );
+}
+
+// The "Current" pill, marking which option in a settings group is the one actually in effect (independent of
+// what the owner has selected to edit). Used by Room Management's access-model and visibility cards.
+export function CurrentBadge({ testId }: { testId?: string }) {
+  return (
+    <span
+      data-testid={testId}
+      className="shrink-0 rounded-full border border-success/50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-success"
+    >
+      Current
     </span>
   );
 }

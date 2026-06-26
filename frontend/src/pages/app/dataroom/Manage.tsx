@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Compass, Globe, KeyRound, Lock, ShieldCheck, Users } from "lucide-react";
 import { useEnroll } from "@/lib/hooks/useEnroll";
 import { useTxSigner } from "@/lib/wallet/WalletContext";
@@ -9,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Callout, CopyIconButton, RefreshBar, RoomChipsSkeleton, SectionLabel } from "@/components/app/dataroom/kit";
+import { Callout, CopyIconButton, CurrentBadge, RefreshBar, RoomChipsSkeleton, SectionLabel } from "@/components/app/dataroom/kit";
 import { OwnerBondSection } from "@/components/app/dataroom/OwnerBondSection";
 
 // Room Management — the owner's settings for a room they own, kept apart from the member-facing
@@ -86,6 +87,16 @@ function ManageDetailSkeleton() {
 export default function RoomManagement() {
   const e = useEnroll();
   const signer = useTxSigner();
+
+  // Arriving from a Discover "Your room" link (?room=<id>): auto-select that room once it shows up in the
+  // owner's list, overriding any restored selection. Guarded by `ownerRoom !== paramRoom` so it runs once.
+  const [params] = useSearchParams();
+  const paramRoom = params.get("room");
+  useEffect(() => {
+    if (paramRoom && e.ownerRoom !== paramRoom && e.myRooms.some((r) => r.roomId === paramRoom)) {
+      e.selectOwnerRoom(paramRoom);
+    }
+  }, [paramRoom, e.myRooms, e.ownerRoom, e.selectOwnerRoom]);
 
   // The room's on-chain bond state: `found` = any bond requirement is set, `bondOpen` = it is TRUE bond-only
   // (no approval); both null only while the first (cold) read is in flight. `picked` is the owner's choice of
@@ -318,9 +329,7 @@ export default function RoomManagement() {
                         {m.title}
                       </div>
                       {currentModel !== null && isCurrent && (
-                        <span className="rounded-full border border-success/50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-success" data-testid={`manage-model-current-${m.key}`}>
-                          Current
-                        </span>
+                        <CurrentBadge testId={`manage-model-current-${m.key}`} />
                       )}
                     </div>
                     <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{m.desc}</div>
@@ -373,6 +382,9 @@ export default function RoomManagement() {
             <div className="mt-3 grid gap-2 sm:grid-cols-3" role="radiogroup" aria-label="room visibility">
               {VIS_TIERS.map((t) => {
                 const active = e.vis === t.key;
+                // "Current" marks the tier actually saved (the live setting), independent of what is selected
+                // to edit; it stays put on the saved tile while the owner previews another, like the access model.
+                const isCurrent = e.savedVis === t.key;
                 return (
                   <button
                     key={t.key}
@@ -386,9 +398,12 @@ export default function RoomManagement() {
                       active && "border-brand/50 bg-accent/50",
                     )}
                   >
-                    <div className="flex items-center gap-1.5 text-[13px] font-medium">
-                      <t.icon className="size-4" aria-hidden="true" />
-                      {t.label}
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 text-[13px] font-medium">
+                        <t.icon className="size-4" aria-hidden="true" />
+                        {t.label}
+                      </div>
+                      {isCurrent && <CurrentBadge testId={`vis-current-${t.key}`} />}
                     </div>
                     <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{t.desc}</div>
                   </button>

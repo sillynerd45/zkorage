@@ -28,6 +28,10 @@ async function stubs(page: import("@playwright/test").Page) {
     }
     return r.fulfill(json({ roomId: PRIVATE, visibility: "private", discoverable: false }));
   });
+  // Own-room detection reads the connected wallet's rooms; default to "owns none" so directory cards are
+  // joinable. A test that wants an owned card overrides this route after calling stubs().
+  await page.route("**/dataroom/rooms?owner=**", (r) =>
+    r.fulfill(json({ owner: "", count: 0, dataroomId: "", rooms: [] })));
 }
 
 test("discover: browse the directory (coarse buckets, no exact counts) + resolve by id", async ({ page }) => {
@@ -99,6 +103,38 @@ test("discover: reflects your local request status on the directory buttons", as
   await expect(openLink).toHaveAttribute("href", `/app/dataroom/documents?room=${LISTED1}#open`);
   await expect(page.getByTestId("discover-requested")).toBeVisible();
   await expect(page.getByTestId("discover-join")).toHaveCount(0);
+});
+
+test("discover: your own listed room is marked, not joinable", async ({ page }) => {
+  const ADDR = "GDLECNXD76OZQROASQGWEP4KAMJWTJXZW2LN7OJGYPXIJDRXACWGXZY6";
+  await page.addInitScript(`
+    localStorage.setItem("zkorage.wallet.connected", "1");
+    window.__freighterMock = {
+      isConnected: async () => ({ isConnected: true }),
+      isAllowed: async () => ({ isAllowed: true }),
+      requestAccess: async () => ({ address: "${ADDR}" }),
+      getAddress: async () => ({ address: "${ADDR}" }),
+      getNetwork: async () => ({ network: "TESTNET", networkPassphrase: "Test SDF Network ; September 2015" }),
+    };
+  `);
+  await stubs(page);
+  // This wallet OWNS LISTED1 (override the default "owns none" route, registered after stubs() so it wins).
+  await page.route("**/dataroom/rooms?owner=**", (r) =>
+    r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+      owner: ADDR, count: 1, dataroomId: "",
+      rooms: [{ roomId: LISTED1, label: "Series A data room", owner: ADDR, docCount: 0, ledger: 1, visibility: "listed", name: "Series A data room", description: null }],
+    }) }));
+  await page.goto("/app/dataroom/discover");
+  await expect(page.getByTestId("discover-room")).toHaveCount(2);
+
+  // LISTED1 is mine -> marked "Your room" (links to Room Management for THIS room), not a join button.
+  const ownLink = page.getByTestId("discover-own-room");
+  await expect(ownLink).toBeVisible();
+  await expect(ownLink).toHaveAttribute("href", `/app/dataroom/manage?room=${LISTED1}`);
+  await expect(ownLink).toContainText("Your room");
+  await expect(page.locator('[data-testid="discover-room"][data-own="true"]')).toHaveCount(1);
+  // LISTED2 is not mine and has no local status -> still joinable.
+  await expect(page.getByTestId("discover-join")).toHaveCount(1);
 });
 
 test("discover: renders dark", async ({ page }) => {

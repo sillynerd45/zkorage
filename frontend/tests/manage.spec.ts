@@ -70,18 +70,34 @@ test("manage: pick a room, see the access model, save visibility", async ({ page
   await expect(page.getByTestId("manage-model-current-membership")).toBeVisible();
   await expect(page.getByTestId("manage-membership-panel")).toBeVisible();
 
-  // Visibility (moved here): dirty-gated Save.
+  // Visibility (moved here): dirty-gated Save + a "Current" badge on the saved tier.
   await expect(page.getByTestId("manage-visibility")).toBeVisible();
+  await expect(page.getByTestId("vis-current-private")).toBeVisible(); // the room is Private -> marked Current
   await expect(page.getByTestId("vis-save")).toBeDisabled(); // Private selected, room is Private -> nothing changed
   await page.getByTestId("vis-listed").click();
+  // Selecting Listed (not yet saved) leaves Current on the saved tier (Private), like the access model.
+  await expect(page.getByTestId("vis-current-private")).toBeVisible();
+  await expect(page.getByTestId("vis-current-listed")).toHaveCount(0);
   await page.getByTestId("vis-name").fill("Acme board");
   await expect(page.getByTestId("vis-save")).toBeEnabled();
   await page.getByTestId("vis-save").click();
   await expect(page.getByTestId("vis-saved")).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId("vis-save")).toBeDisabled();
+  // After saving, Current moves to the now-saved tier (Listed).
+  await expect(page.getByTestId("vis-current-listed")).toBeVisible();
+  await expect(page.getByTestId("vis-current-private")).toHaveCount(0);
 
   await page.screenshot({ path: "tests/manage.png", fullPage: true });
   expect(errs, errs.join("\n")).toHaveLength(0);
+});
+
+test("manage: a ?room= link (from Discover 'Your room') auto-selects that room", async ({ page }) => {
+  await page.addInitScript(mock);
+  await stubs(page, false);
+  await page.goto(`/app/dataroom/manage?room=${OWNER_ROOM}`);
+  // No chip click needed: the room from the URL is auto-selected once the owner's list loads.
+  await expect(page.getByTestId("manage-access-model")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("manage-owner-room").first()).toHaveAttribute("aria-pressed", "true");
 });
 
 test("manage: picking Bonded Access reveals the requirement editor", async ({ page }) => {
