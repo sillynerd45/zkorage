@@ -134,9 +134,10 @@ function OwnRoomLink({ roomId }: { roomId: string }) {
 // A bond-only room admits readers by a qualifying bond, with NO approval and no member list, so the directory
 // must show what that bond is (which token, how much, until when), NOT a request-to-join. The token contract
 // and its classic issuer link to Stellar Expert; the box uses the same success tint as the owner's "Current
-// requirement" card. Amounts are 7 dp on Stellar.
+// requirement" card. Amounts are 7 dp on Stellar. The deadline shows the date AND time (a lock cannot be
+// released before that exact moment, so the time matters).
 function BondRequirementBox({ bond }: { bond: DirectoryBond }) {
-  const until = new Date(bond.deadline * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  const until = new Date(bond.deadline * 1000).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
   return (
     <div className="mt-2 rounded-lg border border-success/30 bg-success/5 px-3 py-2 text-[12px] leading-relaxed" data-testid="discover-bond-req">
       <div className="font-medium text-foreground">
@@ -177,12 +178,16 @@ function BondToEnterPill() {
   );
 }
 
-// A bond-only room's action: open with a qualifying bond (the reader deposit + prove flow), NOT a join request.
-function BondOpenLink({ roomId }: { roomId: string }) {
+// A bond-only room's action. It routes to Documents > Open, the single flow that handles a bonded room: it
+// shows the requirement, locks a qualifying bond (deposit auto-filled to the minimum), proves access, and
+// opens, OR opens straight away if this wallet already has access. The label is "Create Bonded Access" (not
+// "Open"), because a visitor without a bond yet must set one up first; the standalone Bonded Access page is a
+// different system and cannot grant room access, so it is intentionally not the destination.
+function BondCreateLink({ roomId }: { roomId: string }) {
   return (
-    <Link to={accessLink(roomId)} data-testid="discover-bond-open" className={cn(buttonVariants({ size: "sm" }))}>
+    <Link to={accessLink(roomId)} data-testid="discover-bond-create" className={cn(buttonVariants({ size: "sm" }))}>
       <KeyRound aria-hidden="true" />
-      Open with a bond
+      Create Bonded Access
     </Link>
   );
 }
@@ -273,8 +278,8 @@ export default function Discover() {
               <div className="space-y-2.5" data-testid="discover-list">
                 {d.rooms.map((r) => {
                   const isOwn = ownedRooms.has(r.roomId.toLowerCase());
-                  // A TRUE bond-only room: show the bond requirement + an "Open with a bond" action instead of
-                  // a member bucket + request-to-join. Owners still see "Your room".
+                  // A TRUE bond-only room: show the bond requirement + a "Create Bonded Access" action instead
+                  // of a member bucket + request-to-join. Owners still see "Your room".
                   const bond = r.bond && r.bond.bondOpen ? r.bond : null;
                   return (
                     <div
@@ -307,7 +312,7 @@ export default function Discover() {
                           {isOwn ? (
                             <OwnRoomLink roomId={r.roomId} />
                           ) : bond ? (
-                            <BondOpenLink roomId={r.roomId} />
+                            <BondCreateLink roomId={r.roomId} />
                           ) : (
                             <JoinButton roomId={r.roomId} state={statusByRoom[r.roomId.toLowerCase()]} />
                           )}
@@ -368,7 +373,7 @@ export default function Discover() {
 
           {d.lookupResult && (() => {
             const lr = d.lookupResult;
-            // A bond-only room resolved by id shows its requirement + "Open with a bond", same as the
+            // A bond-only room resolved by id shows its requirement + "Create Bonded Access", same as the
             // directory; an own room shows "Your room". A private id stays dark (no bond info revealed).
             const lbond = lr.bond && lr.bond.bondOpen ? lr.bond : null;
             const lisOwn = ownedRooms.has(lr.roomId.toLowerCase());
@@ -430,7 +435,7 @@ export default function Discover() {
                     {lisOwn ? (
                       <OwnRoomLink roomId={lr.roomId} />
                     ) : lbond ? (
-                      <BondOpenLink roomId={lr.roomId} />
+                      <BondCreateLink roomId={lr.roomId} />
                     ) : (
                       <JoinButton roomId={lr.roomId} state={statusByRoom[lr.roomId.toLowerCase()]} />
                     )}
