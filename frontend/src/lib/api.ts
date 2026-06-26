@@ -713,6 +713,7 @@ export interface RoomMeta {
   description?: string | null;
   memberBucket?: string;
   anonTier?: AnonTier;
+  bond?: DirectoryBond | null;
 }
 
 /** PUBLIC directory: only "listed" rooms, with coarse member buckets (never exact). Wallet not required. */

@@ -181,6 +181,39 @@ test("discover: a bond-only room shows the bond requirement + 'Open with a bond'
   expect(errs, errs.join("\n")).toHaveLength(0);
 });
 
+test("discover: a bond-only room resolved by id shows the requirement + 'Open with a bond'", async ({ page }) => {
+  const errs: string[] = [];
+  page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/i.test(m.text())) errs.push(m.text()); });
+  const BONDED = "6".repeat(64);
+  const BTOKEN = "CALISDUWPL24M3LWLOXIWYNRQ42YYMZJ4ZU6UYIVCCB4NH4DMV767NZX";
+  const BISSUER = "GDFEJBM6RGK2IL2PIMGVNTGSO7O2NOVILFQUMIC55YMFKSGACA5IO2PM";
+  await stubs(page);
+  // Resolve any id to a discoverable bond-only room (registered after stubs() so it wins).
+  await page.route("**/dataroom/room-meta/**", (r) =>
+    r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+      roomId: BONDED, visibility: "unlisted", discoverable: true, listed: false,
+      name: "Bonded deal room", description: "Lock a bond to enter.", memberBucket: "under 5", anonTier: "forming",
+      bond: { bondOpen: true, token: BTOKEN, symbol: "TUSD", decimals: 7, issuer: BISSUER, minAmount: "1000000000", deadline: 4102444800, reqId: "ab".repeat(32) },
+    }) }));
+  await page.goto("/app/dataroom/discover");
+  await page.getByTestId("discover-subtab-find").click();
+  await page.getByTestId("discover-lookup-input").fill(BONDED);
+  await page.getByTestId("discover-lookup-btn").click();
+
+  const result = page.getByTestId("discover-lookup-result");
+  await expect(result).toHaveAttribute("data-discoverable", "true");
+  await expect(result).toHaveAttribute("data-bonded", "true");
+  // Shows the bond requirement (amount + token + contract/issuer links), not a member bucket.
+  await expect(result.getByTestId("discover-bond-pill")).toBeVisible();
+  await expect(result.getByTestId("discover-bond-req")).toContainText("100 TUSD");
+  await expect(result.getByTestId("discover-bond-issuer").locator("a")).toHaveAttribute("href", `https://stellar.expert/explorer/testnet/account/${BISSUER}`);
+  await expect(result.getByTestId("bucket-badge")).toHaveCount(0);
+  // The action is "Open with a bond" -> the reader flow, NOT request-to-join.
+  await expect(result.getByTestId("discover-bond-open")).toHaveAttribute("href", `/app/dataroom/documents?room=${BONDED}#open`);
+  await expect(result.getByTestId("discover-join")).toHaveCount(0);
+  expect(errs, errs.join("\n")).toHaveLength(0);
+});
+
 test("discover: renders dark", async ({ page }) => {
   await page.addInitScript(DARK);
   await stubs(page);

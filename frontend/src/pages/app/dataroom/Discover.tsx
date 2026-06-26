@@ -366,49 +366,68 @@ export default function Discover() {
             </p>
           )}
 
-          {d.lookupResult && (
-            <div
-              className="mt-4 rounded-xl border p-4"
-              data-testid="discover-lookup-result"
-              data-discoverable={String(d.lookupResult.discoverable)}
-            >
-              {!d.lookupResult.discoverable ? (
-                <div className="space-y-3">
-                  <p className="text-sm text-muted-foreground">
-                    This id is not discoverable. The room is private, or it does not exist. If the owner shared
-                    the id with you directly, you can still request to join it.
-                  </p>
-                  <JoinButton
-                    roomId={d.lookupResult.roomId}
-                    state={statusByRoom[d.lookupResult.roomId.toLowerCase()]}
-                    variant="outline"
-                  />
-                </div>
-              ) : (
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 text-sm font-medium">
-                      {d.lookupResult.name || "Unnamed room"}
-                      <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                        {d.lookupResult.listed ? "listed" : "unlisted"}
-                      </span>
-                    </div>
-                    {d.lookupResult.description && (
-                      <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">
-                        {d.lookupResult.description}
-                      </p>
-                    )}
-                    {d.lookupResult.anonTier && d.lookupResult.memberBucket && (
-                      <div className="mt-3">
-                        <BucketBadge tier={d.lookupResult.anonTier} bucket={d.lookupResult.memberBucket} />
+          {d.lookupResult && (() => {
+            const lr = d.lookupResult;
+            // A bond-only room resolved by id shows its requirement + "Open with a bond", same as the
+            // directory; an own room shows "Your room". A private id stays dark (no bond info revealed).
+            const lbond = lr.bond && lr.bond.bondOpen ? lr.bond : null;
+            const lisOwn = ownedRooms.has(lr.roomId.toLowerCase());
+            return (
+              <div
+                className="mt-4 rounded-xl border p-4"
+                data-testid="discover-lookup-result"
+                data-discoverable={String(lr.discoverable)}
+                data-bonded={lbond ? "true" : "false"}
+              >
+                {!lr.discoverable ? (
+                  <div className="space-y-3">
+                    <p className="text-sm text-muted-foreground">
+                      This id is not discoverable. The room is private, or it does not exist. If the owner shared
+                      the id with you directly, you can still request to join it.
+                    </p>
+                    <JoinButton
+                      roomId={lr.roomId}
+                      state={statusByRoom[lr.roomId.toLowerCase()]}
+                      variant="outline"
+                    />
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                        {lr.name || "Unnamed room"}
+                        <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                          {lr.listed ? "listed" : "unlisted"}
+                        </span>
+                        {lbond && <BondToEnterPill />}
                       </div>
+                      {lr.description && (
+                        <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">
+                          {lr.description}
+                        </p>
+                      )}
+                      {lbond ? (
+                        <BondRequirementBox bond={lbond} />
+                      ) : (
+                        lr.anonTier && lr.memberBucket && (
+                          <div className="mt-3">
+                            <BucketBadge tier={lr.anonTier} bucket={lr.memberBucket} />
+                          </div>
+                        )
+                      )}
+                    </div>
+                    {lisOwn ? (
+                      <OwnRoomLink roomId={lr.roomId} />
+                    ) : lbond ? (
+                      <BondOpenLink roomId={lr.roomId} />
+                    ) : (
+                      <JoinButton roomId={lr.roomId} state={statusByRoom[lr.roomId.toLowerCase()]} />
                     )}
                   </div>
-                  <JoinButton roomId={d.lookupResult.roomId} state={statusByRoom[d.lookupResult.roomId.toLowerCase()]} />
-                </div>
-              )}
-            </div>
-          )}
+                )}
+              </div>
+            );
+          })()}
         </Card>
       )}
     </div>
