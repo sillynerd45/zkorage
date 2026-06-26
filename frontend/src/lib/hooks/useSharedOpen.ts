@@ -244,9 +244,18 @@ export function useSharedOpen() {
   // ── Bonded Access (BA5) state ──
   const [bondReq, setBondReq] = useState<BondRequirement | null>(null);
   const [bondCount, setBondCount] = useState<number | null>(null);
-  const [bondTokenMeta, setBondTokenMeta] = useState<{ symbol: string; decimals: number } | null>(null);
+  const [bondTokenMeta, setBondTokenMeta] = useState<{ symbol: string; decimals: number; issuer: string | null } | null>(null);
   const [bondLocking, setBondLocking] = useState(false);
   const bondBelowFloor = bondCount !== null && bondCount < BOND_FLOOR;
+
+  // The SELECTED room's own bond requirement, read on room select (public, no signature), so the Open page can
+  // show a bond-aware panel (requirement + set count + a set-up action) BEFORE the reader does anything. Only
+  // set for a TRUE bond-only room (`bondOpen`); a membership / legacy-bonded room leaves it null and uses the
+  // per-document flow. `roomBondMeta` carries the token's symbol/decimals/issuer for the requirement detail.
+  const [roomBond, setRoomBond] = useState<BondRequirement | null>(null);
+  const [roomBondMeta, setRoomBondMeta] = useState<{ symbol: string; decimals: number; issuer: string | null } | null>(null);
+  const [roomBondMetaLoading, setRoomBondMetaLoading] = useState(false);
+  const [roomBondCount, setRoomBondCount] = useState<number | null>(null);
 
   const cancelled = useRef(false);
   useEffect(() => {
@@ -273,6 +282,38 @@ export function useSharedOpen() {
       .catch(() => { if (live) setAnonCount(null); });
     return () => { live = false; };
   }, [room]);
+
+  // Read the selected room's bond requirement (public, no signature) so the Open page knows on landing whether
+  // it is a bond-only room and can show the bond-aware panel. Loads the token meta + the live qualifying-set
+  // count for display. A membership / legacy room leaves roomBond null (the per-document flow handles those).
+  useEffect(() => {
+    if (!isHex32(room)) { setRoomBond(null); setRoomBondMeta(null); setRoomBondCount(null); setRoomBondMetaLoading(false); return; }
+    let live = true;
+    setRoomBond(null); setRoomBondMeta(null); setRoomBondCount(null); setRoomBondMetaLoading(true);
+    getBondRequirementApi(room.trim())
+      .then((r) => {
+        if (!live) return;
+        if (r.found && r.bondOpen && r.token && r.minAmount && r.deadline) {
+          setRoomBond(r);
+          getBondQualSet(r.token, r.minAmount, r.deadline)
+            .then((q) => { if (live) setRoomBondCount(q.anonSetSize); })
+            .catch(() => { if (live) setRoomBondCount(null); });
+          if (address) {
+            getTokenBalance(address, r.token)
+              .then((t) => { if (live) setRoomBondMeta({ symbol: t.symbol, decimals: t.decimals, issuer: t.issuer ?? null }); })
+              .catch(() => { /* leave null -> the detail reads "unavailable" */ })
+              .finally(() => { if (live) setRoomBondMetaLoading(false); });
+          } else if (live) {
+            setRoomBondMetaLoading(false);
+          }
+        } else {
+          setRoomBond(null);
+          setRoomBondMetaLoading(false);
+        }
+      })
+      .catch(() => { if (live) { setRoomBond(null); setRoomBondMetaLoading(false); } });
+    return () => { live = false; };
+  }, [room, address]);
 
   // Reset the per-doc open flow whenever the selected room changes.
   const resetFlow = useCallback(() => {
@@ -423,7 +464,7 @@ export function useSharedOpen() {
       setBondTokenMeta(null);
       if (address && req.token) {
         getTokenBalance(address, req.token)
-          .then((t) => { if (!cancelled.current) setBondTokenMeta({ symbol: t.symbol, decimals: t.decimals }); })
+          .then((t) => { if (!cancelled.current) setBondTokenMeta({ symbol: t.symbol, decimals: t.decimals, issuer: t.issuer ?? null }); })
           .catch(() => { /* leave null; BondDeposit shows a "reading the token" state + blocks the lock */ });
       }
       // A lapsed deadline can never be satisfied (a qualifying lock needs unlock_time >= deadline AND
@@ -656,6 +697,14 @@ export function useSharedOpen() {
 
   const dismiss = useCallback(() => { resetFlow(); }, [resetFlow]); // "Not now"
 
+  // Room-level "Set up access" for a bond-only room: start the open flow on the room's first document. The bond
+  // grants ROOM access (any one document's open detects the requirement and runs deposit -> wait -> prove ->
+  // open), so the reader does not need to pick a document first. After access lands, every document opens.
+  const setupRoomAccess = useCallback(() => {
+    const first = roomDocs[0];
+    if (first) void open(first.doc_id);
+  }, [roomDocs, open]);
+
   // Resume a persisted batch wait on landing: if this wallet has an outstanding ticket, auto-select its room
   // and pick the flow back up (poll, then auto-open) so leaving the tab does not lose the "waiting" state.
   // Keyed to the address it ran for, so switching wallets re-resumes for the NEW account (the [address] effect
@@ -737,5 +786,11 @@ export function useSharedOpen() {
     lockBond,
     refreshBond,
     setupBondAccess,
+    // the selected room's bond requirement (for the bond-aware Open panel) + the room-level set-up action
+    roomBond,
+    roomBondMeta,
+    roomBondMetaLoading,
+    roomBondCount,
+    setupRoomAccess,
   };
 }

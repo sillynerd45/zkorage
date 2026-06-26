@@ -289,3 +289,41 @@ test("bond-only: prove runs ONLY the bond-open proof, never a membership proof",
   await expect.poll(() => openProve, { timeout: 15_000 }).toBeGreaterThan(0);
   expect(memberProve).toBe(0);
 });
+
+test("bond-only: the Open page shows a named bonded panel + a room-level Set up access", async ({ page }) => {
+  const errs: string[] = [];
+  page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/i.test(m.text())) errs.push(m.text()); });
+  const ISSUER = "GDFEJBM6RGK2IL2PIMGVNTGSO7O2NOVILFQUMIC55YMFKSGACA5IO2PM";
+  await page.addInitScript(mock);
+  await stubReaderCommon(page, "none");
+  await page.route("**/dataroom/bond-requirement/**", (r) => (r.request().method() === "GET" ? r.fulfill(bondReqOpen) : r.continue()));
+  await page.route("**/bonded/bond/qual-set**", (r) => r.fulfill(json(qualSet(1, [decoy(1)])))); // 1 of 3, below the floor
+  // a directory NAME for the room + an issuer for the token, so the panel can show both.
+  await page.route("**/dataroom/directory", (r) => r.fulfill(json({ count: 1, dataroomId: "", rooms: [{ roomId: ROOM, name: "Acme bonded room", description: "deal", memberBucket: "under 5", anonTier: "forming", listedAt: 1 }] })));
+  await page.route("**/escrow/token-balance**", (r) => r.fulfill(json({ owner: ADDR, token: TOKEN, balance: "5000000000", decimals: 7, symbol: "TUSD", issuer: ISSUER })));
+
+  await page.goto(`/app/dataroom/documents?room=${ROOM}#open`);
+  // The bonded panel NAMES the room (so it is not mistaken for one of your accessible rooms) and shows the
+  // requirement in detail.
+  const panel = page.getByTestId("access-bond-panel");
+  await expect(panel).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("access-room-name")).toContainText("Bonded Access · Acme bonded room");
+  const req = page.getByTestId("access-bond-req-detail");
+  await expect(req).toContainText("TUSD");
+  await expect(req).toContainText(/:\d{2}/); // the deadline includes the time
+  await expect(req.locator(`a[href="https://stellar.expert/explorer/testnet/contract/${TOKEN}"]`)).toBeVisible();
+  await expect(page.getByTestId("access-bond-req-issuer").locator(`a[href="https://stellar.expert/explorer/testnet/account/${ISSUER}"]`)).toBeVisible();
+  // The set count + a single room-level "Set up access" action (not buried per-document).
+  await expect(panel.getByTestId("bond-count")).toBeVisible();
+  await expect(page.getByTestId("access-bond-setup")).toContainText("Set up access");
+  // The privacy note is bond-aware (NOT the membership "approved members" copy).
+  await expect(page.getByTestId("access-privacy")).toContainText("qualifying bond");
+  await expect(page.getByTestId("access-privacy")).not.toContainText("members the owner approved");
+
+  // Clicking the room-level "Set up access" drives the flow to the deposit step, shown at the room level.
+  await page.getByTestId("access-bond-setup").click();
+  await expect(page.getByTestId("access-status")).toHaveAttribute("data-phase", "bond-deposit", { timeout: 30_000 });
+  await expect(page.getByTestId("access-bond-deposit")).toBeVisible();
+  await page.screenshot({ path: "tests/bonded-open-panel.png", fullPage: true });
+  expect(errs, errs.join("\n")).toHaveLength(0);
+});
