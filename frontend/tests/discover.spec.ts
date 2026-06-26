@@ -137,6 +137,50 @@ test("discover: your own listed room is marked, not joinable", async ({ page }) 
   await expect(page.getByTestId("discover-join")).toHaveCount(1);
 });
 
+test("discover: a bond-only room shows the bond requirement + 'Open with a bond', not request-to-join", async ({ page }) => {
+  const errs: string[] = [];
+  page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/i.test(m.text())) errs.push(m.text()); });
+  const BONDED = "5".repeat(64);
+  const BTOKEN = "CALISDUWPL24M3LWLOXIWYNRQ42YYMZJ4ZU6UYIVCCB4NH4DMV767NZX";
+  const BISSUER = "GDFEJBM6RGK2IL2PIMGVNTGSO7O2NOVILFQUMIC55YMFKSGACA5IO2PM";
+  await stubs(page);
+  // Override the directory with a single bond-only room (registered after stubs() so it wins).
+  await page.route("**/dataroom/directory", (r) =>
+    r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+      count: 1, dataroomId: "",
+      rooms: [{
+        roomId: BONDED, name: "Bonded deal room", description: "Lock a bond to enter.",
+        memberBucket: "under 5", anonTier: "forming", listedAt: 3,
+        bond: { bondOpen: true, token: BTOKEN, symbol: "TUSD", decimals: 7, issuer: BISSUER, minAmount: "1000000000", deadline: 4102444800, reqId: "ab".repeat(32) },
+      }],
+    }) }));
+  await page.goto("/app/dataroom/discover");
+
+  const room = page.getByTestId("discover-room");
+  await expect(room).toHaveCount(1);
+  await expect(room).toHaveAttribute("data-bonded", "true");
+
+  // The member bucket is replaced by a "Bond to enter" pill (a bond-only room has no approved members).
+  await expect(page.getByTestId("discover-bond-pill")).toBeVisible();
+  await expect(page.getByTestId("bucket-badge")).toHaveCount(0);
+
+  // The requirement is shown: amount + token + deadline, with the token contract AND issuer as Stellar Expert links.
+  const req = page.getByTestId("discover-bond-req");
+  await expect(req).toContainText("100 TUSD");
+  await expect(req).toContainText("locked until");
+  await expect(req.locator(`a[href="https://stellar.expert/explorer/testnet/contract/${BTOKEN}"]`)).toBeVisible();
+  await expect(page.getByTestId("discover-bond-issuer").locator(`a[href="https://stellar.expert/explorer/testnet/account/${BISSUER}"]`)).toBeVisible();
+
+  // The action is "Open with a bond" -> the reader flow, NOT request-to-join.
+  const open = page.getByTestId("discover-bond-open");
+  await expect(open).toBeVisible();
+  await expect(open).toHaveAttribute("href", `/app/dataroom/documents?room=${BONDED}#open`);
+  await expect(page.getByTestId("discover-join")).toHaveCount(0);
+
+  await page.screenshot({ path: "tests/discover-bonded.png", fullPage: true });
+  expect(errs, errs.join("\n")).toHaveLength(0);
+});
+
 test("discover: renders dark", async ({ page }) => {
   await page.addInitScript(DARK);
   await stubs(page);

@@ -74,7 +74,7 @@ export function BondTokenPicker({
     setPasteBusy(true);
     try {
       const t = await getTokenBalance(address ?? "", c);
-      setPasteTok({ key: c, symbol: t.symbol || "token", contractId: c, decimals: t.decimals, balanceBase: t.balance, kind: "custom" });
+      setPasteTok({ key: c, symbol: t.symbol || "token", contractId: c, decimals: t.decimals, balanceBase: t.balance, kind: "custom", issuer: t.issuer ?? undefined });
     } catch (e) {
       setPasteErr((e as Error)?.message ?? "Could not read that token.");
     } finally {

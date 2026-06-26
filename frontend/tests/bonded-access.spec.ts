@@ -241,7 +241,7 @@ test("Room Management: the owner sets Bonded Access via a classic asset", async 
   await page.getByTestId("bond-token-code").fill("TUSD");
   await page.getByTestId("bond-token-issuer").fill(ADDR);
   await page.getByTestId("bond-token-classic-resolve").click();
-  await expect(page.getByTestId("bond-section")).toContainText("Resolved to SAC");
+  await expect(page.getByTestId("bond-token-detail")).toContainText("TUSD"); // the resolved token's detail line
 
   await page.getByTestId("bond-set").click();
   await expect(page.getByTestId("bond-set-done")).toContainText("Bonded Access set", { timeout: 30_000 });
