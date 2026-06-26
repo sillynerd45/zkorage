@@ -173,7 +173,7 @@ test("manage: a bond-only room shows the Current requirement card (standout + co
   await expect(page.getByTestId("bond-section")).toBeVisible();
 
   // A submenu (Current requirement | Set a new requirement) appears only when a requirement is set, and lands
-  // on Current requirement (NOT the empty editor / "Set bonded access" button).
+  // on Current requirement (NOT the empty editor / "Set Bonded Access" button).
   await expect(page.getByTestId("bond-view-current")).toBeVisible();
   await expect(page.getByTestId("bond-view-new")).toBeVisible();
   const current = page.getByTestId("bond-current");
@@ -241,7 +241,7 @@ test("manage: setting a requirement shows a blocking 'do not close this tab' dia
   await page.screenshot({ path: "tests/manage-bond-progress.png", fullPage: true });
 
   // When it finishes, the dialog closes, the success note shows, and the view lands on the Current requirement
-  // card (the editor + its "Set bonded access" button are gone).
+  // card (the editor + its "Set Bonded Access" button are gone).
   await expect(page.getByTestId("bond-progress")).toHaveCount(0, { timeout: 15_000 });
   await expect(page.getByTestId("bond-set-done")).toBeVisible();
   await expect(page.getByTestId("bond-current")).toBeVisible();

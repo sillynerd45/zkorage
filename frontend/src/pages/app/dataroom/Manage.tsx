@@ -366,7 +366,9 @@ export default function RoomManagement() {
             {/* Bonded Access picked. Show the requirement editor (set / replace / clear). */}
             {picked === "bond" && (
               <div className="mt-4" data-testid="manage-bond-panel">
-                <OwnerBondSection roomId={e.ownerRoom} onChanged={() => setReqRefresh((x) => x + 1)} />
+                {/* key by room so switching directly between two bond-only rooms remounts the section, instead
+                    of carrying the previous room's requirement (and its token link) into the next one. */}
+                <OwnerBondSection key={e.ownerRoom} roomId={e.ownerRoom} onChanged={() => setReqRefresh((x) => x + 1)} />
               </div>
             )}
           </Card>

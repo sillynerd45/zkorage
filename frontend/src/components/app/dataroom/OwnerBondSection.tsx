@@ -56,23 +56,31 @@ function fmtLocalDeadline(local: string): string {
 // indeterminate sweep (we do not have fine-grained progress), the step line updates at the coarse boundaries
 // we control (signing -> publishing -> finishing).
 function BondProgressDialog({ proc }: { proc: { kind: "set" | "clear"; step: string } | null }) {
+  // Move focus into the dialog when it opens so a keyboard/screen-reader user lands on the modal (and its
+  // "do not close this tab" label) rather than a control behind the backdrop. Keyed on `kind` so a step
+  // update does not re-grab focus. Full focus-trap/inert is a shared concern with the Store dialog.
+  const ref = useRef<HTMLDivElement>(null);
+  const kind = proc?.kind;
+  useEffect(() => { if (kind) ref.current?.focus(); }, [kind]);
   if (!proc) return null;
   const title = proc.kind === "set" ? "Setting up Bonded Access" : "Clearing Bonded Access";
   return createPortal(
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-5 backdrop-blur-sm" data-testid="bond-progress-backdrop">
       <div
+        ref={ref}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-busy="true"
-        aria-label={title}
+        aria-labelledby="bond-progress-title"
         data-testid="bond-progress"
-        className="w-full max-w-[440px] animate-fade-in rounded-xl border bg-card p-6 text-card-foreground shadow-xl"
+        className="w-full max-w-[440px] animate-fade-in rounded-xl border bg-card p-6 text-card-foreground shadow-xl focus:outline-none"
       >
         <div className="flex items-center gap-2.5">
           <Loader2 className="size-4 animate-spin text-brand" aria-hidden="true" />
-          <h2 className="text-base font-semibold tracking-tight">{title}</h2>
+          <h2 id="bond-progress-title" className="text-base font-semibold tracking-tight">{title}</h2>
         </div>
-        <div className="relative mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
+        <div className="relative mt-3 h-1.5 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuetext="Working">
           <div className="absolute inset-y-0 w-2/5 rounded-full bg-brand motion-safe:animate-indeterminate" />
         </div>
         <p className="mt-4 text-[13px] text-foreground" role="status" aria-live="polite" data-testid="bond-progress-step">
@@ -254,7 +262,7 @@ export function OwnerBondSection({ roomId, onChanged }: { roomId: string; onChan
       </div>
 
       <Button onClick={() => void onSet()} disabled={busy || !token} data-testid="bond-set">
-        {busy ? "Setting…" : req ? "Replace requirement" : "Set bonded access"}
+        {busy ? "Setting…" : req ? "Replace requirement" : "Set Bonded Access"}
       </Button>
     </div>
   );
@@ -336,9 +344,10 @@ export function OwnerBondSection({ roomId, onChanged }: { roomId: string; onChan
                 role="tab"
                 aria-selected={view === t.key}
                 onClick={() => setView(t.key)}
+                disabled={busy}
                 data-testid={`bond-view-${t.key}`}
                 className={cn(
-                  "whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
+                  "whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-50",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 focus-visible:ring-offset-muted",
                   view === t.key
                     ? "border border-border bg-card text-foreground shadow-sm"
