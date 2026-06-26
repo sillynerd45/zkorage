@@ -214,6 +214,44 @@ test("discover: a bond-only room resolved by id shows the requirement + 'Open wi
   expect(errs, errs.join("\n")).toHaveLength(0);
 });
 
+test("discover: looking up your own private room by id offers 'Your room', not request-to-join", async ({ page }) => {
+  const ADDR = "GDLECNXD76OZQROASQGWEP4KAMJWTJXZW2LN7OJGYPXIJDRXACWGXZY6";
+  const MINE = "7".repeat(64);
+  await page.addInitScript(`
+    localStorage.setItem("zkorage.wallet.connected", "1");
+    window.__freighterMock = {
+      isConnected: async () => ({ isConnected: true }),
+      isAllowed: async () => ({ isAllowed: true }),
+      requestAccess: async () => ({ address: "${ADDR}" }),
+      getAddress: async () => ({ address: "${ADDR}" }),
+      getNetwork: async () => ({ network: "TESTNET", networkPassphrase: "Test SDF Network ; September 2015" }),
+    };
+  `);
+  await stubs(page);
+  // This wallet owns MINE (override the default "owns none", registered after stubs() so it wins).
+  await page.route("**/dataroom/rooms?owner=**", (r) =>
+    r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+      owner: ADDR, count: 1, dataroomId: "",
+      rooms: [{ roomId: MINE, label: "My private room", owner: ADDR, docCount: 0, ledger: 1, visibility: "private", name: null, description: null }],
+    }) }));
+  // room-meta for MINE -> private/dark (no owner check on this public endpoint).
+  await page.route("**/dataroom/room-meta/**", (r) =>
+    r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ roomId: MINE, visibility: "private", discoverable: false }) }));
+
+  await page.goto("/app/dataroom/discover");
+  await page.getByTestId("discover-subtab-find").click();
+  await page.getByTestId("discover-lookup-input").fill(MINE);
+  await page.getByTestId("discover-lookup-btn").click();
+
+  const result = page.getByTestId("discover-lookup-result");
+  await expect(result).toHaveAttribute("data-discoverable", "false");
+  // It's mine -> "Your room" link to Room Management, not a request-to-join.
+  const own = result.getByTestId("discover-own-room");
+  await expect(own).toBeVisible();
+  await expect(own).toHaveAttribute("href", `/app/dataroom/manage?room=${MINE}`);
+  await expect(result.getByTestId("discover-join")).toHaveCount(0);
+});
+
 test("discover: renders dark", async ({ page }) => {
   await page.addInitScript(DARK);
   await stubs(page);

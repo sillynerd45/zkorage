@@ -140,7 +140,7 @@ function BondRequirementBox({ bond }: { bond: DirectoryBond }) {
   return (
     <div className="mt-2 rounded-lg border border-success/30 bg-success/5 px-3 py-2 text-[12px] leading-relaxed" data-testid="discover-bond-req">
       <div className="font-medium text-foreground">
-        Bond {fmtAmount(bond.minAmount, bond.decimals)} {bond.symbol}
+        Bond {fmtAmount(bond.minAmount, bond.decimals)}{bond.symbol ? ` ${bond.symbol}` : ""}
         <span className="font-normal text-muted-foreground"> · locked until {until}</span>
       </div>
       <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-muted-foreground">
@@ -380,17 +380,28 @@ export default function Discover() {
                 data-bonded={lbond ? "true" : "false"}
               >
                 {!lr.discoverable ? (
-                  <div className="space-y-3">
-                    <p className="text-sm text-muted-foreground">
-                      This id is not discoverable. The room is private, or it does not exist. If the owner shared
-                      the id with you directly, you can still request to join it.
-                    </p>
-                    <JoinButton
-                      roomId={lr.roomId}
-                      state={statusByRoom[lr.roomId.toLowerCase()]}
-                      variant="outline"
-                    />
-                  </div>
+                  lisOwn ? (
+                    // A private room the connected wallet owns: it stays dark to discovery, but the owner can
+                    // still manage it. Point there instead of inviting them to "request to join" their own room.
+                    <div className="space-y-3">
+                      <p className="text-sm text-muted-foreground">
+                        This is your room. It stays private, so it does not appear in the directory.
+                      </p>
+                      <OwnRoomLink roomId={lr.roomId} />
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      <p className="text-sm text-muted-foreground">
+                        This id is not discoverable. The room is private, or it does not exist. If the owner shared
+                        the id with you directly, you can still request to join it.
+                      </p>
+                      <JoinButton
+                        roomId={lr.roomId}
+                        state={statusByRoom[lr.roomId.toLowerCase()]}
+                        variant="outline"
+                      />
+                    </div>
+                  )
                 ) : (
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">

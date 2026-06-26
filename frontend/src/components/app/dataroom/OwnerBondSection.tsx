@@ -19,6 +19,7 @@ import type { TokenOption } from "@/lib/bonded/tokens";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
 import { DataRow } from "@/components/app/blocks";
 import { BondTokenPicker } from "@/components/app/dataroom/BondTokenPicker";
 import { BondCount, Callout, CopyIconButton, CurrentBadge, SectionLabel } from "@/components/app/dataroom/kit";
@@ -95,13 +96,35 @@ function BondProgressDialog({ proc }: { proc: { kind: "set" | "clear"; step: str
   );
 }
 
-export function OwnerBondSection({ roomId, onChanged }: { roomId: string; onChanged?: () => void }) {
+// Shown on the COLD path, while the first requirement read for a room is in flight, so a room that already
+// has a requirement does not briefly flash the empty "Set Bonded Access" editor before its Current card. It
+// roughly matches the editor's box (a select, two side-by-side inputs, a button), so the swap does not jump.
+function BondSectionSkeleton() {
+  return (
+    <div className="space-y-4" aria-busy="true" data-testid="bond-section-skeleton">
+      <span className="sr-only" role="status">Loading the bond requirement</span>
+      <Skeleton className="h-10 w-full max-w-xs rounded-md" />
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Skeleton className="h-16 rounded-md" />
+        <Skeleton className="h-16 rounded-md" />
+      </div>
+      <Skeleton className="h-9 w-40 rounded-md" />
+    </div>
+  );
+}
+
+export function OwnerBondSection({ roomId, onChanged, onCleared }: { roomId: string; onChanged?: () => void; onCleared?: () => void }) {
   const { address } = useWallet();
   const signer = useTxSigner();
 
   const [req, setReq] = useState<BondRequirement | null>(null);
   const [reqMeta, setReqMeta] = useState<{ symbol: string; decimals: number; issuer: string | null } | null>(null);
+  const [reqMetaLoading, setReqMetaLoading] = useState(false); // the token symbol/issuer read is in flight
   const [count, setCount] = useState<number | null>(null);
+  // Whether the FIRST requirement read for this room (mount or room switch) has settled. Until it has, show a
+  // skeleton instead of the editor, so a bonded room does not flash the empty editor before its Current card.
+  // Not reset on a later reload (after a set), so that path swaps smoothly without a skeleton blink.
+  const [loaded, setLoaded] = useState(false);
 
   const [token, setToken] = useState<TokenOption | null>(null);
   const [amount, setAmount] = useState("100");
@@ -131,15 +154,25 @@ export function OwnerBondSection({ roomId, onChanged }: { roomId: string; onChan
   // Load the current requirement + the live qualifying-bonder count + the token's symbol/decimals/issuer.
   const loadReq = useCallback(async () => {
     setReqMeta(null);
+    setReqMetaLoading(true);
     setCount(null);
     const r = await getBondRequirementApi(roomId).catch(() => ({ found: false }) as BondRequirement);
     if (r.found && r.token && r.minAmount && r.deadline) {
       setReq(r);
       getBondQualSet(r.token, r.minAmount, r.deadline).then((q) => setCount(q.anonSetSize)).catch(() => setCount(null));
-      if (address) getTokenBalance(address, r.token).then((t) => setReqMeta({ symbol: t.symbol, decimals: t.decimals, issuer: t.issuer ?? null })).catch(() => setReqMeta(null));
+      if (address) {
+        getTokenBalance(address, r.token)
+          .then((t) => setReqMeta({ symbol: t.symbol, decimals: t.decimals, issuer: t.issuer ?? null }))
+          .catch(() => setReqMeta(null)) // e.g. the token's SAC is not deployed: the row reads "unavailable"
+          .finally(() => setReqMetaLoading(false));
+      } else {
+        setReqMetaLoading(false); // no wallet -> cannot read the token meta
+      }
     } else {
       setReq(null);
+      setReqMetaLoading(false);
     }
+    setLoaded(true);
   }, [roomId, address]);
 
   useEffect(() => { void loadReq(); }, [loadReq]);
@@ -202,13 +235,14 @@ export function OwnerBondSection({ roomId, onChanged }: { roomId: string; onChan
       setCount(null);
       setReqMeta(null);
       onChanged?.();
+      onCleared?.(); // let the parent move off the bond panel to the membership panel
     } catch (e) {
       setErr(String((e as Error).message ?? e));
     } finally {
       setBusy(false);
       setProc(null);
     }
-  }, [signer, roomId, onChanged]);
+  }, [signer, roomId, onChanged, onCleared]);
 
   // The editor (set a new requirement, or replace the current one). The two short inputs (minimum amount and
   // deadline) sit side by side on wider screens, so the form fills the width instead of running as a single
@@ -288,7 +322,9 @@ export function OwnerBondSection({ roomId, onChanged }: { roomId: string; onChan
         </span>
       </DataRow>
       <DataRow k="issuer" mono={false} testId="bond-current-issuer">
-        {reqMeta ? (
+        {reqMetaLoading ? (
+          <span className="text-muted-foreground">…</span>
+        ) : reqMeta ? (
           reqMeta.issuer ? (
             <a href={explorer("account", reqMeta.issuer)} target="_blank" rel="noreferrer" className="font-mono text-brand hover:underline" title={reqMeta.issuer}>
               {short(reqMeta.issuer, 6)} ↗
@@ -297,11 +333,15 @@ export function OwnerBondSection({ roomId, onChanged }: { roomId: string; onChan
             <span className="text-muted-foreground">no classic issuer</span>
           )
         ) : (
-          <span className="text-muted-foreground">…</span>
+          <span className="text-muted-foreground">unavailable</span>
         )}
       </DataRow>
       <DataRow k="minimum">
-        {reqMeta ? `${fmtAmount(req.minAmount, reqMeta.decimals)} ${reqMeta.symbol}` : `${req.minAmount} base units`}
+        {reqMeta
+          ? `${fmtAmount(req.minAmount, reqMeta.decimals)}${reqMeta.symbol ? ` ${reqMeta.symbol}` : ""}`
+          : reqMetaLoading
+            ? "…"
+            : `${req.minAmount} base units`}
       </DataRow>
       <DataRow k="locked until" mono={false}>
         {fmtDeadline(req.deadline)} <span className="text-muted-foreground">(or later)</span>
@@ -330,7 +370,9 @@ export function OwnerBondSection({ roomId, onChanged }: { roomId: string; onChan
         member list. The reader proves the bond anonymously, so you never see which reader opened a file.
       </p>
 
-      {req ? (
+      {!loaded ? (
+        <BondSectionSkeleton />
+      ) : req ? (
         <div className="space-y-3">
           {/* Submenu: the current requirement, or the editor to replace it. Keeps both off the screen at once
               so the section does not run tall. Shown only when a requirement exists. */}

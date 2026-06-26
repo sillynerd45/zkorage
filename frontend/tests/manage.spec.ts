@@ -249,6 +249,50 @@ test("manage: setting a requirement shows a blocking 'do not close this tab' dia
   await expect(page.getByTestId("bond-editor")).toHaveCount(0);
 });
 
+test("manage: a bonded room shows the bond-section skeleton before its Current requirement (no editor flash)", async ({ page }) => {
+  await page.addInitScript(mock);
+  await stubsCommon(page);
+  // Delay the bond-requirement GET so both the page-level detail load and the bond-section's own read are
+  // observable; the bond section must show its skeleton, never the empty editor, for a room with a requirement.
+  await page.route("**/dataroom/bond-requirement/**", async (r) => {
+    if (r.request().method() !== "GET") return r.continue();
+    await new Promise((res) => setTimeout(res, 500));
+    return r.fulfill(json({ found: true, scope: "room", bondOpen: true, mode: "open", gate: "C".repeat(56), reqId: "ab".repeat(32), token: TOKEN, minAmount: MIN, deadline: DEADLINE }));
+  });
+  await page.goto("/app/dataroom/manage");
+  await page.getByTestId("manage-owner-room").first().click();
+  await expect(page.getByTestId("bond-section-skeleton")).toBeVisible({ timeout: 15_000 });
+  // The empty editor must NOT appear for a room that has a requirement.
+  await expect(page.getByTestId("bond-set")).toHaveCount(0);
+  await expect(page.getByTestId("bond-current")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("bond-section-skeleton")).toHaveCount(0);
+});
+
+test("manage: clearing from the Current card returns to the membership panel", async ({ page }) => {
+  await page.addInitScript(mock);
+  let cleared = false;
+  await stubsCommon(page);
+  await page.route("**/dataroom/bond-requirement/**", (r) => {
+    if (r.request().method() !== "GET") return r.continue();
+    return r.fulfill(cleared
+      ? json({ found: false, bondOpen: false })
+      : json({ found: true, scope: "room", bondOpen: true, mode: "open", gate: "C".repeat(56), reqId: "ab".repeat(32), token: TOKEN, minAmount: MIN, deadline: DEADLINE }));
+  });
+  await page.route("**/dataroom/bond-requirement/clear", (r) => { cleared = true; return r.fulfill(json({ ok: true, mode: "xdr", xdr: "AAAA", source: ADDR })); });
+  await page.route("**/tx/submit", (r) => r.fulfill(json({ ok: true, txHash: "ab".repeat(8) })));
+
+  await page.goto("/app/dataroom/manage");
+  await page.getByTestId("manage-owner-room").first().click();
+  await expect(page.getByTestId("manage-access-model")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("bond-current")).toBeVisible({ timeout: 15_000 });
+  // Clear from the OwnerBondSection card -> the panel must land on membership, not the now-empty bond editor.
+  await page.getByTestId("bond-clear").click();
+  await expect.poll(() => cleared, { timeout: 15_000 }).toBe(true);
+  await expect(page.getByTestId("manage-membership-panel")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("manage-model-current-membership")).toBeVisible();
+  await expect(page.getByTestId("bond-section")).toHaveCount(0);
+});
+
 test("manage: renders dark", async ({ page }) => {
   await page.addInitScript(mock + DARK);
   await stubs(page, false);
