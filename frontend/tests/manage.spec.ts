@@ -109,6 +109,17 @@ test("manage: picking Bonded Access reveals the requirement editor", async ({ pa
   await page.getByTestId("manage-model-bond").click();
   await expect(page.getByTestId("manage-bond-panel")).toBeVisible();
   await expect(page.getByTestId("bond-section")).toBeVisible();
+  // the deadline is a picker-style trigger (matches the standalone Bonded Access page), not a raw field.
+  await expect(page.getByTestId("bond-deadline-trigger")).toBeVisible();
+  // a selected token shows its details incl. the issuer for a classic asset.
+  await page.getByTestId("bond-token-source").selectOption("classic");
+  await page.getByTestId("bond-token-code").fill("TUSD");
+  await page.getByTestId("bond-token-issuer").fill("GDFEJBM6RGK2IL2PIMGVNTGSO7O2NOVILFQUMIC55YMFKSGACA5IO2PM");
+  await page.getByTestId("bond-token-classic-resolve").click();
+  const detail = page.getByTestId("bond-token-detail");
+  await expect(detail).toBeVisible();
+  await expect(detail).toContainText("TUSD");
+  await expect(detail.getByTestId("bond-token-issuer")).toBeVisible();
 });
 
 test("manage: a bond-only room can switch back to membership", async ({ page }) => {

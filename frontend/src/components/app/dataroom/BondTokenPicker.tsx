@@ -54,10 +54,11 @@ export function BondTokenPicker({
     return () => { live = false; };
   }, [address]);
 
-  // Report the resolved token up whenever the active source's selection changes.
+  // The resolved token for the active source (null while the input is incomplete). Drives both the up-report
+  // and the selected-token detail (code, SAC contract, issuer) shown below the picker.
   const walletTok = wallet.find((t) => t.key === walletKey) ?? null;
+  const resolved = source === "wallet" ? walletTok : source === "paste" ? pasteTok : classicTok;
   useEffect(() => {
-    const resolved = source === "wallet" ? walletTok : source === "paste" ? pasteTok : classicTok;
     onResolved(resolved);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source, walletKey, pasteTok, classicTok, wallet.length]);
@@ -143,7 +144,6 @@ export function BondTokenPicker({
             </Button>
           </div>
           {pasteErr && <p className="text-[12px] text-destructive">{pasteErr}</p>}
-          {pasteTok && <p className="text-[12px] text-success">{pasteTok.symbol} · {pasteTok.decimals} decimals</p>}
         </div>
       )}
 
@@ -155,11 +155,30 @@ export function BondTokenPicker({
           </div>
           <Button type="button" variant="outline" size="sm" onClick={resolveClassic} data-testid="bond-token-classic-resolve">Resolve</Button>
           {classicErr && <p className="text-[12px] text-destructive">{classicErr}</p>}
-          {classicTok && (
-            <p className="text-[12px] text-success">
-              Resolved to SAC {short(classicTok.contractId, 6)} · {classicTok.symbol}
-            </p>
-          )}
+        </div>
+      )}
+
+      {/* The selected token's details: its code, its Soroban (SAC) contract, and its issuer when it is a
+          classic Stellar asset. A native or pure-Soroban token has no classic issuer, so that is noted. */}
+      {resolved && (
+        <div className="rounded-lg border bg-muted/40 px-3 py-2 text-[12px] leading-relaxed" data-testid="bond-token-detail">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            <span>
+              <span className="text-muted-foreground">Token</span>{" "}
+              <span className="font-medium text-foreground">{resolved.symbol}</span>{" "}
+              <span className="text-muted-foreground">· {resolved.decimals} decimals</span>
+            </span>
+            <span className="text-muted-foreground">
+              Contract <code className="font-mono text-foreground" title={resolved.contractId}>{short(resolved.contractId, 6)}</code>
+            </span>
+            {resolved.issuer ? (
+              <span className="text-muted-foreground" data-testid="bond-token-issuer">
+                Issuer <code className="font-mono text-foreground" title={resolved.issuer}>{short(resolved.issuer, 6)}</code>
+              </span>
+            ) : (
+              <span className="text-muted-foreground">no classic issuer</span>
+            )}
+          </div>
         </div>
       )}
     </div>
