@@ -198,14 +198,14 @@ export function OwnerBondSection({ roomId, onChanged }: { roomId: string; onChan
 
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
-            <Label htmlFor="bond-min">Minimum amount{token ? ` (${token.symbol})` : ""}</Label>
-            <Input id="bond-min" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} className="mt-1 w-full" data-testid="bond-min" />
+            <Label htmlFor="bond-min" className="mb-1.5 block">Minimum amount{token ? ` (${token.symbol})` : ""}</Label>
+            <Input id="bond-min" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} className="w-full" data-testid="bond-min" />
             <p className="mt-1 text-[12px] text-muted-foreground">The smallest bond that qualifies. A reader may lock more, never less.</p>
           </div>
 
           <div>
-            <Label id="bond-deadline-label" className="mb-1 block">Locked until at least</Label>
-            <div className="relative mt-1">
+            <Label id="bond-deadline-label" className="mb-1.5 block">Locked until at least</Label>
+            <div className="relative">
               <button
                 id="bond-deadline-trigger"
                 type="button"
