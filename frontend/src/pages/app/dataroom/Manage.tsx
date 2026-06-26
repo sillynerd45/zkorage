@@ -368,7 +368,12 @@ export default function RoomManagement() {
               <div className="mt-4" data-testid="manage-bond-panel">
                 {/* key by room so switching directly between two bond-only rooms remounts the section, instead
                     of carrying the previous room's requirement (and its token link) into the next one. */}
-                <OwnerBondSection key={e.ownerRoom} roomId={e.ownerRoom} onChanged={() => setReqRefresh((x) => x + 1)} />
+                <OwnerBondSection
+                  key={e.ownerRoom}
+                  roomId={e.ownerRoom}
+                  onChanged={() => setReqRefresh((x) => x + 1)}
+                  onCleared={() => setPicked("membership")}
+                />
               </div>
             )}
           </Card>

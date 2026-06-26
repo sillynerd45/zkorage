@@ -2477,9 +2477,10 @@ app.get("/dataroom/directory", async (_req, res) => {
           const n = getEligible(r.roomId).length;
           // A TRUE bond-only room admits by a qualifying bond, with NO approval and no member list, so the
           // directory must show the bond requirement (which token + how much + until when) and NOT a
-          // request-to-join. Read it here (best-effort: a failed read just omits the bond field, never drops
-          // the room from the directory). The member bucket is meaningless for a bond-only room, so the
-          // frontend hides it when `bond` is present.
+          // request-to-join. Read it here (best-effort: a transient read failure omits the bond field rather
+          // than dropping the room, so for up to one cache window the room shows as request-to-join, which for
+          // a true bond-only room is a dead-end the reader must retry; it self-heals on the next refresh). The
+          // member bucket is meaningless for a bond-only room, so the frontend hides it when `bond` is present.
           const bond = await directoryBond(r.roomId).catch(() => null);
           return {
             roomId: r.roomId,
