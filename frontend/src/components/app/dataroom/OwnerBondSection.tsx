@@ -10,10 +10,8 @@ import {
   publishBondQualRoot,
   getTokenBalance,
   toBaseUnits,
-  fmtAmount,
   type BondRequirement,
 } from "@/lib/api";
-import { short, explorer } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { TokenOption } from "@/lib/bonded/tokens";
 import { Button } from "@/components/ui/button";
@@ -22,7 +20,8 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DataRow } from "@/components/app/blocks";
 import { BondTokenPicker } from "@/components/app/dataroom/BondTokenPicker";
-import { BondCount, Callout, CopyIconButton, CurrentBadge, SectionLabel } from "@/components/app/dataroom/kit";
+import { BondRequirementDetail } from "@/components/app/dataroom/BondRequirementDetail";
+import { BondCount, Callout, CurrentBadge, SectionLabel } from "@/components/app/dataroom/kit";
 
 // Room Management — TRUE bond-only (no-approval) Bonded Access. The owner sets ONE room-level requirement: a
 // token, a minimum amount, and a deadline. Anyone who locks a qualifying bond (and proves it anonymously)
@@ -38,10 +37,6 @@ function defaultDeadline(): string {
   const d = new Date(Date.now() + 30 * 24 * 3_600_000);
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-function fmtDeadline(unix: number): string {
-  return new Date(unix * 1000).toLocaleString();
 }
 
 // Format the editor's datetime-local string for the picker trigger (matches the standalone Bonded Access page).
@@ -310,42 +305,14 @@ export function OwnerBondSection({ roomId, onChanged, onCleared }: { roomId: str
         <SectionLabel>Current requirement</SectionLabel>
         <CurrentBadge testId="bond-current-badge" />
       </div>
-      <DataRow k="token" testId="bond-current-token">
-        <span className="font-mono">{reqMeta?.symbol ?? short(req.token, 6)}</span>
-      </DataRow>
-      <DataRow k="contract" mono={false}>
-        <span className="inline-flex items-center gap-1.5">
-          <a href={explorer("contract", req.token)} target="_blank" rel="noreferrer" className="font-mono text-brand hover:underline" title={req.token}>
-            {short(req.token, 6)} ↗
-          </a>
-          <CopyIconButton value={req.token} label="token contract" />
-        </span>
-      </DataRow>
-      <DataRow k="issuer" mono={false} testId="bond-current-issuer">
-        {reqMetaLoading ? (
-          <span className="text-muted-foreground">…</span>
-        ) : reqMeta ? (
-          reqMeta.issuer ? (
-            <a href={explorer("account", reqMeta.issuer)} target="_blank" rel="noreferrer" className="font-mono text-brand hover:underline" title={reqMeta.issuer}>
-              {short(reqMeta.issuer, 6)} ↗
-            </a>
-          ) : (
-            <span className="text-muted-foreground">no classic issuer</span>
-          )
-        ) : (
-          <span className="text-muted-foreground">unavailable</span>
-        )}
-      </DataRow>
-      <DataRow k="minimum">
-        {reqMeta
-          ? `${fmtAmount(req.minAmount, reqMeta.decimals)}${reqMeta.symbol ? ` ${reqMeta.symbol}` : ""}`
-          : reqMetaLoading
-            ? "…"
-            : `${req.minAmount} base units`}
-      </DataRow>
-      <DataRow k="locked until" mono={false}>
-        {fmtDeadline(req.deadline)} <span className="text-muted-foreground">(or later)</span>
-      </DataRow>
+      <BondRequirementDetail
+        token={req.token}
+        minAmount={req.minAmount}
+        deadline={req.deadline}
+        meta={reqMeta}
+        metaLoading={reqMetaLoading}
+        idPrefix="bond-current"
+      />
       <DataRow k="bonders" mono={false}>
         <BondCount count={count} />
       </DataRow>
