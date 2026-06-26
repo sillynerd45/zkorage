@@ -1,16 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Clock, Compass, FolderOpen, Search, Settings2, ShieldCheck, UserPlus, Users } from "lucide-react";
+import { Clock, Compass, FolderOpen, KeyRound, Search, Settings2, ShieldCheck, UserPlus, Users } from "lucide-react";
 import { useDirectory } from "@/lib/hooks/useDirectory";
 import { useWallet } from "@/lib/wallet/WalletContext";
 import { joinRequestStates } from "@/lib/dataroom/requests";
-import { short } from "@/lib/format";
+import { short, explorer } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Callout, CopyIconButton } from "@/components/app/dataroom/kit";
-import { getMyRooms, type AnonTier, type EnrollState } from "@/lib/api";
+import { getMyRooms, fmtAmount, type AnonTier, type DirectoryBond, type EnrollState } from "@/lib/api";
 
 // M5 — the public discovery surface. Wallet NOT required to browse. Visibility is a discovery convenience,
 // not the privacy mechanism (that is the membership proof + the k=5 floor + the keepers). The directory shows
@@ -131,6 +131,62 @@ function OwnRoomLink({ roomId }: { roomId: string }) {
   );
 }
 
+// A bond-only room admits readers by a qualifying bond, with NO approval and no member list, so the directory
+// must show what that bond is (which token, how much, until when), NOT a request-to-join. The token contract
+// and its classic issuer link to Stellar Expert; the box uses the same success tint as the owner's "Current
+// requirement" card. Amounts are 7 dp on Stellar.
+function BondRequirementBox({ bond }: { bond: DirectoryBond }) {
+  const until = new Date(bond.deadline * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  return (
+    <div className="mt-2 rounded-lg border border-success/30 bg-success/5 px-3 py-2 text-[12px] leading-relaxed" data-testid="discover-bond-req">
+      <div className="font-medium text-foreground">
+        Bond {fmtAmount(bond.minAmount, bond.decimals)} {bond.symbol}
+        <span className="font-normal text-muted-foreground"> · locked until {until}</span>
+      </div>
+      <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-muted-foreground">
+        <span>
+          Contract{" "}
+          <a href={explorer("contract", bond.token)} target="_blank" rel="noreferrer" className="font-mono text-brand hover:underline" title={bond.token}>
+            {short(bond.token, 6)} ↗
+          </a>
+        </span>
+        {bond.issuer && (
+          <span data-testid="discover-bond-issuer">
+            Issuer{" "}
+            <a href={explorer("account", bond.issuer)} target="_blank" rel="noreferrer" className="font-mono text-brand hover:underline" title={bond.issuer}>
+              {short(bond.issuer, 6)} ↗
+            </a>
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// The "Bond to enter" pill that replaces the member bucket on a bond-only card (a bond-only room has no
+// approved members, so a member count would be misleading).
+function BondToEnterPill() {
+  return (
+    <span
+      data-testid="discover-bond-pill"
+      className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-success/40 px-2 py-0.5 text-[11px] text-success"
+    >
+      <KeyRound className="size-3 shrink-0" aria-hidden="true" />
+      Bond to enter
+    </span>
+  );
+}
+
+// A bond-only room's action: open with a qualifying bond (the reader deposit + prove flow), NOT a join request.
+function BondOpenLink({ roomId }: { roomId: string }) {
+  return (
+    <Link to={accessLink(roomId)} data-testid="discover-bond-open" className={cn(buttonVariants({ size: "sm" }))}>
+      <KeyRound aria-hidden="true" />
+      Open with a bond
+    </Link>
+  );
+}
+
 export default function Discover() {
   const d = useDirectory();
   const { hash } = useLocation();
@@ -217,11 +273,15 @@ export default function Discover() {
               <div className="space-y-2.5" data-testid="discover-list">
                 {d.rooms.map((r) => {
                   const isOwn = ownedRooms.has(r.roomId.toLowerCase());
+                  // A TRUE bond-only room: show the bond requirement + an "Open with a bond" action instead of
+                  // a member bucket + request-to-join. Owners still see "Your room".
+                  const bond = r.bond && r.bond.bondOpen ? r.bond : null;
                   return (
                     <div
                       key={r.roomId}
                       data-testid="discover-room"
                       data-own={isOwn ? "true" : "false"}
+                      data-bonded={bond ? "true" : "false"}
                       className="rounded-xl border px-4 py-3 transition-colors hover:border-brand/30 hover:bg-accent/30"
                     >
                       {/* One row on sm+ (compact, action right-aligned); stacked on phones so the name is not
@@ -234,17 +294,20 @@ export default function Discover() {
                               {short(r.roomId, 8)}
                               <CopyIconButton value={r.roomId} label="room id" />
                             </span>
-                            <BucketBadge tier={r.anonTier} bucket={r.memberBucket} compact />
+                            {bond ? <BondToEnterPill /> : <BucketBadge tier={r.anonTier} bucket={r.memberBucket} compact />}
                           </div>
                           {r.description && (
                             <p className="mt-1.5 line-clamp-2 text-[13px] leading-relaxed text-muted-foreground">
                               {r.description}
                             </p>
                           )}
+                          {bond && <BondRequirementBox bond={bond} />}
                         </div>
                         <div className="shrink-0 self-start">
                           {isOwn ? (
                             <OwnRoomLink roomId={r.roomId} />
+                          ) : bond ? (
+                            <BondOpenLink roomId={r.roomId} />
                           ) : (
                             <JoinButton roomId={r.roomId} state={statusByRoom[r.roomId.toLowerCase()]} />
                           )}
@@ -260,8 +323,8 @@ export default function Discover() {
           <div className="mt-4">
             <Callout icon={ShieldCheck} testId="discover-caveat">
               Listing a room is only about who can find it. It does not change who can get in. Access still needs
-              a membership proof, and anonymity still needs a real crowd, so a listed room can be forming below
-              the floor until enough members join.
+              a proof, by approved membership or a qualifying bond. Anonymity needs a real crowd, so a room can be
+              forming below the floor until enough people qualify.
             </Callout>
           </div>
         </Card>
