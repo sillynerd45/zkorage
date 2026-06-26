@@ -214,14 +214,13 @@ export default function Anchor() {
         <>
           <Card id="store" className="rounded-2xl p-6">
             <h2 className="mb-3 text-base font-semibold tracking-tight">Store a document</h2>
-            {/* The Data Room stores a document one way: an anonymous, policy-gated committee document. The
-                file is encrypted and its key split in this browser, and any room member can open it later. */}
+            {/* The Data Room stores a document one way: an anonymous, policy-gated committee document. The file
+                is encrypted and its key split in this browser; whoever the room admits (an approved member, or
+                a qualifying bond holder) can open it later. The access model is set in Room Management. */}
             <p className="text-sm leading-relaxed text-muted-foreground">
-              The file is encrypted in your browser and its key is split across the{" "}
-              <b className="text-foreground">keepers</b>. Anyone who proves they are a{" "}
-              <b className="text-foreground">member of this room</b> can open it, without revealing which
-              member. The file and its key never reach our server. A copy of the key is sealed to your wallet
-              so you can reopen it on any device.
+              Your file is encrypted in this browser and its key is split across the keepers, so neither the
+              file nor the key reaches our server. A copy of the key is sealed to your wallet, so you can reopen
+              it on any device.
             </p>
 
             <div className="mt-4">
@@ -344,7 +343,7 @@ export default function Anchor() {
                       onChange={(e) => a.pickFile(e.target.files?.[0] ?? null)}
                       aria-label="document file"
                       data-testid="doc-file"
-                      className="block max-w-full text-xs text-muted-foreground file:mr-3 file:rounded-md file:border file:border-input file:bg-background file:px-3 file:py-1.5 file:text-xs file:font-medium hover:file:bg-accent"
+                      className="block max-w-full text-xs text-foreground file:mr-3 file:cursor-pointer file:rounded-md file:border-0 file:bg-secondary file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-secondary-foreground hover:file:bg-accent hover:file:text-accent-foreground"
                     />
                   </div>
                   {a.file && (
@@ -385,13 +384,14 @@ export default function Anchor() {
               )}
             </div>
 
-            {/* Who can open it: anyone who proves they are a member of this room (no key field). */}
+            {/* Who can open it: anyone the room admits (an approved member, or a qualifying bond holder); the
+                access model is chosen in Room Management. No key field. */}
             <div className="mt-7 space-y-3">
               <SectionLabel withRule>Who can open it</SectionLabel>
               <p className="text-[13px] leading-relaxed text-muted-foreground" data-testid="shared-access-note">
-                Anyone who proves they are a <b className="text-foreground">member of this room</b> can open
-                it, anonymously. Approve members in the <b className="text-foreground">Membership</b> tab. A
-                copy of the key is sealed to your wallet, so you can always reopen it.
+                Anyone the room admits can open it, anonymously, without revealing who they are. A room admits
+                readers in one of two ways. You approve members, or anyone who locks a qualifying bond gets in.
+                The room owner sets this under <b className="text-foreground">Room Management</b>.
               </p>
             </div>
 
