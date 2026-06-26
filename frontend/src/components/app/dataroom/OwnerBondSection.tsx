@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { Info, KeyRound, ShieldCheck } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { CalendarClock, Info, KeyRound, ShieldCheck } from "lucide-react";
 import { useWallet, useTxSigner } from "@/lib/wallet/WalletContext";
 import {
   getBondRequirementApi,
@@ -13,6 +13,7 @@ import {
   type BondRequirement,
 } from "@/lib/api";
 import { short } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import type { TokenOption } from "@/lib/bonded/tokens";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,6 +39,14 @@ function fmtDeadline(unix: number): string {
   return new Date(unix * 1000).toLocaleString();
 }
 
+// Format the editor's datetime-local string for the picker trigger (matches the standalone Bonded Access page).
+function fmtLocalDeadline(local: string): string {
+  if (!local) return "Pick a deadline";
+  const d = new Date(local);
+  if (Number.isNaN(d.getTime())) return "Pick a deadline";
+  return d.toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
 export function OwnerBondSection({ roomId, onChanged }: { roomId: string; onChanged?: () => void }) {
   const { address } = useWallet();
   const signer = useTxSigner();
@@ -54,6 +63,15 @@ export function OwnerBondSection({ roomId, onChanged }: { roomId: string; onChan
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [pubFailed, setPubFailed] = useState(false);
+
+  // The deadline uses a picker-only trigger (no manual typing): a button shows the formatted date and opens
+  // the native datetime picker, with the real input hidden. This matches the standalone Bonded Access page.
+  const deadlineRef = useRef<HTMLInputElement>(null);
+  const openDeadlinePicker = () => {
+    const el = deadlineRef.current;
+    if (!el) return;
+    try { el.showPicker(); } catch { el.focus(); }
+  };
 
   // Load the current requirement + the live qualifying-bonder count + the token's symbol/decimals for display.
   const loadReq = useCallback(async () => {
@@ -186,8 +204,33 @@ export function OwnerBondSection({ roomId, onChanged }: { roomId: string; onChan
           </div>
 
           <div>
-            <Label htmlFor="bond-deadline">Locked until at least</Label>
-            <Input id="bond-deadline" type="datetime-local" value={deadline} onChange={(e) => setDeadline(e.target.value)} className="mt-1 w-full" data-testid="bond-deadline" />
+            <Label id="bond-deadline-label" className="mb-1 block">Locked until at least</Label>
+            <div className="relative mt-1">
+              <button
+                id="bond-deadline-trigger"
+                type="button"
+                onClick={openDeadlinePicker}
+                aria-labelledby="bond-deadline-label bond-deadline-trigger"
+                data-testid="bond-deadline-trigger"
+                className={cn(
+                  "flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-left text-sm shadow-sm transition-colors",
+                  "focus-visible:border-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+                )}
+              >
+                <span className={cn("tabular-nums", !deadline && "text-muted-foreground")}>{fmtLocalDeadline(deadline)}</span>
+                <CalendarClock className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+              </button>
+              <input
+                ref={deadlineRef}
+                type="datetime-local"
+                value={deadline}
+                onChange={(e) => setDeadline(e.target.value)}
+                data-testid="bond-deadline"
+                tabIndex={-1}
+                aria-hidden="true"
+                className="pointer-events-none absolute left-0 top-0 h-0 w-0 overflow-hidden opacity-0"
+              />
+            </div>
             <p className="mt-1 text-[12px] text-muted-foreground">A qualifying bond cannot be released before this time. Pick a date that outlives the access you are granting.</p>
           </div>
         </div>
