@@ -119,7 +119,17 @@ test("manage: picking Bonded Access reveals the requirement editor", async ({ pa
   const detail = page.getByTestId("bond-token-detail");
   await expect(detail).toBeVisible();
   await expect(detail).toContainText("TUSD");
-  await expect(detail.getByTestId("bond-token-issuer")).toBeVisible();
+  await expect(detail).not.toContainText("decimals"); // Stellar tokens are always 7 dp; not shown
+  // the contract + issuer are Stellar Expert links.
+  await expect(detail.locator("a").first()).toHaveAttribute("href", /stellar\.expert\/explorer\/testnet\/contract\/C[A-Z2-7]{55}/);
+  await expect(detail.getByTestId("bond-token-issuer").locator("a")).toHaveAttribute(
+    "href",
+    "https://stellar.expert/explorer/testnet/account/GDFEJBM6RGK2IL2PIMGVNTGSO7O2NOVILFQUMIC55YMFKSGACA5IO2PM",
+  );
+  // the minimum-amount input and the deadline trigger line up at the top (the alignment fix).
+  const minBox = await page.getByTestId("bond-min").boundingBox();
+  const dlBox = await page.getByTestId("bond-deadline-trigger").boundingBox();
+  expect(Math.abs((minBox?.y ?? 0) - (dlBox?.y ?? 0))).toBeLessThanOrEqual(1);
 });
 
 test("manage: a bond-only room can switch back to membership", async ({ page }) => {

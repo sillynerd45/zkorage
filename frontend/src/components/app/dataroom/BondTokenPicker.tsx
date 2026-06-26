@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { getTokenBalance } from "@/lib/api";
 import { loadWalletTokens, classicAssetToken, plainAmount, type TokenOption } from "@/lib/bonded/tokens";
-import { short } from "@/lib/format";
+import { short, explorer } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -159,21 +159,39 @@ export function BondTokenPicker({
       )}
 
       {/* The selected token's details: its code, its Soroban (SAC) contract, and its issuer when it is a
-          classic Stellar asset. A native or pure-Soroban token has no classic issuer, so that is noted. */}
+          classic Stellar asset. The contract and issuer link to Stellar Expert. A native or pure-Soroban token
+          has no classic issuer, so that is noted. Decimals are not shown (Stellar tokens are always 7 dp). */}
       {resolved && (
         <div className="rounded-lg border bg-muted/40 px-3 py-2 text-[12px] leading-relaxed" data-testid="bond-token-detail">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
             <span>
               <span className="text-muted-foreground">Token</span>{" "}
-              <span className="font-medium text-foreground">{resolved.symbol}</span>{" "}
-              <span className="text-muted-foreground">· {resolved.decimals} decimals</span>
+              <span className="font-medium text-foreground">{resolved.symbol}</span>
             </span>
             <span className="text-muted-foreground">
-              Contract <code className="font-mono text-foreground" title={resolved.contractId}>{short(resolved.contractId, 6)}</code>
+              Contract{" "}
+              <a
+                href={explorer("contract", resolved.contractId)}
+                target="_blank"
+                rel="noreferrer"
+                className="font-mono text-brand hover:underline"
+                title={resolved.contractId}
+              >
+                {short(resolved.contractId, 6)} ↗
+              </a>
             </span>
             {resolved.issuer ? (
               <span className="text-muted-foreground" data-testid="bond-token-issuer">
-                Issuer <code className="font-mono text-foreground" title={resolved.issuer}>{short(resolved.issuer, 6)}</code>
+                Issuer{" "}
+                <a
+                  href={explorer("account", resolved.issuer)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-mono text-brand hover:underline"
+                  title={resolved.issuer}
+                >
+                  {short(resolved.issuer, 6)} ↗
+                </a>
               </span>
             ) : (
               <span className="text-muted-foreground">no classic issuer</span>
