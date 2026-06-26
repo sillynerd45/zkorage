@@ -137,7 +137,7 @@ test("discover: your own listed room is marked, not joinable", async ({ page }) 
   await expect(page.getByTestId("discover-join")).toHaveCount(1);
 });
 
-test("discover: a bond-only room shows the bond requirement + 'Open with a bond', not request-to-join", async ({ page }) => {
+test("discover: a bond-only room shows the bond requirement + 'Create Bonded Access', not request-to-join", async ({ page }) => {
   const errs: string[] = [];
   page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/i.test(m.text())) errs.push(m.text()); });
   const BONDED = "5".repeat(64);
@@ -164,16 +164,19 @@ test("discover: a bond-only room shows the bond requirement + 'Open with a bond'
   await expect(page.getByTestId("discover-bond-pill")).toBeVisible();
   await expect(page.getByTestId("bucket-badge")).toHaveCount(0);
 
-  // The requirement is shown: amount + token + deadline, with the token contract AND issuer as Stellar Expert links.
+  // The requirement is shown: amount + token + deadline (with a TIME, not just a date), and the token
+  // contract AND issuer as Stellar Expert links.
   const req = page.getByTestId("discover-bond-req");
   await expect(req).toContainText("100 TUSD");
   await expect(req).toContainText("locked until");
+  await expect(req).toContainText(/:\d{2}/); // the deadline includes the time (hh:mm)
   await expect(req.locator(`a[href="https://stellar.expert/explorer/testnet/contract/${BTOKEN}"]`)).toBeVisible();
   await expect(page.getByTestId("discover-bond-issuer").locator(`a[href="https://stellar.expert/explorer/testnet/account/${BISSUER}"]`)).toBeVisible();
 
-  // The action is "Open with a bond" -> the reader flow, NOT request-to-join.
-  const open = page.getByTestId("discover-bond-open");
+  // The action is "Create Bonded Access" -> the lock-bond + prove flow, NOT request-to-join.
+  const open = page.getByTestId("discover-bond-create");
   await expect(open).toBeVisible();
+  await expect(open).toContainText("Create Bonded Access");
   await expect(open).toHaveAttribute("href", `/app/dataroom/documents?room=${BONDED}#open`);
   await expect(page.getByTestId("discover-join")).toHaveCount(0);
 
@@ -181,7 +184,7 @@ test("discover: a bond-only room shows the bond requirement + 'Open with a bond'
   expect(errs, errs.join("\n")).toHaveLength(0);
 });
 
-test("discover: a bond-only room resolved by id shows the requirement + 'Open with a bond'", async ({ page }) => {
+test("discover: a bond-only room resolved by id shows the requirement + 'Create Bonded Access'", async ({ page }) => {
   const errs: string[] = [];
   page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/i.test(m.text())) errs.push(m.text()); });
   const BONDED = "6".repeat(64);
@@ -206,10 +209,13 @@ test("discover: a bond-only room resolved by id shows the requirement + 'Open wi
   // Shows the bond requirement (amount + token + contract/issuer links), not a member bucket.
   await expect(result.getByTestId("discover-bond-pill")).toBeVisible();
   await expect(result.getByTestId("discover-bond-req")).toContainText("100 TUSD");
+  await expect(result.getByTestId("discover-bond-req")).toContainText(/:\d{2}/); // deadline includes the time
   await expect(result.getByTestId("discover-bond-issuer").locator("a")).toHaveAttribute("href", `https://stellar.expert/explorer/testnet/account/${BISSUER}`);
   await expect(result.getByTestId("bucket-badge")).toHaveCount(0);
-  // The action is "Open with a bond" -> the reader flow, NOT request-to-join.
-  await expect(result.getByTestId("discover-bond-open")).toHaveAttribute("href", `/app/dataroom/documents?room=${BONDED}#open`);
+  // The action is "Create Bonded Access" -> the lock-bond + prove flow, NOT request-to-join.
+  const create = result.getByTestId("discover-bond-create");
+  await expect(create).toContainText("Create Bonded Access");
+  await expect(create).toHaveAttribute("href", `/app/dataroom/documents?room=${BONDED}#open`);
   await expect(result.getByTestId("discover-join")).toHaveCount(0);
   expect(errs, errs.join("\n")).toHaveLength(0);
 });
