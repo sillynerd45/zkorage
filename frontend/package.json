@@ -1,7 +1,7 @@
 {
   "name": "zkorage-frontend",
   "private": true,
-  "version": "0.12.42",
+  "version": "0.12.43",
   "type": "module",
   "description": "zkorage Verify page (Week 1 walking skeleton).",
   "scripts": {
