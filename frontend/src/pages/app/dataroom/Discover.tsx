@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Clock, Compass, FolderOpen, Search, ShieldCheck, UserPlus, Users } from "lucide-react";
+import { Clock, Compass, FolderOpen, Search, Settings2, ShieldCheck, UserPlus, Users } from "lucide-react";
 import { useDirectory } from "@/lib/hooks/useDirectory";
 import { useWallet } from "@/lib/wallet/WalletContext";
 import { joinRequestStates } from "@/lib/dataroom/requests";
@@ -10,7 +10,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Callout, CopyIconButton } from "@/components/app/dataroom/kit";
-import type { AnonTier, EnrollState } from "@/lib/api";
+import { getMyRooms, type AnonTier, type EnrollState } from "@/lib/api";
 
 // M5 — the public discovery surface. Wallet NOT required to browse. Visibility is a discovery convenience,
 // not the privacy mechanism (that is the membership proof + the k=5 floor + the keepers). The directory shows
@@ -33,9 +33,31 @@ const TIER_NOTE: Record<AnonTier, string> = {
   ok: "a usable crowd",
   strong: "a strong crowd",
 };
+// A short tier word for the compact directory pill (the dot colour also encodes the tier).
+const TIER_SHORT: Record<AnonTier, string> = {
+  forming: "forming",
+  ok: "usable crowd",
+  strong: "strong crowd",
+};
 
-// A rounded member-count range with a tier colour. Never an exact number.
-function BucketBadge({ tier, bucket }: { tier: AnonTier; bucket: string }) {
+// A rounded member-count range with a tier colour. Never an exact number. `compact` is the inline directory
+// pill (smaller, short tier word, sits on the meta line); the default is the fuller badge in the lookup result.
+function BucketBadge({ tier, bucket, compact = false }: { tier: AnonTier; bucket: string; compact?: boolean }) {
+  if (compact) {
+    return (
+      <span
+        data-testid="bucket-badge"
+        data-tier={tier}
+        className="inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground"
+      >
+        <span className={cn("size-1.5 shrink-0 rounded-full", TIER_DOT[tier])} aria-hidden="true" />
+        <Users className="size-3 shrink-0" aria-hidden="true" />
+        <span>
+          <span className="font-medium text-foreground">{bucket}</span> · {TIER_SHORT[tier]}
+        </span>
+      </span>
+    );
+  }
   return (
     <span
       data-testid="bucket-badge"
@@ -94,6 +116,21 @@ function JoinButton({
   );
 }
 
+// When a directory card is the connected wallet's OWN room, this replaces the join action (you cannot join
+// your own room). It marks the row as yours and links to Room Management for THIS room (?room= prefill).
+function OwnRoomLink({ roomId }: { roomId: string }) {
+  return (
+    <Link
+      to={`/app/dataroom/manage?room=${roomId}`}
+      data-testid="discover-own-room"
+      className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-success/40 bg-success/5 px-3 py-1.5 text-xs font-medium text-success transition-colors hover:bg-success/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-success/40"
+    >
+      <Settings2 className="size-3.5" aria-hidden="true" />
+      Your room
+    </Link>
+  );
+}
+
 export default function Discover() {
   const d = useDirectory();
   const { hash } = useLocation();
@@ -104,6 +141,22 @@ export default function Discover() {
   // no wallet address is sent; we only read what was stored when you requested/refreshed in Membership.
   const { connected, address } = useWallet();
   const statusByRoom = useMemo(() => (connected ? joinRequestStates(address) : {}), [connected, address]);
+
+  // Mark a directory card that is one of YOUR rooms by cross-referencing the wallet's owned room ids. Unlike
+  // the local request-history read above, this DOES send your address to the backend (to read the rooms you
+  // own). It reads only your own rooms and changes nothing in the public directory.
+  const [ownedRooms, setOwnedRooms] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    if (!connected || !address) {
+      setOwnedRooms(new Set());
+      return;
+    }
+    let live = true;
+    getMyRooms(address)
+      .then((r) => { if (live) setOwnedRooms(new Set(r.rooms.map((x) => x.roomId.toLowerCase()))); })
+      .catch(() => { if (live) setOwnedRooms(new Set()); });
+    return () => { live = false; };
+  }, [connected, address]);
 
   return (
     <div className="space-y-5" data-testid="discover-card">
@@ -161,31 +214,45 @@ export default function Discover() {
                 No rooms are listed yet. A room owner can list a room from the Membership tab.
               </p>
             ) : (
-              <div className="space-y-3" data-testid="discover-list">
-                {d.rooms.map((r) => (
-                  <div
-                    key={r.roomId}
-                    data-testid="discover-room"
-                    className="rounded-xl border p-4 transition-colors hover:border-brand/30 hover:bg-accent/30"
-                  >
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium">{r.name || "Unnamed room"}</div>
-                        <div className="mt-0.5 flex items-center gap-1.5 font-mono text-xs text-muted-foreground">
-                          {short(r.roomId, 8)}
-                          <CopyIconButton value={r.roomId} label="room id" />
+              <div className="space-y-2.5" data-testid="discover-list">
+                {d.rooms.map((r) => {
+                  const isOwn = ownedRooms.has(r.roomId.toLowerCase());
+                  return (
+                    <div
+                      key={r.roomId}
+                      data-testid="discover-room"
+                      data-own={isOwn ? "true" : "false"}
+                      className="rounded-xl border px-4 py-3 transition-colors hover:border-brand/30 hover:bg-accent/30"
+                    >
+                      {/* One row on sm+ (compact, action right-aligned); stacked on phones so the name is not
+                          truncated and the id does not wrap under the button. */}
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm font-medium">{r.name || "Unnamed room"}</div>
+                          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <span className="inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground">
+                              {short(r.roomId, 8)}
+                              <CopyIconButton value={r.roomId} label="room id" />
+                            </span>
+                            <BucketBadge tier={r.anonTier} bucket={r.memberBucket} compact />
+                          </div>
+                          {r.description && (
+                            <p className="mt-1.5 line-clamp-2 text-[13px] leading-relaxed text-muted-foreground">
+                              {r.description}
+                            </p>
+                          )}
+                        </div>
+                        <div className="shrink-0 self-start">
+                          {isOwn ? (
+                            <OwnRoomLink roomId={r.roomId} />
+                          ) : (
+                            <JoinButton roomId={r.roomId} state={statusByRoom[r.roomId.toLowerCase()]} />
+                          )}
                         </div>
                       </div>
-                      <JoinButton roomId={r.roomId} state={statusByRoom[r.roomId.toLowerCase()]} />
                     </div>
-                    {r.description && (
-                      <p className="mt-2 text-[13px] leading-relaxed text-muted-foreground">{r.description}</p>
-                    )}
-                    <div className="mt-3">
-                      <BucketBadge tier={r.anonTier} bucket={r.memberBucket} />
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

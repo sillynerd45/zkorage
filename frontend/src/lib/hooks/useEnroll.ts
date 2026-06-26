@@ -419,6 +419,7 @@ export function useEnroll() {
     // owner: visibility
     vis,
     setVis,
+    savedVis,
     visName,
     setVisName,
     visDescription,
