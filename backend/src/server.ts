@@ -2524,6 +2524,9 @@ app.get("/dataroom/room-meta/:roomId", async (req, res) => {
     const { value: room } = await readContract(DATAROOM_ID, "get_room", [scBytes(roomIdHex)]);
     if (!room) return res.json({ roomId: roomIdHex, visibility, discoverable: false, exists: false });
     const n = getEligible(roomIdHex).length;
+    // A bond-only room admits by a qualifying bond, so a by-id lookup must show the requirement instead of a
+    // request-to-join, same as the directory. Best-effort (a read failure just omits the bond field).
+    const bond = await directoryBond(roomIdHex).catch(() => null);
     res.json({
       roomId: roomIdHex,
       visibility,
@@ -2533,6 +2536,7 @@ app.get("/dataroom/room-meta/:roomId", async (req, res) => {
       description: rec?.description ?? null,
       memberBucket: memberBucket(n),
       anonTier: bucketTier(n),
+      bond,
     });
   } catch (e) {
     res.status(500).json({ error: err(e) });
