@@ -50,7 +50,13 @@ test("committee store: the browser deals; the relay gets only ciphertext + seale
   // recipient field, just the shared-membership note.
   await expect(page.getByRole("heading", { name: "Store a document" })).toBeVisible();
   await expect(page.getByTestId("access-mode-shared")).toHaveCount(0);
-  await expect(page.getByTestId("shared-access-note")).toBeVisible();
+  // the access note reflects BOTH ways a room admits readers (approved membership or a qualifying bond),
+  // pointing to Room Management where the model is set.
+  const note = page.getByTestId("shared-access-note");
+  await expect(note).toBeVisible();
+  await expect(note).toContainText("approve members");
+  await expect(note).toContainText("qualifying bond");
+  await expect(note).toContainText("Room Management");
   await expect(page.getByTestId("recipient-input")).toHaveCount(0); // no recipient field anymore
 
   await page.getByTestId("room-label").fill("acme-board-docs");
