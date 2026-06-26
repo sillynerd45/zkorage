@@ -166,8 +166,10 @@ export function OwnerBondSection({ roomId, onChanged }: { roomId: string; onChan
         </div>
       )}
 
-      {/* The editor (set a new requirement, or replace the current one). */}
-      <div className="space-y-3">
+      {/* The editor (set a new requirement, or replace the current one). The two short inputs (minimum amount
+          and deadline) sit side by side on wider screens, so the form fills the width instead of running as a
+          single narrow column; they stack on phones. */}
+      <div className="space-y-4">
         {req && <SectionLabel>Set a new requirement</SectionLabel>}
         <div>
           <Label>Token to bond</Label>
@@ -176,16 +178,18 @@ export function OwnerBondSection({ roomId, onChanged }: { roomId: string; onChan
           </div>
         </div>
 
-        <div>
-          <Label htmlFor="bond-min">Minimum amount{token ? ` (${token.symbol})` : ""}</Label>
-          <Input id="bond-min" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} className="mt-1 w-48" data-testid="bond-min" />
-          <p className="mt-1 text-[12px] text-muted-foreground">The smallest bond that qualifies. A reader may lock more, never less.</p>
-        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <Label htmlFor="bond-min">Minimum amount{token ? ` (${token.symbol})` : ""}</Label>
+            <Input id="bond-min" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} className="mt-1 w-full" data-testid="bond-min" />
+            <p className="mt-1 text-[12px] text-muted-foreground">The smallest bond that qualifies. A reader may lock more, never less.</p>
+          </div>
 
-        <div>
-          <Label htmlFor="bond-deadline">Locked until at least</Label>
-          <Input id="bond-deadline" type="datetime-local" value={deadline} onChange={(e) => setDeadline(e.target.value)} className="mt-1 w-64" data-testid="bond-deadline" />
-          <p className="mt-1 text-[12px] text-muted-foreground">A qualifying bond cannot be released before this time. Pick a date that outlives the access you are granting.</p>
+          <div>
+            <Label htmlFor="bond-deadline">Locked until at least</Label>
+            <Input id="bond-deadline" type="datetime-local" value={deadline} onChange={(e) => setDeadline(e.target.value)} className="mt-1 w-full" data-testid="bond-deadline" />
+            <p className="mt-1 text-[12px] text-muted-foreground">A qualifying bond cannot be released before this time. Pick a date that outlives the access you are granting.</p>
+          </div>
         </div>
 
         <Button onClick={() => void onSet()} disabled={busy || !token} data-testid="bond-set">
