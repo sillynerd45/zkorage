@@ -74,7 +74,7 @@ import {
   bucketTier,
   type RoomVisibility,
 } from "./rooms-store.js";
-import { ESCROW_ID, BOND_TOKEN_ID, listLocks, getLock as escrowGetLock, isLocked as escrowIsLocked, bondBalance as escrowBondBalance } from "./escrow.js";
+import { ESCROW_ID, BOND_TOKEN_ID, listLocks, getLock as escrowGetLock, isLocked as escrowIsLocked, bondBalance as escrowBondBalance, tokenMeta } from "./escrow.js";
 import {
   SOLVENCY_GATE_ID, SOLVENCY_IMAGE_ID, SOLVENCY_SUPPLY_TOKEN_ID,
   isSolvencyGranted, getSolvencyRecord, getSolvencyConfig, supplyTokenSupply, guardLock, buildSolvencyJob,
@@ -2434,6 +2434,33 @@ app.post("/dataroom/enroll/approve-batch", async (req, res) => {
 const DIRECTORY_TTL_MS = 15_000;
 let directoryCache: { at: number; rooms: unknown[] } | null = null;
 
+// The bond requirement for a directory listing, resolved for display: only a TRUE bond-only (no-approval)
+// room returns one, since that is the case where the directory must show "lock this bond to enter" instead
+// of "request to join". Returns null for a membership room (or any read failure). The token's symbol /
+// decimals / issuer come from the cached token meta so the card can link the contract AND the issuer.
+async function directoryBond(roomIdHex: string): Promise<{
+  bondOpen: boolean; token: string; symbol: string; decimals: number; issuer: string | null;
+  minAmount: string; deadline: number; reqId: string;
+} | null> {
+  if (!DATAROOM_ID) return null;
+  const { value: openVal } = await readContract(DATAROOM_ID, "is_bond_open", [scBytes(roomIdHex)]);
+  if (!openVal) return null; // membership room (or bond-implies-membership legacy) -> no bond-only card
+  const { value: reqVal } = await readContract(DATAROOM_ID, "get_bond_requirement", [scBytes(roomIdHex)]);
+  if (!reqVal) return null;
+  const r = jsonSafe(reqVal) as { req_id?: string; token?: string; min_amount?: string; deadline?: string };
+  const token = String(r.token ?? "");
+  const minAmount = String(r.min_amount ?? "0");
+  const deadline = Number(r.deadline ?? 0);
+  if (!token) return null;
+  const meta = await tokenMeta(token).catch(() => ({ symbol: "", decimals: 7, issuer: null }));
+  return {
+    bondOpen: true,
+    token, symbol: meta.symbol, decimals: meta.decimals, issuer: meta.issuer,
+    minAmount, deadline,
+    reqId: r.req_id ?? bondReqIdHex(token, BigInt(minAmount), deadline),
+  };
+}
+
 // PUBLIC directory: only rooms the owner opted into ("listed"). Coarse counts, no exact numbers, no access
 // feed. Each listing is re-verified on-chain (drop phantoms whose recorded owner no longer matches).
 app.get("/dataroom/directory", async (_req, res) => {
@@ -2448,6 +2475,12 @@ app.get("/dataroom/directory", async (_req, res) => {
           const chain = room ? (jsonSafe(room) as { owner?: string }) : null;
           if (!chain || chain.owner !== r.owner) return null; // chain authoritative; drop stale/unsubmitted
           const n = getEligible(r.roomId).length;
+          // A TRUE bond-only room admits by a qualifying bond, with NO approval and no member list, so the
+          // directory must show the bond requirement (which token + how much + until when) and NOT a
+          // request-to-join. Read it here (best-effort: a failed read just omits the bond field, never drops
+          // the room from the directory). The member bucket is meaningless for a bond-only room, so the
+          // frontend hides it when `bond` is present.
+          const bond = await directoryBond(r.roomId).catch(() => null);
           return {
             roomId: r.roomId,
             name: r.name ?? null,
@@ -2455,6 +2488,7 @@ app.get("/dataroom/directory", async (_req, res) => {
             memberBucket: memberBucket(n),
             anonTier: bucketTier(n),
             listedAt: r.listedAt ?? null,
+            bond,
           };
         }),
       );
@@ -4135,11 +4169,13 @@ app.get("/escrow/token-balance", async (req, res) => {
     return res.status(400).json({ error: "token contract not found, or not a SEP-41 token" });
   }
   if (!Number.isFinite(decimals)) decimals = 7;
-  const [balance, symbol] = await Promise.all([
+  // symbol + issuer come from the cached token meta (the issuer is the classic asset's issuer, null for a
+  // native / pure-Soroban token), so the requirement UI can link the token's contract AND its issuer.
+  const [balance, meta] = await Promise.all([
     readContract(token, "balance", [scAddress(owner)]).then((r) => String(r.value ?? "0")).catch(() => "0"),
-    readContract(token, "symbol").then((r) => String(r.value ?? "")).catch(() => ""),
+    tokenMeta(token),
   ]);
-  res.json({ owner, token, balance, decimals, symbol });
+  res.json({ owner, token, balance, decimals, symbol: meta.symbol, issuer: meta.issuer });
 });
 
 app.post("/escrow/faucet", async (req, res) => {

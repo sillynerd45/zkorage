@@ -35,17 +35,24 @@ export interface LockView {
 
 type LockRecord = Record<string, unknown>;
 
-// Token symbol/decimals are immutable per contract, so cache them process-wide (a wallet's locks often share
-// a token, and distinct tokens repeat across requests).
-const tokenMetaCache = new Map<string, { symbol: string; decimals: number }>();
-export async function tokenMeta(token: string): Promise<{ symbol: string; decimals: number }> {
+// Token symbol/decimals/issuer are immutable per contract, so cache them process-wide (a wallet's locks
+// often share a token, and distinct tokens repeat across requests). The issuer is the classic Stellar
+// account that issued the asset behind this Stellar Asset Contract (SAC): the SAC `name()` returns
+// "CODE:GISSUER…" for a classic asset (and "native" for XLM, "" for a pure-Soroban token), so we parse the
+// issuer out of it. It is null when the token has no classic issuer.
+const G_ADDRESS = /^G[A-Z2-7]{55}$/;
+const tokenMetaCache = new Map<string, { symbol: string; decimals: number; issuer: string | null }>();
+export async function tokenMeta(token: string): Promise<{ symbol: string; decimals: number; issuer: string | null }> {
   const hit = tokenMetaCache.get(token);
   if (hit) return hit;
-  const [symbol, decimals] = await Promise.all([
+  const [symbol, decimals, name] = await Promise.all([
     readContract(token, "symbol").then((r) => String(r.value)).catch(() => ""),
     readContract(token, "decimals").then((r) => Number(r.value)).catch(() => 7),
+    readContract(token, "name").then((r) => String(r.value ?? "")).catch(() => ""),
   ]);
-  const meta = { symbol, decimals: Number.isFinite(decimals) ? decimals : 7 };
+  const issuerPart = name.includes(":") ? name.split(":")[1]?.trim() : "";
+  const issuer = issuerPart && G_ADDRESS.test(issuerPart) ? issuerPart : null;
+  const meta = { symbol, decimals: Number.isFinite(decimals) ? decimals : 7, issuer };
   tokenMetaCache.set(token, meta);
   return meta;
 }
