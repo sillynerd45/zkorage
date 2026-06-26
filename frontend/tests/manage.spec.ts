@@ -7,6 +7,7 @@ const ADDR = "GDLECNXD76OZQROASQGWEP4KAMJWTJXZW2LN7OJGYPXIJDRXACWGXZY6";
 const SIG_B64 = Buffer.from(new Uint8Array(64).fill(0x07)).toString("base64");
 const OWNER_ROOM = "b".repeat(64);
 const TOKEN = "CCFHRZAP7GYUBNJ4RN7NBZL5GS7Q32F4CIXDTWTTIGPYEDWRIS2TUPA5";
+const ISSUER = "GDFEJBM6RGK2IL2PIMGVNTGSO7O2NOVILFQUMIC55YMFKSGACA5IO2PM";
 const MIN = "1000000000";
 const DEADLINE = 9999999999;
 
@@ -37,7 +38,7 @@ async function stubsCommon(page: import("@playwright/test").Page) {
     r.fulfill(json({ ok: true, roomId: OWNER_ROOM, visibility: "listed", name: "Acme board", description: null })));
   await page.route("**/dataroom/rooms-vault/**", (r) => r.fulfill(json({ found: false, blob: null })));
   await page.route("**/bonded/bond/qual-set**", (r) => r.fulfill(json({ token: TOKEN, minAmount: MIN, deadline: DEADLINE, reqId: "ab".repeat(32), anonSetSize: 0, minAnonSet: 3, belowMin: true, computedRoot: "cd".repeat(32), published: false, ringLen: 0, locks: [] })));
-  await page.route("**/escrow/token-balance**", (r) => r.fulfill(json({ owner: ADDR, token: TOKEN, balance: "0", decimals: 7, symbol: "TUSD" })));
+  await page.route("**/escrow/token-balance**", (r) => r.fulfill(json({ owner: ADDR, token: TOKEN, balance: "0", decimals: 7, symbol: "TUSD", issuer: ISSUER })));
 }
 
 // stubsCommon + a STATIC bond-requirement GET (bond-only or membership), for tests that don't toggle it.
@@ -158,6 +159,96 @@ test("manage: a bond-only room can switch back to membership", async ({ page }) 
   await expect(page.getByTestId("manage-model-current-membership")).toBeVisible({ timeout: 15_000 });
 });
 
+test("manage: a bond-only room shows the Current requirement card (standout + contract/issuer links) + a submenu to edit", async ({ page }) => {
+  const errs: string[] = [];
+  page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/i.test(m.text())) errs.push(m.text()); });
+  await page.addInitScript(mock);
+  await stubs(page, true); // a bond-only room is the current model
+  await page.goto("/app/dataroom/manage");
+  await page.getByTestId("manage-owner-room").first().click();
+  await expect(page.getByTestId("manage-access-model")).toBeVisible({ timeout: 15_000 });
+
+  // Bonded Access is current -> the bond panel + requirement section render by default.
+  await expect(page.getByTestId("manage-model-current-bond")).toBeVisible();
+  await expect(page.getByTestId("bond-section")).toBeVisible();
+
+  // A submenu (Current requirement | Set a new requirement) appears only when a requirement is set, and lands
+  // on Current requirement (NOT the empty editor / "Set bonded access" button).
+  await expect(page.getByTestId("bond-view-current")).toBeVisible();
+  await expect(page.getByTestId("bond-view-new")).toBeVisible();
+  const current = page.getByTestId("bond-current");
+  await expect(current).toBeVisible();
+  await expect(page.getByTestId("bond-editor")).toHaveCount(0); // editor hidden while viewing the current req
+  await expect(page.getByTestId("bond-set")).toHaveCount(0);
+
+  // The card is the standout (success-tinted) box with a CURRENT badge, the token symbol, and BOTH the
+  // contract and the issuer as Stellar Expert links.
+  await expect(current).toHaveClass(/bg-success/);
+  await expect(page.getByTestId("bond-current-badge")).toBeVisible();
+  await expect(page.getByTestId("bond-current-token")).toContainText("TUSD");
+  await expect(current.locator(`a[href="https://stellar.expert/explorer/testnet/contract/${TOKEN}"]`)).toBeVisible();
+  await expect(page.getByTestId("bond-current-issuer").locator(`a[href="https://stellar.expert/explorer/testnet/account/${ISSUER}"]`)).toBeVisible();
+  await expect(page.getByTestId("bond-clear")).toBeVisible();
+  await page.screenshot({ path: "tests/manage-bond-current.png", fullPage: true });
+
+  // Switching to "Set a new requirement" reveals the editor (and the replace button); the current card hides.
+  await page.getByTestId("bond-view-new").click();
+  await expect(page.getByTestId("bond-editor")).toBeVisible();
+  await expect(page.getByTestId("bond-set")).toBeVisible();
+  await expect(page.getByTestId("bond-deadline-trigger")).toBeVisible();
+  await expect(page.getByTestId("bond-current")).toHaveCount(0);
+
+  expect(errs, errs.join("\n")).toHaveLength(0);
+});
+
+test("manage: setting a requirement shows a blocking 'do not close this tab' dialog, then lands on Current requirement", async ({ page }) => {
+  await page.addInitScript(mock);
+  await stubsCommon(page);
+  // The GET flips found=false -> found=true once the requirement is saved (mirrors the chain after the write).
+  let saved = false;
+  await page.route("**/dataroom/bond-requirement/**", (r) => {
+    if (r.request().method() !== "GET") return r.continue();
+    return r.fulfill(saved
+      ? json({ found: true, scope: "room", bondOpen: true, mode: "open", gate: "C".repeat(56), reqId: "ab".repeat(32), token: TOKEN, minAmount: MIN, deadline: DEADLINE })
+      : json({ found: false, bondOpen: false }));
+  });
+  // POST set -> wallet XDR; sign; /tx/submit is delayed so the progress dialog is observable; then qual-root.
+  await page.route("**/dataroom/bond-requirement", (r) => { saved = true; return r.fulfill(json({ ok: true, mode: "xdr", xdr: "AAAA", source: ADDR, reqId: "ab".repeat(32) })); });
+  await page.route("**/tx/submit", async (r) => { await new Promise((res) => setTimeout(res, 800)); return r.fulfill(json({ ok: true, txHash: "ab".repeat(8) })); });
+  await page.route("**/bonded/bond/qual-root", (r) => r.fulfill(json({ ok: true, txHash: "cd".repeat(8), reqId: "ab".repeat(32), qualRoot: "ef".repeat(32) })));
+
+  await page.goto("/app/dataroom/manage");
+  await page.getByTestId("manage-owner-room").first().click();
+  await expect(page.getByTestId("manage-access-model")).toBeVisible({ timeout: 15_000 });
+  // Pick Bonded Access (membership is current), then the editor (no requirement yet -> no submenu).
+  await page.getByTestId("manage-model-bond").click();
+  await expect(page.getByTestId("bond-editor")).toBeVisible();
+  await expect(page.getByTestId("bond-view-current")).toHaveCount(0); // no submenu while no requirement is set
+
+  // Resolve a classic token so the Set button enables (no network needed).
+  await page.getByTestId("bond-token-source").selectOption("classic");
+  await page.getByTestId("bond-token-code").fill("TUSD");
+  await page.getByTestId("bond-token-issuer").fill(ISSUER);
+  await page.getByTestId("bond-token-classic-resolve").click();
+  await expect(page.getByTestId("bond-set")).toBeEnabled();
+  await page.getByTestId("bond-set").click();
+
+  // The blocking dialog appears (do not close this tab) while the write is in flight.
+  const dialog = page.getByTestId("bond-progress");
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("Setting up Bonded Access");
+  await expect(dialog).toContainText("Do not close this tab");
+  await page.screenshot({ path: "tests/manage-bond-progress.png", fullPage: true });
+
+  // When it finishes, the dialog closes, the success note shows, and the view lands on the Current requirement
+  // card (the editor + its "Set bonded access" button are gone).
+  await expect(page.getByTestId("bond-progress")).toHaveCount(0, { timeout: 15_000 });
+  await expect(page.getByTestId("bond-set-done")).toBeVisible();
+  await expect(page.getByTestId("bond-current")).toBeVisible();
+  await expect(page.getByTestId("bond-view-current")).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByTestId("bond-editor")).toHaveCount(0);
+});
+
 test("manage: renders dark", async ({ page }) => {
   await page.addInitScript(mock + DARK);
   await stubs(page, false);
@@ -185,7 +276,7 @@ test("manage: skeletons while loading, then the selection persists across a tab 
   await page.route("**/dataroom/room/visibility", (r) => r.fulfill(json({ ok: true, roomId: OWNER_ROOM, visibility: "private", name: null, description: null })));
   await page.route("**/dataroom/rooms-vault/**", (r) => r.fulfill(json({ found: false, blob: null })));
   await page.route("**/bonded/bond/qual-set**", (r) => r.fulfill(json({ token: TOKEN, minAmount: MIN, deadline: DEADLINE, reqId: "ab".repeat(32), anonSetSize: 0, minAnonSet: 3, belowMin: true, computedRoot: "cd".repeat(32), published: false, ringLen: 0, locks: [] })));
-  await page.route("**/escrow/token-balance**", (r) => r.fulfill(json({ owner: ADDR, token: TOKEN, balance: "0", decimals: 7, symbol: "TUSD" })));
+  await page.route("**/escrow/token-balance**", (r) => r.fulfill(json({ owner: ADDR, token: TOKEN, balance: "0", decimals: 7, symbol: "TUSD", issuer: ISSUER })));
   await page.route("**/dataroom/bond-requirement/**", async (r) => {
     if (r.request().method() !== "GET") return r.continue();
     await new Promise((res) => setTimeout(res, 600));
