@@ -682,6 +682,18 @@ export const enrollApproveBatch = (roomId: string, signer?: TxSigner): Promise<W
 export type RoomVisibility = "private" | "unlisted" | "listed";
 export type AnonTier = "forming" | "ok" | "strong";
 
+// A TRUE bond-only room's requirement, surfaced in the directory so a reader sees which bond opens the room
+// (instead of a request-to-join). Present only for bond-only rooms; null/absent for membership rooms.
+export interface DirectoryBond {
+  bondOpen: boolean;
+  token: string; // SEP-41 / SAC contract address
+  symbol: string;
+  decimals: number;
+  issuer: string | null; // the classic asset's issuer (G-address), null for native / pure-Soroban
+  minAmount: string; // base units
+  deadline: number; // unix seconds
+  reqId: string;
+}
 export interface DirectoryRoom {
   roomId: string;
   name: string | null;
@@ -689,6 +701,7 @@ export interface DirectoryRoom {
   memberBucket: string; // coarse range, e.g. "5-19" — never an exact count
   anonTier: AnonTier;
   listedAt: number | null;
+  bond?: DirectoryBond | null;
 }
 export interface RoomMeta {
   roomId: string;
@@ -1114,7 +1127,7 @@ export const getBondBalance = (owner: string) =>
 // "paste a contract address" path). Throws (4xx) if the contract is not a deployed SEP-41 token.
 export const getTokenBalance = (owner: string, token: string) =>
   fetch(`${BASE}/escrow/token-balance?owner=${encodeURIComponent(owner)}&token=${encodeURIComponent(token)}`).then(
-    j<{ owner: string; token: string; balance: string; decimals: number; symbol: string }>,
+    j<{ owner: string; token: string; balance: string; decimals: number; symbol: string; issuer?: string | null }>,
   );
 
 // Demo faucet: server-relayed mint of test zkUSD (the relay signer is the token admin), so a fresh wallet
