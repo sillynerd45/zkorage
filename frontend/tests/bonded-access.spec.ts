@@ -76,6 +76,14 @@ async function openTheDoc(page: import("@playwright/test").Page) {
   await page.getByTestId("access-open").first().click();
 }
 
+// A TRUE bond-only room has no per-document Open while locked (the docs are a read-only preview). Access is
+// driven by the ONE room-level "Set up access" action, so the bond-only reader flow starts there.
+async function openBondOnlyRoom(page: import("@playwright/test").Page) {
+  await page.goto(`/app/dataroom/documents?room=${ROOM}#open`);
+  await expect(page.getByTestId("access-bond-panel")).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId("access-bond-setup").click();
+}
+
 test("BA5: a bonded doc with no qualifying bond shows the inline deposit step", async ({ page }) => {
   const errs: string[] = [];
   page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/i.test(m.text())) errs.push(m.text()); });
@@ -262,7 +270,7 @@ test("bond-only: a non-member reader goes straight to deposit (no approval neede
   // 3 other bonders (at the floor), reader not among them -> they must deposit.
   await page.route("**/bonded/bond/qual-set**", (r) => r.fulfill(json(qualSet(3, [decoy(1), decoy(2), decoy(3)]))));
 
-  await openTheDoc(page);
+  await openBondOnlyRoom(page);
   // The key difference from the membership-bond path: a non-member is NOT dead-ended at "bond-not-member".
   await expect(page.getByTestId("access-status")).toHaveAttribute("data-phase", "bond-deposit", { timeout: 30_000 });
   await expect(page.getByTestId("access-bond-deposit")).toBeVisible();
@@ -281,7 +289,7 @@ test("bond-only: prove runs ONLY the bond-open proof, never a membership proof",
   // Keep the prover job pending so the flow parks in "proving" after the prove call (we only assert routing).
   await page.route("**/prove-status/**", (r) => r.fulfill(json({ status: "pending" })));
 
-  await openTheDoc(page);
+  await openBondOnlyRoom(page);
   await expect(page.getByTestId("access-status")).toHaveAttribute("data-phase", "bond-ready", { timeout: 30_000 });
   await page.getByTestId("access-bond-prove").click();
   await expect(page.getByTestId("access-status")).toHaveAttribute("data-phase", "proving", { timeout: 30_000 });
@@ -319,6 +327,12 @@ test("bond-only: the Open page shows a named bonded panel + a room-level Set up 
   // The privacy note is bond-aware (NOT the membership "approved members" copy).
   await expect(page.getByTestId("access-privacy")).toContainText("qualifying bond");
   await expect(page.getByTestId("access-privacy")).not.toContainText("members the owner approved");
+
+  // While locked (no access yet) the documents are a read-only preview: a "Locked" pill, never a misleading
+  // per-document "Open" button. A one-line note points to the single room-level action.
+  await expect(page.getByTestId("access-docs-locked-note")).toContainText("Set up access to open");
+  await expect(page.getByTestId("access-doc-locked").first()).toBeVisible();
+  await expect(page.getByTestId("access-open")).toHaveCount(0);
 
   // Clicking the room-level "Set up access" drives the flow to the deposit step, shown at the room level.
   await page.getByTestId("access-bond-setup").click();
