@@ -26,6 +26,14 @@ rows above to the existing tunnel — no new tunnel/daemon needed.
   `env_file: backend/.env` + volume `backend/data` (blob store, demo bundles, DR4 issuer key, DR2 set).
   Installs the SDK's own runtime deps in `/app/sdk` (npm symlinks `file:../sdk`; Node resolves the SDK's
   imports from the symlink's *real* path, not the backend's hoisted `node_modules`).
+- **`keepalive` service** (container `zkorage-keepalive`, VM-internal, no ports) — reuses the **backend image**
+  with `command: node scripts/keepalive.mjs`. Every 6h it extends the Soroban TTL (instance + wasm code) of the
+  escrow + the bond/test-token contracts so their persistent state never archives, so no user ever pays the
+  one-time **restore rent** (a reader's FIRST bond deposit otherwise costs ~31 XLM vs ~0.03 XLM later).
+  Permissionless; reuses `backend/.env`'s `SIGNER_SECRET`. To (re)deploy just this service after a backend
+  change: ship `backend sdk docker-compose.yml deploy` then `docker compose up -d --build keepalive` (leaves
+  the backend/frontend/keepers untouched). Logs: `docker compose logs -f keepalive` (a cycle ends "cycle done:
+  6/6 extended").
 - `.dockerignore` (repo root) — lean context (both images build from the root for `file:../sdk`).
 - `.gitattributes` — pins LF for `*.sh` / `.dockerignore` / `*.Dockerfile` / compose (`core.autocrlf=true`
   would otherwise hand out CRLF → breaks `.dockerignore` matching).
