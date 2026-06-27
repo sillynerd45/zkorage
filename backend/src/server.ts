@@ -3268,10 +3268,69 @@ app.get("/dataroom/committee/document/:roomId/:docId", async (req, res) => {
   }
 });
 
+// Short TTL cache for the per-room anonymity-crowd size the collect floor checks. For a bond-only room sizing
+// the crowd needs an escrow scan (buildBondQualSet), so caching it per room bounds the RPC fan-out under
+// repeated opens / probing to once per window, and keeps the common membership path resilient to a transient
+// RPC blip on the is_bond_open read. The eligible MEMBER count is read FRESH (in-memory, no RPC), so a
+// just-approved member counts immediately; only the access model + the bond qual-set size are cached. A
+// bond-only qualifying set only grows before its deadline, so a brief staleness can at worst delay an open by
+// the TTL (fail-closed), never release a key into a too-small crowd for long.
+const CROWD_TTL_MS = numEnv(process.env.DR_CROWD_TTL_MS, 12_000, 1000);
+type CrowdModel = { at: number; bondOnly: boolean; qualSize: number };
+const crowdCache = new Map<string, CrowdModel>();
+async function anonCrowdSize(roomIdHex: string): Promise<number> {
+  const now = Date.now();
+  let m = crowdCache.get(roomIdHex);
+  if (!m || now - m.at >= CROWD_TTL_MS) {
+    // A TRUE bond-only room has NO membership eligible set (no enrollment, no approval): its anonymity crowd is
+    // the qualifying BOND set. A membership room (incl. legacy bond-implies-membership) uses the eligible set.
+    const bondOnly = Boolean((await readContract(DATAROOM_ID, "is_bond_open", [scBytes(roomIdHex)])).value);
+    let qualSize = 0;
+    if (bondOnly) {
+      const rv = (await readContract(DATAROOM_ID, "get_bond_requirement", [scBytes(roomIdHex)])).value;
+      const r = rv ? (jsonSafe(rv) as { token?: string; min_amount?: string; deadline?: string }) : null;
+      // No requirement on a bond-only room -> crowd 0 -> the floor check refuses (fail-closed) below.
+      if (r?.token) qualSize = (await buildBondQualSet(String(r.token), BigInt(String(r.min_amount ?? "0")), Number(r.deadline ?? 0))).size;
+    }
+    m = { at: now, bondOnly, qualSize };
+    crowdCache.set(roomIdHex, m);
+    if (crowdCache.size > 10_000) { for (const k of crowdCache.keys()) { crowdCache.delete(k); if (crowdCache.size <= 10_000) break; } }
+  }
+  return m.bondOnly ? m.qualSize : getEligible(roomIdHex).length;
+}
+
+// The collect aggregator is unauthenticated and fans out to the keeper committee (and, with minAnonSet, can
+// trigger an escrow scan on a cache miss), so throttle per IP. A legit open hits this once per document, so the
+// limit is generous. Same shape + window as the queue/enroll limiters; env-tunable.
+const COLLECT_RL_WINDOW_MS = 10 * 60_000;
+const COLLECT_RL_MAX = numEnv(process.env.DR_COLLECT_RL_MAX, 60, 1);
+const COLLECT_RL_MAX_IPS = 10_000;
+const collectHits = new Map<string, number[]>();
+function collectRateLimited(ip: string, nowMs: number): boolean {
+  if (collectHits.size > COLLECT_RL_MAX_IPS) {
+    for (const [k, ts] of collectHits) {
+      const live = ts.filter((t) => nowMs - t < COLLECT_RL_WINDOW_MS);
+      if (live.length === 0) collectHits.delete(k);
+      else collectHits.set(k, live);
+    }
+    if (collectHits.size > COLLECT_RL_MAX_IPS) {
+      let toEvict = collectHits.size - COLLECT_RL_MAX_IPS;
+      for (const k of collectHits.keys()) { if (toEvict-- <= 0) break; collectHits.delete(k); }
+    }
+  }
+  const hits = (collectHits.get(ip) ?? []).filter((t) => nowMs - t < COLLECT_RL_WINDOW_MS);
+  hits.push(nowMs);
+  collectHits.set(ip, hits);
+  return hits.length > COLLECT_RL_MAX;
+}
+
 // Collect the SEALED shares for a granted accessor (no secret involved). The SDK/frontend opens these in the
 // browser with the recipient x25519 secret — this route never sees a key. A non-granted accessor → 403.
 app.post("/dataroom/committee/collect/:roomId/:docId", async (req, res) => {
   if (!DATAROOM_ID) return res.status(503).json({ error: "DATAROOM_CONTRACT_ID not configured" });
+  if (collectRateLimited(clientIp(req), Date.now())) {
+    return res.status(429).json({ error: "too many share-collection requests; please try again shortly" });
+  }
   let roomIdHex: string, docIdHex: string, accessorHex: string;
   try {
     roomIdHex = toBytes32(req.params.roomId);
@@ -3292,9 +3351,18 @@ app.post("/dataroom/committee/collect/:roomId/:docId", async (req, res) => {
     if (!Number.isInteger(minAnonSet) || minAnonSet <= 0) {
       return res.status(400).json({ error: "minAnonSet must be a positive integer" });
     }
-    const n = getEligible(roomIdHex).length;
+    // The anonymity crowd depends on the room's access model (see anonCrowdSize): a TRUE bond-only room floors
+    // on its qualifying BOND set (the membership eligible set is empty by design), a membership room floors on
+    // the eligible member set. Without this split a bond-only room always reads 0 and is wrongly refused, so the
+    // share is never released and the document never opens. Cached per room; fail-closed (502) on a read error.
+    let n: number;
+    try {
+      n = await anonCrowdSize(roomIdHex);
+    } catch (e) {
+      return res.status(502).json({ error: "could not size the anonymity crowd: " + err(e) });
+    }
     if (n < minAnonSet) {
-      return res.status(403).json({ error: `anonymity set too small: ${n} of ${minAnonSet} members`, anonSetSize: n, minAnonSet });
+      return res.status(403).json({ error: `anonymity set too small: ${n} of ${minAnonSet}`, anonSetSize: n, minAnonSet });
     }
   }
   try {
