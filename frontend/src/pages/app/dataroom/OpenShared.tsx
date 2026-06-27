@@ -125,8 +125,9 @@ function OpenStatus({ s }: { s: ReturnType<typeof useSharedOpen> }) {
             You qualify. Prove access once (about a few minutes), then every document in this room opens right away.
           </p>
           <p className="text-xs text-muted-foreground">
-            This runs a one-time setup on our self-hosted prover that proves you hold a qualifying bond and are
-            on the room's list, without revealing which bond or which member.
+            {s.bondReq?.bondOpen
+              ? "This runs a one-time setup on our self-hosted prover that proves you hold a qualifying bond, without revealing which bond. It is reusable: it also opens any other room with the same requirement, and your standalone Bonded Access, with no new lock."
+              : "This runs a one-time setup on our self-hosted prover that proves you hold a qualifying bond and are on the room's list, without revealing which bond or which member."}
           </p>
           <div className="flex flex-wrap gap-2">
             <Button size="sm" onClick={s.setupBondAccess} data-testid="access-bond-prove" className={actionButtonHover}>Prove access</Button>
@@ -660,8 +661,21 @@ function BondDeposit({ s }: { s: ReturnType<typeof useSharedOpen> }) {
       </div>
 
       <Callout icon={Info}>
-        Locking is public: your wallet, the token, and the amount show on-chain. Opening a document later is
-        private: the proof hides which bond is yours.
+        {req.bondOpen ? (
+          <>
+            You lock once: this bond also opens every other room with the same requirement, and your standalone
+            Bonded Access, with no new deposit. Locking is public (your wallet, the token, and the amount show
+            on-chain); opening is private to the room owner and to anyone reading the chain (the proof hides which
+            bond is yours, among the qualifying bonders). Your bonded-access identity is one pseudonym per wallet,
+            shared across every room with this requirement, so the keeper committee and our self-hosted prover
+            (which both see more than the public chain does) could correlate your opens across rooms.
+          </>
+        ) : (
+          <>
+            Locking is public: your wallet, the token, and the amount show on-chain. Opening a document later is
+            private: the proof hides which bond is yours.
+          </>
+        )}
       </Callout>
     </div>
   );

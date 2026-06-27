@@ -19,10 +19,22 @@ const DEADLINE = 9999999999;
 
 // The reader's deterministic bond commitment for the fixed identity (so the stubbed qualifying set can include
 // or exclude "this member" exactly the way the live qual-set indexer would).
-const READER_COMMITMENT = bondAccessCommitment(deriveDataRoomIdentity(SIG_BYTES, ROOM).idSecret).toLowerCase();
+const READER_ID = deriveDataRoomIdentity(SIG_BYTES, ROOM);
+const READER_COMMITMENT = bondAccessCommitment(READER_ID.idSecret).toLowerCase();
+// The per-wallet Bonded Access handle a TRUE bond-only room now opens with (one reusable bond across rooms).
+// Seed it with the SAME id_secret as the per-room identity, so the reader's qual commitment (mine()) matches
+// BOTH the bond-only (handle) path and the legacy bond-implies-membership (per-room) path.
+const BOND_HANDLE = {
+  idSecret: READER_ID.idSecret,
+  idTrapdoor: READER_ID.idTrapdoor,
+  holderSeed: READER_ID.accessorSeed,
+  accessor: READER_ID.accessor,
+  qualCommitment: READER_COMMITMENT,
+};
 
 const mock = `
   localStorage.setItem("zkorage.wallet.connected", "1");
+  localStorage.setItem("zkorage-bond-identity.${ADDR}", ${JSON.stringify(JSON.stringify(BOND_HANDLE))});
   window.__freighterMock = {
     isConnected: async () => ({ isConnected: true }),
     isAllowed: async () => ({ isAllowed: true }),
@@ -356,4 +368,28 @@ test("bond-only: when this wallet already locked a bond, the panel says 'Continu
   // the CTA reads "Continue setup" instead of the bare "Set up access".
   await expect(page.getByTestId("access-bond-locked-note")).toContainText("already locked a qualifying bond");
   await expect(page.getByTestId("access-bond-setup")).toContainText("Continue setup");
+});
+
+test("bond-only: with no saved handle, a fresh Bonded Access identity is minted and recognised", async ({ page }) => {
+  await page.addInitScript(mock);
+  // Drop the seeded local handle so the open flow takes the mint path (empty vault -> enrollBond).
+  await page.addInitScript(`localStorage.removeItem("zkorage-bond-identity.${ADDR}")`);
+  await stubReaderCommon(page, "none");
+  await page.route("**/dataroom/bond-requirement/**", (r) => (r.request().method() === "GET" ? r.fulfill(bondReqOpen) : r.continue()));
+  // The wallet has no vaulted handle, so the flow mints a fresh one (and best-effort backs it up).
+  await page.route("**/bonded/bond/handle-vault/**", (r) =>
+    r.fulfill(json(r.request().method() === "GET" ? { found: false, blob: null } : { ok: true })),
+  );
+  const MINT_SECRET = "33".repeat(32);
+  const MINT_COMMIT = bondAccessCommitment(MINT_SECRET).toLowerCase();
+  await page.route("**/bonded/bond/enroll", (r) =>
+    r.fulfill(json({ ok: true, setId: "x", memberIndex: 0, memberCount: 1, memberRoot: "00".repeat(32),
+      minted: { idSecret: MINT_SECRET, idTrapdoor: "44".repeat(32), holderSeed: "55".repeat(32), accessor: "66".repeat(32), qualCommitment: MINT_COMMIT } })),
+  );
+  // The minted handle's bond is in the qualifying set, at the floor -> bond-ready (no membership proof needed).
+  await page.route("**/bonded/bond/qual-set**", (r) =>
+    r.fulfill(json(qualSet(3, [{ id: 7, commitment: MINT_COMMIT, amount: MIN, unlock_time: DEADLINE, depositor: ADDR }, decoy(2), decoy(3)]))),
+  );
+  await openBondOnlyRoom(page);
+  await expect(page.getByTestId("access-status")).toHaveAttribute("data-phase", "bond-ready", { timeout: 30_000 });
 });
