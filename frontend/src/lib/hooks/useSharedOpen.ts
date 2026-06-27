@@ -30,6 +30,7 @@ import { useDataRoomIdentity } from "@/lib/hooks/useDataRoomIdentity";
 import { readJoinRequests, writeJoinRequests } from "@/lib/dataroom/requests";
 import { pullVault, pushVault, forgetVault, isVaultSyncOn, setVaultSyncOn } from "@/lib/dataroom/vault";
 import { writeOpenTicket, clearOpenTicket, findOpenTicket } from "@/lib/dataroom/openTicket";
+import { markBondLocked, clearBondLocked, hasBondLockedFor } from "@/lib/dataroom/bondLocks";
 import { isHex32 } from "@/lib/format";
 
 // "Open a document" (Model B). One screen, one action: the member lands on the rooms they are approved for,
@@ -256,6 +257,11 @@ export function useSharedOpen() {
   const [roomBondMeta, setRoomBondMeta] = useState<{ symbol: string; decimals: number; issuer: string | null } | null>(null);
   const [roomBondMetaLoading, setRoomBondMetaLoading] = useState(false);
   const [roomBondCount, setRoomBondCount] = useState<number | null>(null);
+  // True if this wallet has a LOCAL marker that it already locked a qualifying bond for this room's current
+  // requirement, so the idle panel can say "you've locked a bond, continue" instead of a bare "Set up access".
+  // A hint only (no wallet signature); the live check on click is authoritative. Set/cleared as the flow learns
+  // the real state (lock success, or a live read that finds the bond present/absent).
+  const [roomBondLocked, setRoomBondLocked] = useState(false);
 
   const cancelled = useRef(false);
   useEffect(() => {
@@ -287,14 +293,17 @@ export function useSharedOpen() {
   // it is a bond-only room and can show the bond-aware panel. Loads the token meta + the live qualifying-set
   // count for display. A membership / legacy room leaves roomBond null (the per-document flow handles those).
   useEffect(() => {
-    if (!isHex32(room)) { setRoomBond(null); setRoomBondMeta(null); setRoomBondCount(null); setRoomBondMetaLoading(false); return; }
+    if (!isHex32(room)) { setRoomBond(null); setRoomBondMeta(null); setRoomBondCount(null); setRoomBondMetaLoading(false); setRoomBondLocked(false); return; }
     let live = true;
-    setRoomBond(null); setRoomBondMeta(null); setRoomBondCount(null); setRoomBondMetaLoading(true);
+    setRoomBond(null); setRoomBondMeta(null); setRoomBondCount(null); setRoomBondMetaLoading(true); setRoomBondLocked(false);
     getBondRequirementApi(room.trim())
       .then((r) => {
         if (!live) return;
         if (r.found && r.bondOpen && r.token && r.minAmount && r.deadline) {
           setRoomBond(r);
+          // Seed the "you've already locked a bond" hint from the local marker (matched to this requirement's
+          // reqId, so a changed requirement does not show a stale hint).
+          setRoomBondLocked(hasBondLockedFor(address, room.trim(), r.reqId));
           getBondQualSet(r.token, r.minAmount, r.deadline)
             .then((q) => { if (live) setRoomBondCount(q.anonSetSize); })
             .catch(() => { if (live) setRoomBondCount(null); });
@@ -488,10 +497,18 @@ export function useSharedOpen() {
       }
       const mine = bondAccessCommitment(id.idSecret).toLowerCase();
       const hasBond = !!qual && qual.locks.some((l) => l.commitment.toLowerCase() === mine);
-      if (!hasBond) { setPhase("bond-deposit"); return; }
+      if (!hasBond) {
+        // The live read found no qualifying bond for this member, so a stale "you locked one" hint is wrong.
+        clearBondLocked(address, room.trim());
+        setRoomBondLocked(false);
+        setPhase("bond-deposit");
+        return;
+      }
+      markBondLocked(address, room.trim(), req.reqId);
+      setRoomBondLocked(true);
       setPhase(qual && qual.anonSetSize < BOND_FLOOR ? "bond-below-floor" : "bond-ready");
     },
-    [address],
+    [address, room],
   );
 
   // Re-read the qualifying set after a deposit (or on a "Check again"), then move to the right bond phase
@@ -505,9 +522,16 @@ export function useSharedOpen() {
     setRoomBondCount(qual ? qual.anonSetSize : null);
     const mine = bondAccessCommitment(identity.idSecret).toLowerCase();
     const hasBond = !!qual && qual.locks.some((l) => l.commitment.toLowerCase() === mine);
-    if (!hasBond) { setPhase("bond-deposit"); return; }
+    if (!hasBond) {
+      clearBondLocked(address, room.trim());
+      setRoomBondLocked(false);
+      setPhase("bond-deposit");
+      return;
+    }
+    markBondLocked(address, room.trim(), bondReq.reqId);
+    setRoomBondLocked(true);
     setPhase(qual && qual.anonSetSize < BOND_FLOOR ? "bond-below-floor" : "bond-ready");
-  }, [identity, bondReq]);
+  }, [identity, bondReq, room, address]);
 
   // Lock a qualifying bond inline: a NON-revocable self-bond of the required token, at least `amountBase`,
   // until the requirement's deadline, with the access commitment = sha256(0x03 ‖ id_secret ‖ "escrow") so it
@@ -526,6 +550,10 @@ export function useSharedOpen() {
         );
         if (!r.ok) throw new Error(r.error || "could not lock your bond");
         if (cancelled.current) return;
+        // Remember this lock locally (per wallet + room) so a later re-landing shows "you've locked a bond,
+        // continue" instead of a bare "Set up access". refreshBond re-confirms it from the live set.
+        markBondLocked(address, room.trim(), bondReq.reqId);
+        setRoomBondLocked(true);
         await refreshBond();
       } catch (e) {
         if (cancelled.current) return;
@@ -535,7 +563,7 @@ export function useSharedOpen() {
         setBondLocking(false);
       }
     },
-    [identity, bondReq, signer, refreshBond],
+    [identity, bondReq, signer, refreshBond, room, address],
   );
 
   // Poll a prover job until its bundle is ready (or it errors / times out). Shared by the two concurrent
@@ -793,6 +821,7 @@ export function useSharedOpen() {
     roomBondMeta,
     roomBondMetaLoading,
     roomBondCount,
+    roomBondLocked,
     setupRoomAccess,
   };
 }

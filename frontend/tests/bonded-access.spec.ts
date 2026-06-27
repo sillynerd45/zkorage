@@ -341,3 +341,19 @@ test("bond-only: the Open page shows a named bonded panel + a room-level Set up 
   await page.screenshot({ path: "tests/bonded-open-panel.png", fullPage: true });
   expect(errs, errs.join("\n")).toHaveLength(0);
 });
+
+test("bond-only: when this wallet already locked a bond, the panel says 'Continue setup', not a bare 'Set up access'", async ({ page }) => {
+  await page.addInitScript(mock);
+  // a local marker (this browser) that this wallet locked a bond for ROOM under the current requirement's reqId
+  await page.addInitScript(`localStorage.setItem("zkorage.dr.bondlocked.${ADDR}", JSON.stringify({ "${ROOM}": "${"ab".repeat(32)}" }));`);
+  await stubReaderCommon(page, "none");
+  await page.route("**/dataroom/bond-requirement/**", (r) => (r.request().method() === "GET" ? r.fulfill(bondReqOpen) : r.continue()));
+  await page.route("**/bonded/bond/qual-set**", (r) => r.fulfill(json(qualSet(2, [mine(1), decoy(2)])))); // reader's bond is in the set, below the floor
+
+  await page.goto(`/app/dataroom/documents?room=${ROOM}#open`);
+  await expect(page.getByTestId("access-bond-panel")).toBeVisible({ timeout: 30_000 });
+  // On landing (no wallet signature yet) the local marker drives a "you've already locked a bond" hint, and
+  // the CTA reads "Continue setup" instead of the bare "Set up access".
+  await expect(page.getByTestId("access-bond-locked-note")).toContainText("already locked a qualifying bond");
+  await expect(page.getByTestId("access-bond-setup")).toContainText("Continue setup");
+});
