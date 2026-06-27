@@ -11,13 +11,12 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { actionButtonHover, Callout, CopyIconButton, DirectoryListSkeleton, RefreshBar, RoomSearch, ShowMore } from "@/components/app/dataroom/kit";
-import type { DirectoryRoom } from "@/lib/api";
+import { BondRequirementDetail } from "@/components/app/dataroom/BondRequirementDetail";
+import { getMyRooms, type AnonTier, type DirectoryBond, type DirectoryRoom, type EnrollState } from "@/lib/api";
 
 // The text a directory room is matched against in search (name + id + description). Module-level + stable so
 // useRoomList's filter memo does not recompute every render.
 const directoryRoomText = (r: DirectoryRoom) => `${r.name ?? ""} ${r.roomId} ${r.description ?? ""}`;
-import { BondRequirementDetail } from "@/components/app/dataroom/BondRequirementDetail";
-import { getMyRooms, type AnonTier, type DirectoryBond, type EnrollState } from "@/lib/api";
 
 // M5 — the public discovery surface. Wallet NOT required to browse. Visibility is a discovery convenience,
 // not the privacy mechanism (that is the membership proof + the k=5 floor + the keepers). The directory shows
