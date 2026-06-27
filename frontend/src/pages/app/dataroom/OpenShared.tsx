@@ -220,6 +220,14 @@ export default function OpenShared() {
     detailRef.current?.scrollIntoView({ block: "nearest", behavior: reduce ? "auto" : "smooth" });
   }, [s.room]);
 
+  // A bond-only room's document list unlocks once the room's access has landed (the first successful open), and
+  // STAYS unlocked while the reader switches documents. A switch briefly re-enters "checking"/"opening", and
+  // the list must not flash back to "Locked" (with a "set up access" note) for someone already admitted. Reset
+  // when the selected room changes.
+  const [roomOpened, setRoomOpened] = useState(false);
+  useEffect(() => { setRoomOpened(false); }, [s.room]);
+  useEffect(() => { if (s.phase === "opened") setRoomOpened(true); }, [s.phase]);
+
   if (!s.connected) {
     return (
       <Card className="rounded-2xl border-brand/40 p-6" data-testid="access-connect-prompt">
@@ -248,9 +256,10 @@ export default function OpenShared() {
   const bondDeadlinePassed = isBondRoom && (s.roomBond?.deadline ?? 0) * 1000 <= Date.now();
   // For a bond-only room the per-document Open only works once room access has landed. Until then the document
   // list is a read-only preview (a "Locked" pill, no Open button); the one room-level "Set up access" action
-  // drives the flow, so a per-doc Open would mislead. A membership room is always "unlocked" (its per-doc Open
+  // drives the flow, so a per-doc Open would mislead. Once the room has opened it stays unlocked (sticky, so a
+  // document switch does not flash back to "Locked"). A membership room is always "unlocked" (its per-doc Open
   // runs the per-document access check itself).
-  const docsUnlocked = !isBondRoom || s.phase === "opened";
+  const docsUnlocked = !isBondRoom || roomOpened;
 
   return (
     <div data-testid="access-card" className="space-y-5">
