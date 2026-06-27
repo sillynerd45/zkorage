@@ -31,6 +31,8 @@ import { readJoinRequests, writeJoinRequests } from "@/lib/dataroom/requests";
 import { pullVault, pushVault, forgetVault, isVaultSyncOn, setVaultSyncOn } from "@/lib/dataroom/vault";
 import { writeOpenTicket, clearOpenTicket, findOpenTicket } from "@/lib/dataroom/openTicket";
 import { markBondLocked, clearBondLocked, hasBondLockedFor } from "@/lib/dataroom/bondLocks";
+import { getBondOpenIdentity } from "@/lib/bonded/bondOpenIdentity";
+import { getBondSig } from "@/lib/bonded/handle";
 import { isHex32 } from "@/lib/format";
 
 // "Open a document" (Model B). One screen, one action: the member lands on the rooms they are approved for,
@@ -76,7 +78,7 @@ export type SyncState =
   | "error";
 
 export function useSharedOpen() {
-  const { address, connected, connect, status: walletStatus } = useWallet();
+  const { address, connected, connect, status: walletStatus, signMessage } = useWallet();
   const signer = useTxSigner();
   const ident = useDataRoomIdentity();
 
@@ -697,12 +699,40 @@ export function useSharedOpen() {
       setBondReq(null);
       setPhase("checking");
       try {
+        // Read the room's requirement first to pick the identity. A TRUE bond-only room opens with the REUSABLE
+        // per-wallet Bonded Access handle (one bond opens every room sharing the requirement, plus the standalone
+        // page); membership + legacy bond-implies-membership rooms keep the per-room Data Room identity.
+        const req = await getBondRequirementApi(room.trim(), docId.trim()).catch(() => ({ found: false }) as BondRequirement);
+        if (cancelled.current) return;
+
+        if (req.found && req.bondOpen && req.token && req.minAmount && req.deadline) {
+          let id: DataRoomIdentity;
+          try {
+            id = await getBondOpenIdentity(address ?? "", () => getBondSig(address, signMessage), room.trim());
+          } catch (e) {
+            setFlowErr(String((e as Error).message ?? e));
+            setPhase("error");
+            return;
+          }
+          if (cancelled.current) return;
+          setIdentity(id);
+          setBondReq(req);
+          const acc = await sdk.canOpenDocument(room.trim(), docId.trim(), id.accessor);
+          if (cancelled.current) return;
+          setAccess(acc);
+          if (acc.revoked) { setPhase("revoked"); return; }
+          if (acc.admitted) { await doOpen(docId, id, BOND_FLOOR); return; } // already has a grant -> open
+          setPhase("bond-detecting");
+          await resolveBondPhase(req, id, "none"); // bond-only: no membership leg, so member state is irrelevant
+          return;
+        }
+
+        // Membership OR legacy bond-implies-membership: the per-room Data Room identity (unchanged).
         const id = await ident.derive(room.trim());
         if (!id) { setFlowErr(ident.error ?? "Could not derive your identity from the wallet."); setPhase("error"); return; }
         setIdentity(id);
-        const [acc, req, st, elig] = await Promise.all([
+        const [acc, st, elig] = await Promise.all([
           sdk.canOpenDocument(room.trim(), docId.trim(), id.accessor),
-          getBondRequirementApi(room.trim(), docId.trim()).catch(() => ({ found: false }) as BondRequirement),
           getEnrollStatus(room.trim(), id.idCommitment).catch(() => ({ state: "none" as const })),
           getEligible(room.trim()).catch(() => null),
         ]);
@@ -713,7 +743,8 @@ export function useSharedOpen() {
         if (acc.revoked) { setPhase("revoked"); return; }
         if (acc.admitted) { await doOpen(docId, id, req.found ? BOND_FLOOR : ANON_FLOOR); return; } // already set up -> open
 
-        // Bonded document: the bond proof grants admission; a membership proof provides the key (recipient_pub).
+        // Legacy bond-implies-membership document: the bond proof grants admission; a membership proof provides
+        // the key (recipient_pub).
         if (req.found && req.token && req.minAmount && req.deadline) {
           setBondReq(req);
           setPhase("bond-detecting");
@@ -732,7 +763,7 @@ export function useSharedOpen() {
         setPhase("error");
       }
     },
-    [room, ident, belowFloor, doOpen, resolveBondPhase],
+    [room, ident, belowFloor, doOpen, resolveBondPhase, address, signMessage],
   );
 
   const dismiss = useCallback(() => { resetFlow(); }, [resetFlow]); // "Not now"
