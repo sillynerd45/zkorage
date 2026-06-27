@@ -166,15 +166,19 @@ function OpenStatus({ s }: { s: ReturnType<typeof useSharedOpen> }) {
     case "opened":
       return (
         <div className="space-y-2" data-testid="access-opened">
-          <p className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-500">
-            <CheckCircle2 className="size-4" aria-hidden="true" /> Open.
-          </p>
           {s.opened?.reconstructed ? (
-            <div data-testid="access-plaintext">
-              <DecryptedFile plaintext={s.opened.plaintext} plaintextUtf8={s.opened.plaintextUtf8} />
-            </div>
+            <>
+              <p className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-500">
+                <CheckCircle2 className="size-4" aria-hidden="true" /> Open.
+              </p>
+              <div data-testid="access-plaintext">
+                <DecryptedFile plaintext={s.opened.plaintext} plaintextUtf8={s.opened.plaintextUtf8} />
+              </div>
+            </>
+          ) : s.opened && !s.opened.released ? (
+            <Verdict ok={false}>The keepers have not released the key yet. This can lag a few seconds after your access is recorded. Open the document again in a moment.</Verdict>
           ) : (
-            <Verdict ok={false}>The key could not be rebuilt from the released parts.</Verdict>
+            <Verdict ok={false}>The released parts could not be rebuilt with your key.</Verdict>
           )}
         </div>
       );

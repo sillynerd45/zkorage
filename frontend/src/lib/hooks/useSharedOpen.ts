@@ -354,9 +354,19 @@ export function useSharedOpen() {
     setPhase("opening");
     setFlowErr(null);
     try {
-      const out = await sdk.openCommitteeDocument(room.trim(), docId.trim(), id.accessor, id.recipientSecret, {
-        minAnonSet,
-      });
+      const open1 = () =>
+        sdk.openCommitteeDocument(room.trim(), docId.trim(), id.accessor, id.recipientSecret, { minAnonSet });
+      let out = await open1();
+      // The grant + the keepers' view of it read the chain independently and can lag a few seconds behind a
+      // just-recorded access tx. If the document exists but no shares were released yet (no grant visible, or
+      // the keepers have not seen it), that is almost always propagation lag, so retry a few times before
+      // surfacing a failure rather than the scary "key could not be rebuilt". A released-but-unfaithful result
+      // (wrong recipient key) is a real failure and is NOT retried (released stays true).
+      for (let i = 0; i < 3 && out.found && !out.released; i++) {
+        await new Promise((r) => setTimeout(r, 4000));
+        if (cancelled.current) return;
+        out = await open1();
+      }
       if (cancelled.current) return;
       setOpened(out);
       setPhase("opened");
