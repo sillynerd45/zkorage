@@ -1833,8 +1833,13 @@ export class ZkorageClient {
     // null and the open would fail). Opening against the chain key means a malicious aggregator can at worst
     // cause a FAILED open (unfaithful shares), never a wrong decrypt.
     const recipientPub = (await this.admissionRecipientPub(roomIdHex, accessorHex)) ?? "";
+    // No admitting record (or it has not propagated yet): there is nothing for the keepers to seal to, so skip
+    // the keeper fan-out entirely and report not-released. The caller can retry while the grant propagates.
+    if (!recipientPub) {
+      return { ...empty, found: true, released: false, contentHash: doc.content_hash, kCommitment: doc.k_commitment, recipientPub };
+    }
     const { shares } = await this.collectSealedShares(roomIdHex, docIdHex, accessorHex, opts);
-    if (shares.length < threshold || !recipientPub) {
+    if (shares.length < threshold) {
       return { ...empty, found: true, released: false, contentHash: doc.content_hash, kCommitment: doc.k_commitment, recipientPub };
     }
     // Open each sealed share with the recipient secret (verifying the tag against the on-chain recipient_pub).
