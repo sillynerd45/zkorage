@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Clock, Compass, FolderOpen, KeyRound, Search, Settings2, ShieldCheck, UserPlus, Users } from "lucide-react";
+import { ChevronDown, Clock, Compass, FolderOpen, KeyRound, Search, Settings2, ShieldCheck, UserPlus, Users } from "lucide-react";
 import { useDirectory } from "@/lib/hooks/useDirectory";
+import { useRoomList } from "@/lib/hooks/useRoomList";
 import { useWallet } from "@/lib/wallet/WalletContext";
 import { joinRequestStates } from "@/lib/dataroom/requests";
 import { short } from "@/lib/format";
@@ -9,7 +10,12 @@ import { cn } from "@/lib/utils";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
-import { Callout, CopyIconButton, DirectoryListSkeleton, RefreshBar } from "@/components/app/dataroom/kit";
+import { actionButtonHover, Callout, CopyIconButton, DirectoryListSkeleton, RefreshBar, RoomSearch, ShowMore } from "@/components/app/dataroom/kit";
+import type { DirectoryRoom } from "@/lib/api";
+
+// The text a directory room is matched against in search (name + id + description). Module-level + stable so
+// useRoomList's filter memo does not recompute every render.
+const directoryRoomText = (r: DirectoryRoom) => `${r.name ?? ""} ${r.roomId} ${r.description ?? ""}`;
 import { BondRequirementDetail } from "@/components/app/dataroom/BondRequirementDetail";
 import { getMyRooms, type AnonTier, type DirectoryBond, type EnrollState } from "@/lib/api";
 
@@ -91,7 +97,7 @@ function JoinButton({
 }) {
   if (state === "eligible") {
     return (
-      <Link to={accessLink(roomId)} data-testid="discover-open" className={cn(buttonVariants({ size: "sm", variant }))}>
+      <Link to={accessLink(roomId)} data-testid="discover-open" className={cn(buttonVariants({ size: "sm", variant }), actionButtonHover)}>
         <FolderOpen aria-hidden="true" />
         Open
       </Link>
@@ -102,7 +108,7 @@ function JoinButton({
       <Link
         to={joinLink(roomId)}
         data-testid="discover-requested"
-        className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+        className={cn(buttonVariants({ size: "sm", variant: "outline" }), actionButtonHover)}
       >
         <Clock aria-hidden="true" />
         Requested
@@ -110,7 +116,7 @@ function JoinButton({
     );
   }
   return (
-    <Link to={joinLink(roomId)} data-testid="discover-join" className={cn(buttonVariants({ size: "sm", variant }))}>
+    <Link to={joinLink(roomId)} data-testid="discover-join" className={cn(buttonVariants({ size: "sm", variant }), actionButtonHover)}>
       <UserPlus aria-hidden="true" />
       Request to join
     </Link>
@@ -124,7 +130,10 @@ function OwnRoomLink({ roomId }: { roomId: string }) {
     <Link
       to={`/app/dataroom/manage?room=${roomId}`}
       data-testid="discover-own-room"
-      className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-success/40 bg-success/5 px-3 py-1.5 text-xs font-medium text-success transition-colors hover:bg-success/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-success/40"
+      className={cn(
+        "inline-flex shrink-0 items-center gap-1.5 rounded-md border border-success/40 bg-success/5 px-3 py-1.5 text-xs font-medium text-success transition-colors hover:bg-success/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-success/40",
+        actionButtonHover,
+      )}
     >
       <Settings2 className="size-3.5" aria-hidden="true" />
       Your room
@@ -173,10 +182,87 @@ function BondToEnterPill() {
 // different system and cannot grant room access, so it is intentionally not the destination.
 function BondCreateLink({ roomId }: { roomId: string }) {
   return (
-    <Link to={accessLink(roomId)} data-testid="discover-bond-create" className={cn(buttonVariants({ size: "sm" }))}>
+    <Link to={accessLink(roomId)} data-testid="discover-bond-create" className={cn(buttonVariants({ size: "sm" }), actionButtonHover)}>
       <KeyRound aria-hidden="true" />
       Create Bonded Access
     </Link>
+  );
+}
+
+// One directory room row. Compact by default: the name, the meta line (id + copy + a bond/bucket pill), a
+// one-line description preview, and the action button. A chevron expands the rest (the full description, plus
+// the bond requirement for a bond-only room); a room with nothing extra to show has no chevron. The card is
+// filled bg-background so it stands out as a nested row on the section card.
+function DirectoryRoomCard({ room, isOwn, state }: { room: DirectoryRoom; isOwn: boolean; state?: EnrollState }) {
+  // A TRUE bond-only room shows the bond requirement + a "Create Bonded Access" action instead of a member
+  // bucket + request-to-join. Owners still see "Your room".
+  const bond = room.bond && room.bond.bondOpen ? room.bond : null;
+  const expandable = Boolean(room.description) || Boolean(bond);
+  const [open, setOpen] = useState(false);
+  return (
+    <div
+      data-testid="discover-room"
+      data-own={isOwn ? "true" : "false"}
+      data-bonded={bond ? "true" : "false"}
+      className="rounded-xl border bg-background px-4 py-3 transition-colors hover:border-brand/40 hover:bg-accent/40"
+    >
+      {/* One row on sm+ (compact, action right-aligned); stacked on phones so the name is not truncated and the
+          id does not wrap under the button. */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <div className="truncate text-sm font-medium">{room.name || "Unnamed room"}</div>
+            {expandable && (
+              <button
+                type="button"
+                onClick={() => setOpen((v) => !v)}
+                aria-expanded={open}
+                aria-label={open ? "Hide room details" : "Show room details"}
+                data-testid="discover-room-toggle"
+                className="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                <ChevronDown
+                  className={cn("size-4 motion-safe:transition-transform motion-safe:duration-150", open && "rotate-180")}
+                  aria-hidden="true"
+                />
+              </button>
+            )}
+          </div>
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground">
+              {short(room.roomId, 8)}
+              <CopyIconButton value={room.roomId} label="room id" />
+            </span>
+            {bond ? <BondToEnterPill /> : <BucketBadge tier={room.anonTier} bucket={room.memberBucket} compact />}
+          </div>
+          {/* Collapsed: a one-line description preview, so the row hints at content without the full height. */}
+          {room.description && !open && (
+            <p className="mt-1.5 line-clamp-1 text-[13px] leading-relaxed text-muted-foreground" data-testid="discover-room-preview">
+              {room.description}
+            </p>
+          )}
+          {/* Expanded: the full description + the bond requirement. Rendered only when open (so a bond room's
+              focusable requirement links are never hidden in the tab order), with a motion-safe fade-in. */}
+          {expandable && open && (
+            <div className="motion-safe:animate-fade-in" data-testid="discover-room-detail">
+              {room.description && (
+                <p className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground">{room.description}</p>
+              )}
+              {bond && <BondRequirementBox bond={bond} />}
+            </div>
+          )}
+        </div>
+        <div className="shrink-0 self-start">
+          {isOwn ? (
+            <OwnRoomLink roomId={room.roomId} />
+          ) : bond ? (
+            <BondCreateLink roomId={room.roomId} />
+          ) : (
+            <JoinButton roomId={room.roomId} state={state} />
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -190,6 +276,10 @@ export default function Discover() {
   // no wallet address is sent; we only read what was stored when you requested/refreshed in Membership.
   const { connected, address } = useWallet();
   const statusByRoom = useMemo(() => (connected ? joinRequestStates(address) : {}), [connected, address]);
+
+  // Search + "Show more" over the listed rooms (the directory can be long). The search box only shows past a
+  // small threshold; typing filters by name/id/description and resets to the first page.
+  const list = useRoomList(d.rooms, directoryRoomText, { pageSize: 8 });
 
   // Mark a directory card that is one of YOUR rooms by cross-referencing the wallet's owned room ids. Unlike
   // the local request-history read above, this DOES send your address to the backend (to read the rooms you
@@ -252,7 +342,19 @@ export default function Discover() {
             never exact numbers, and the directory never shows who opened a document or when.
           </p>
 
-          <div className="mt-5">
+          {/* Search the listed rooms (shown only once there are enough to need it). */}
+          {!d.error && d.rooms.length > 0 && list.showSearch && (
+            <div className="mt-4">
+              <RoomSearch
+                value={list.query}
+                onChange={list.setQuery}
+                placeholder="Search rooms by name or id"
+                testId="discover-search"
+              />
+            </div>
+          )}
+
+          <div className="mt-4">
             {d.loading && d.rooms.length === 0 ? (
               <DirectoryListSkeleton testId="discover-list-skeleton" />
             ) : d.error ? (
@@ -263,54 +365,31 @@ export default function Discover() {
               <p className="text-sm text-muted-foreground" data-testid="discover-empty">
                 No rooms are listed yet. A room owner can list a room from the Membership tab.
               </p>
+            ) : list.matched.length === 0 ? (
+              <p className="text-sm text-muted-foreground" data-testid="discover-search-empty">
+                No rooms match your search. Try a name or part of a room id.
+              </p>
             ) : (
-              <div className="space-y-2.5" data-testid="discover-list">
-                {d.rooms.map((r) => {
-                  const isOwn = ownedRooms.has(r.roomId.toLowerCase());
-                  // A TRUE bond-only room: show the bond requirement + a "Create Bonded Access" action instead
-                  // of a member bucket + request-to-join. Owners still see "Your room".
-                  const bond = r.bond && r.bond.bondOpen ? r.bond : null;
-                  return (
-                    <div
+              <>
+                <div className="space-y-2.5" data-testid="discover-list">
+                  {list.visible.map((r) => (
+                    <DirectoryRoomCard
                       key={r.roomId}
-                      data-testid="discover-room"
-                      data-own={isOwn ? "true" : "false"}
-                      data-bonded={bond ? "true" : "false"}
-                      className="rounded-xl border px-4 py-3 transition-colors hover:border-brand/30 hover:bg-accent/30"
-                    >
-                      {/* One row on sm+ (compact, action right-aligned); stacked on phones so the name is not
-                          truncated and the id does not wrap under the button. */}
-                      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-3">
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-sm font-medium">{r.name || "Unnamed room"}</div>
-                          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
-                            <span className="inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground">
-                              {short(r.roomId, 8)}
-                              <CopyIconButton value={r.roomId} label="room id" />
-                            </span>
-                            {bond ? <BondToEnterPill /> : <BucketBadge tier={r.anonTier} bucket={r.memberBucket} compact />}
-                          </div>
-                          {r.description && (
-                            <p className="mt-1.5 line-clamp-2 text-[13px] leading-relaxed text-muted-foreground">
-                              {r.description}
-                            </p>
-                          )}
-                          {bond && <BondRequirementBox bond={bond} />}
-                        </div>
-                        <div className="shrink-0 self-start">
-                          {isOwn ? (
-                            <OwnRoomLink roomId={r.roomId} />
-                          ) : bond ? (
-                            <BondCreateLink roomId={r.roomId} />
-                          ) : (
-                            <JoinButton roomId={r.roomId} state={statusByRoom[r.roomId.toLowerCase()]} />
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+                      room={r}
+                      isOwn={ownedRooms.has(r.roomId.toLowerCase())}
+                      state={statusByRoom[r.roomId.toLowerCase()]}
+                    />
+                  ))}
+                </div>
+                <ShowMore
+                  shown={list.shown}
+                  total={list.searching ? list.matched.length : list.total}
+                  remaining={list.remaining}
+                  onMore={list.showMore}
+                  noun={list.searching ? "matching rooms" : "rooms"}
+                  testId="discover-show-more"
+                />
+              </>
             )}
           </div>
 
@@ -368,7 +447,7 @@ export default function Discover() {
             const lisOwn = ownedRooms.has(lr.roomId.toLowerCase());
             return (
               <div
-                className="mt-4 rounded-xl border p-4"
+                className="mt-4 rounded-xl border bg-background p-4"
                 data-testid="discover-lookup-result"
                 data-discoverable={String(lr.discoverable)}
                 data-bonded={lbond ? "true" : "false"}
