@@ -65,6 +65,29 @@ services:
     ports:
       - "4173:4173"
 
+  # ── TTL keep-alive (Bonded Proofs / Bonded Access). Soroban persistent entries (a contract's instance + its
+  #    wasm code) archive when their TTL lapses, and the FIRST tx to touch an archived entry pays a large restore
+  #    rent (bundled into its resource fee) — on the escrow that made a reader's first bond deposit cost ~31 XLM
+  #    vs ~0.03 XLM later. This service bumps the TTL of the escrow + bond/test-token contracts every 6h so they
+  #    never archive, so NO user ever lands on the restore bill. Reuses the backend image (it has the stellar SDK)
+  #    + backend/.env (SIGNER_SECRET, the funded demo deployer; extending TTL is permissionless and changes no
+  #    contract state). VM-internal: no ports, no volumes. The backend image's /health HEALTHCHECK is disabled
+  #    here (this service serves no HTTP). See backend/scripts/keepalive.mjs.
+  keepalive:
+    container_name: zkorage-keepalive
+    build:
+      context: .
+      dockerfile: deploy/backend.Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      KEEPALIVE_INTERVAL_SEC: "21600" # 6h
+      KEEPALIVE_EXTEND_TO: "1000000" # ledgers from now (~60 days at 5s/ledger), capped by the network max
+    command: ["node", "scripts/keepalive.mjs"]
+    healthcheck:
+      disable: true
+
   # ── The 3-keeper threshold-ECIES committee (DR3). Each is one Shamir share + its OWN RPC. VM-internal:
   #    no `ports:` (unreachable from outside the compose network), no Cloudflare route. Distinct RPC per
   #    keeper (SDF / Gateway.fm) so the committee does not trust a single shared oracle. With 3 keepers over
