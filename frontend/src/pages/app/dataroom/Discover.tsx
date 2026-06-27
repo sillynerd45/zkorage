@@ -188,25 +188,25 @@ function BondCreateLink({ roomId }: { roomId: string }) {
   );
 }
 
-// One directory room row. Compact by default: the name, the meta line (id + copy + a bond/bucket pill), a
-// one-line description preview, and the action button. The DESCRIPTION is what expands: a card with a
-// description gets a chevron and expands its full text (clicking anywhere on the card toggles it too); a card
-// with no description has no chevron, since there is nothing to reveal. A bond-only room's requirement is shown
-// inline always (it is the key fact for that room, not a hide-behind detail). Filled bg-background to stand out.
+// One directory room row. The name, the meta line (id + copy + a bond/bucket pill), the description, and the
+// action button. Only a BOND-ONLY room is expandable: a chevron (and a click anywhere on the card) reveals its
+// bond requirement, which is otherwise hidden to keep the row compact. A membership room is never expandable.
+// Filled bg-background to stand out as a nested row on the section card.
 function DirectoryRoomCard({ room, isOwn, state }: { room: DirectoryRoom; isOwn: boolean; state?: EnrollState }) {
   // A TRUE bond-only room shows the bond requirement + a "Create Bonded Access" action instead of a member
   // bucket + request-to-join. Owners still see "Your room".
   const bond = room.bond && room.bond.bondOpen ? room.bond : null;
-  // Only a description is expandable. The chevron + the click-to-expand exist only when there is one.
-  const expandable = Boolean(room.description);
+  // Only a bond-only room expands (to reveal the requirement). A membership room has nothing to hide, so no
+  // chevron and no click-to-expand.
+  const expandable = Boolean(bond);
   const [open, setOpen] = useState(false);
   return (
     <div
       data-testid="discover-room"
       data-own={isOwn ? "true" : "false"}
       data-bonded={bond ? "true" : "false"}
-      // Clicking the card toggles the description, but not when the click lands on an inner control (the copy
-      // button, the action link, or a requirement link), which keep their own behavior. The chevron is the
+      // For a bond-only room, clicking the card toggles the requirement, but not when the click lands on an
+      // inner control (the copy button or the action link), which keep their own behavior. The chevron is the
       // keyboard-accessible toggle; this is a mouse convenience on top of it.
       onClick={(e) => {
         if (!expandable) return;
@@ -229,7 +229,7 @@ function DirectoryRoomCard({ room, isOwn, state }: { room: DirectoryRoom; isOwn:
                 type="button"
                 onClick={() => setOpen((v) => !v)}
                 aria-expanded={open}
-                aria-label={open ? "Hide the description" : "Show the description"}
+                aria-label={open ? "Hide the bond requirement" : "Show the bond requirement"}
                 data-testid="discover-room-toggle"
                 className="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               >
@@ -247,21 +247,19 @@ function DirectoryRoomCard({ room, isOwn, state }: { room: DirectoryRoom; isOwn:
             </span>
             {bond ? <BondToEnterPill /> : <BucketBadge tier={room.anonTier} bucket={room.memberBucket} compact />}
           </div>
-          {/* The description: a one-line preview when collapsed, the full text when expanded (motion-safe fade). */}
+          {/* The description is always shown (it is not the thing that expands). */}
           {room.description && (
-            open ? (
-              <p className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground motion-safe:animate-fade-in" data-testid="discover-room-detail">
-                {room.description}
-              </p>
-            ) : (
-              <p className="mt-1.5 line-clamp-1 text-[13px] leading-relaxed text-muted-foreground" data-testid="discover-room-preview">
-                {room.description}
-              </p>
-            )
+            <p className="mt-1.5 line-clamp-2 text-[13px] leading-relaxed text-muted-foreground">
+              {room.description}
+            </p>
           )}
-          {/* A bond-only room's requirement is the key fact, so it is shown inline always (not hidden behind the
-              chevron, which now only reveals the description). */}
-          {bond && <BondRequirementBox bond={bond} />}
+          {/* A bond-only room's requirement is hidden behind the expand to keep the row compact. Rendered only
+              when open, so its focusable contract/issuer links never sit hidden in the tab order. */}
+          {bond && open && (
+            <div className="motion-safe:animate-fade-in">
+              <BondRequirementBox bond={bond} />
+            </div>
+          )}
         </div>
         <div className="shrink-0 self-start">
           {isOwn ? (
