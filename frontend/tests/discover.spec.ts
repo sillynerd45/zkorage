@@ -164,13 +164,10 @@ test("discover: a bond-only room shows the bond requirement + 'Create Bonded Acc
   await expect(page.getByTestId("discover-bond-pill")).toBeVisible();
   await expect(page.getByTestId("bucket-badge")).toHaveCount(0);
 
-  // The card is compact by default: the bond requirement detail is hidden behind the expand chevron.
-  await expect(page.getByTestId("discover-bond-req")).toHaveCount(0);
-  await page.getByTestId("discover-room-toggle").click();
-
-  // Expanded: the requirement shows amount + token + deadline (with a TIME, not just a date), and the token
-  // contract AND issuer as Stellar Expert links.
+  // The bond requirement is the key fact for the room, so it is shown inline (not hidden behind the chevron):
+  // amount + token + deadline (with a TIME, not just a date), and the token contract AND issuer as links.
   const req = page.getByTestId("discover-bond-req");
+  await expect(req).toBeVisible();
   await expect(req).toContainText("100 TUSD");
   await expect(req).toContainText("locked until");
   await expect(req).toContainText(/:\d{2}/); // the deadline includes the time (hh:mm)
@@ -324,29 +321,44 @@ test("discover: search filters and 'Show more' paginates a long directory", asyn
   await expect(page.getByTestId("discover-room")).toHaveCount(0);
 });
 
-test("discover: a room card is compact and expands to show its details", async ({ page }) => {
+test("discover: the description expands on chevron OR a card-body click; no description means no chevron", async ({ page }) => {
   const fulfill = (body: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
   await page.route("**/dataroom/directory", (r) => r.fulfill(fulfill({
-    count: 1, dataroomId: "",
-    rooms: [{ roomId: LISTED1, name: "Series A data room", description: "Full diligence pack for the Series A round.", memberBucket: "5-19", anonTier: "ok", listedAt: 1 }],
+    count: 2, dataroomId: "",
+    rooms: [
+      { roomId: LISTED1, name: "Series A data room", description: "Full diligence pack for the Series A round.", memberBucket: "5-19", anonTier: "ok", listedAt: 2 },
+      { roomId: LISTED2, name: "Plain room", description: null, memberBucket: "5-19", anonTier: "ok", listedAt: 1 },
+    ],
   })));
   await page.route("**/dataroom/rooms?owner=**", (r) => r.fulfill(fulfill({ owner: "", count: 0, dataroomId: "", rooms: [] })));
   await page.goto("/app/dataroom/discover");
 
+  const withDesc = page.getByTestId("discover-room").filter({ hasText: "Series A data room" });
+  const noDesc = page.getByTestId("discover-room").filter({ hasText: "Plain room" });
+
+  // The no-description room has NO chevron (nothing to reveal); the described room has one.
+  await expect(noDesc.getByTestId("discover-room-toggle")).toHaveCount(0);
+  await expect(withDesc.getByTestId("discover-room-toggle")).toBeVisible();
+
   // Collapsed by default: a one-line preview shows, the full detail is not in the DOM.
-  await expect(page.getByTestId("discover-room-preview")).toBeVisible();
-  await expect(page.getByTestId("discover-room-detail")).toHaveCount(0);
+  await expect(withDesc.getByTestId("discover-room-preview")).toBeVisible();
+  await expect(withDesc.getByTestId("discover-room-detail")).toHaveCount(0);
 
-  // Expand: the full detail appears (and the preview is replaced).
-  await page.getByTestId("discover-room-toggle").click();
-  await expect(page.getByTestId("discover-room-detail")).toBeVisible();
-  await expect(page.getByTestId("discover-room-detail")).toContainText("Full diligence pack");
-  await expect(page.getByTestId("discover-room-preview")).toHaveCount(0);
+  // Clicking the card BODY (the name, not the chevron) expands the description.
+  await withDesc.getByText("Series A data room").click();
+  await expect(withDesc.getByTestId("discover-room-detail")).toBeVisible();
+  await expect(withDesc.getByTestId("discover-room-detail")).toContainText("Full diligence pack");
+  await expect(withDesc.getByTestId("discover-room-preview")).toHaveCount(0);
 
-  // Collapse again.
-  await page.getByTestId("discover-room-toggle").click();
-  await expect(page.getByTestId("discover-room-detail")).toHaveCount(0);
-  await expect(page.getByTestId("discover-room-preview")).toBeVisible();
+  // The chevron still toggles it closed.
+  await withDesc.getByTestId("discover-room-toggle").click();
+  await expect(withDesc.getByTestId("discover-room-detail")).toHaveCount(0);
+  await expect(withDesc.getByTestId("discover-room-preview")).toBeVisible();
+
+  // Clicking the action button does NOT toggle (it navigates / does its own thing), so the card stays collapsed.
+  // (Use the room id text, a non-interactive part, to re-open, proving body-click still works after.)
+  await withDesc.getByText("Series A data room").click();
+  await expect(withDesc.getByTestId("discover-room-detail")).toBeVisible();
 });
 
 test("discover: renders dark", async ({ page }) => {
