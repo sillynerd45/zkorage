@@ -6,9 +6,10 @@ eligibility grant** — and only via the threshold, so **no single server ever h
 
 Each keyper is a tiny, independent service that:
 - holds **one** Shamir share of each document's `K` (information-theoretically blind to `K` on its own);
-- on `/share`, **independently reads the DR2 grant from its own Soroban RPC** (`is_granted` + `get_grant`),
-  and only if the requester holds a live grant does it **ECIES-seal its share to the proof-bound
-  `recipient_pub`** (read from chain, never from the request) and return it.
+- on `/share`, **independently reads the per-document admission from its own Soroban RPC** (`is_doc_admitted`,
+  which resolves membership OR a bond-only grant), and only if the requester is admitted does it **ECIES-seal
+  its share to the proof-bound `recipient_pub`** the on-chain admission recorded (`admission_recipient_pub`,
+  read from chain, never from the request) and return it.
 
 A non-granted caller gets nothing (403); a released share is decryptable only by the holder of the recipient
 secret the eligibility proof bound; fewer than `t` keypers cannot reconstruct `K`.
@@ -26,7 +27,7 @@ secret the eligibility proof bound; fewer than `t` keypers cannot reconstruct `K
 - `POST /deal` (dealer-only, `Authorization: Bearer $DEAL_TOKEN`) `{ room_id, doc_id, keyper_index, share_y }`
   → stores this keyper's share. 401 without the token; 400 if `keyper_index` ≠ this keyper.
 - `POST /share` (public) `{ room_id, doc_id, accessor }` → `{ keyper_index, eph_pub, ct, tag, recipient_pub }`
-  iff `is_granted` is true; 403 if not granted; 404 if no share held; 400 on malformed hex.
+  iff `is_doc_admitted` is true; 403 if not admitted; 404 if no share held; 400 on malformed hex.
 
 ## Run the 3-keyper committee (demo: 3 local processes)
 ```bash
@@ -52,9 +53,10 @@ npx tsx scripts/dr3-committee-selftest.ts   # drives the 3 live keypers against 
   DKG removes even that — the documented hardening path.
 - **1 malicious keyper:** a corrupted share yields a wrong `K` → AES-GCM rejects; the recipient tries the
   other 2-of-3 pairs and the all-honest pair recovers `K` (the on-chain `sha256(K)` commitment selects it).
-- **`/share` is a public oracle (by design):** it is unauthenticated and confirms grant-existence + the
-  proof-bound `recipient_pub` for any `accessor` — but that is *already public on-chain* (`get_grant`), and a
-  released share is decryptable only by the holder of the recipient secret. It reveals **no identity** (DR2
+- **`/share` is a public oracle (by design):** it is unauthenticated and confirms admission-existence + the
+  proof-bound `recipient_pub` for any `accessor` — but that is *already public on-chain*
+  (`admission_recipient_pub`), and a released share is decryptable only by the holder of the recipient secret.
+  It reveals **no identity** (DR2
   anonymity holds). **Hardening (env-gated, both off by default so the local demo + selftest are unchanged):**
   `SHARE_RATE_PER_MIN` caps `/share` per IP (it triggers two RPC simulates per call → a spray costs the
   keyper's RPC quota) and `KEYPER_ALLOWED_ORIGINS` restricts browser CORS to a known origin allowlist
