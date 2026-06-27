@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
-import { Callout, CopyIconButton } from "@/components/app/dataroom/kit";
+import { Callout, CopyIconButton, DirectoryListSkeleton, RefreshBar } from "@/components/app/dataroom/kit";
 import { BondRequirementDetail } from "@/components/app/dataroom/BondRequirementDetail";
 import { getMyRooms, type AnonTier, type DirectoryBond, type EnrollState } from "@/lib/api";
 
@@ -241,6 +241,9 @@ export default function Discover() {
             <h2 className="flex items-center gap-2 text-base font-semibold tracking-tight">
               <Compass className="size-5 text-brand" aria-hidden="true" />
               Public directory
+              {/* A thin warm-refresh signal while cached rooms refresh in the background (cold loads show the
+                  skeleton below instead). */}
+              <RefreshBar active={d.refreshing} />
             </h2>
             <span className="text-[11px] uppercase tracking-wide text-brand">opt-in</span>
           </div>
@@ -250,10 +253,8 @@ export default function Discover() {
           </p>
 
           <div className="mt-5">
-            {d.loading ? (
-              <p className="text-sm text-muted-foreground" data-testid="discover-loading">
-                Loading the directory…
-              </p>
+            {d.loading && d.rooms.length === 0 ? (
+              <DirectoryListSkeleton testId="discover-list-skeleton" />
             ) : d.error ? (
               <p className="text-sm text-destructive" data-testid="discover-error">
                 {d.error}

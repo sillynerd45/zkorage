@@ -258,6 +258,27 @@ test("discover: looking up your own private room by id offers 'Your room', not r
   await expect(result.getByTestId("discover-join")).toHaveCount(0);
 });
 
+test("discover: shows a shimmer skeleton while the directory loads (cold path)", async ({ page }) => {
+  // Delay the directory read so the cold-load skeleton is observable before the list paints. A fresh page has
+  // no module cache, so this is the cold path; a warm reload would show the thin refresh bar instead.
+  const fulfill = (body: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+  await page.route("**/dataroom/directory", async (r) => {
+    await new Promise((res) => setTimeout(res, 700));
+    return r.fulfill(fulfill({
+      count: 1, dataroomId: "",
+      rooms: [{ roomId: LISTED1, name: "Series A data room", description: "Diligence pack for the round.", memberBucket: "5-19", anonTier: "ok", listedAt: 2 }],
+    }));
+  });
+  await page.route("**/dataroom/rooms?owner=**", (r) => r.fulfill(fulfill({ owner: "", count: 0, dataroomId: "", rooms: [] })));
+
+  await page.goto("/app/dataroom/discover");
+  // cold path: the shimmer skeleton shows while loading (the old plain "Loading…" text is gone)
+  await expect(page.getByTestId("discover-list-skeleton")).toBeVisible();
+  // then the real list swaps in and the skeleton is gone
+  await expect(page.getByTestId("discover-room")).toHaveCount(1, { timeout: 30_000 });
+  await expect(page.getByTestId("discover-list-skeleton")).toHaveCount(0);
+});
+
 test("discover: renders dark", async ({ page }) => {
   await page.addInitScript(DARK);
   await stubs(page);
