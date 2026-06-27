@@ -1,6 +1,6 @@
 {
   "name": "zkorage-sdk",
-  "version": "0.19.1",
+  "version": "0.19.2",
   "description": "Read-only, trust-minimized TypeScript SDK for the zkorage verifiable-claims engine on Soroban (Proof-of-Reserves + KYC selective-disclosure gate + KYC∧not-sanctioned compliance gate + confidential payroll proof-of-income with auditor view-key + fundraising composition + DR1 Confidential Data Room with a key-free recipient opener). Query + re-verify claims directly against the public chain. No keys.",
   "type": "module",
   "main": "dist/index.js",
