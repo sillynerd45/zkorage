@@ -664,11 +664,8 @@ function BondDeposit({ s }: { s: ReturnType<typeof useSharedOpen> }) {
         {req.bondOpen ? (
           <>
             You lock once: this bond also opens every other room with the same requirement, and your standalone
-            Bonded Access, with no new deposit. Locking is public (your wallet, the token, and the amount show
-            on-chain); opening is private to the room owner and to anyone reading the chain (the proof hides which
-            bond is yours, among the qualifying bonders). Your bonded-access identity is one pseudonym per wallet,
-            shared across every room with this requirement, so the keeper committee and our self-hosted prover
-            (which both see more than the public chain does) could correlate your opens across rooms.
+            Bonded Access, with no new deposit. Locking is public: your wallet, the token, and the amount show
+            on-chain. Opening a document later is private: the proof hides which bond is yours.
           </>
         ) : (
           <>
