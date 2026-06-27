@@ -164,7 +164,11 @@ test("discover: a bond-only room shows the bond requirement + 'Create Bonded Acc
   await expect(page.getByTestId("discover-bond-pill")).toBeVisible();
   await expect(page.getByTestId("bucket-badge")).toHaveCount(0);
 
-  // The requirement is shown: amount + token + deadline (with a TIME, not just a date), and the token
+  // The card is compact by default: the bond requirement detail is hidden behind the expand chevron.
+  await expect(page.getByTestId("discover-bond-req")).toHaveCount(0);
+  await page.getByTestId("discover-room-toggle").click();
+
+  // Expanded: the requirement shows amount + token + deadline (with a TIME, not just a date), and the token
   // contract AND issuer as Stellar Expert links.
   const req = page.getByTestId("discover-bond-req");
   await expect(req).toContainText("100 TUSD");
@@ -277,6 +281,72 @@ test("discover: shows a shimmer skeleton while the directory loads (cold path)",
   // then the real list swaps in and the skeleton is gone
   await expect(page.getByTestId("discover-room")).toHaveCount(1, { timeout: 30_000 });
   await expect(page.getByTestId("discover-list-skeleton")).toHaveCount(0);
+});
+
+test("discover: search filters and 'Show more' paginates a long directory", async ({ page }) => {
+  const fulfill = (body: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+  // 10 listed rooms; one named so a search can single it out (it sits on page 2, so this also proves search
+  // works across the FULL set, not just the visible page).
+  const rooms = Array.from({ length: 10 }, (_, i) => ({
+    roomId: (i + 1).toString(16).padStart(64, "0"),
+    name: i === 9 ? "Acme special room" : `Series room ${i}`,
+    description: null,
+    memberBucket: "5-19",
+    anonTier: "ok",
+    listedAt: 10 - i,
+  }));
+  await page.route("**/dataroom/directory", (r) => r.fulfill(fulfill({ count: rooms.length, dataroomId: "", rooms })));
+  await page.route("**/dataroom/rooms?owner=**", (r) => r.fulfill(fulfill({ owner: "", count: 0, dataroomId: "", rooms: [] })));
+  await page.goto("/app/dataroom/discover");
+
+  // The search box appears (list > 6), and only the first page (8 of 10) renders.
+  await expect(page.getByTestId("discover-search-input")).toBeVisible();
+  await expect(page.getByTestId("discover-room")).toHaveCount(8);
+  await expect(page.getByTestId("discover-show-more-bar")).toContainText("Showing 8 of 10 rooms");
+
+  // Show more reveals the rest; the bar then disappears.
+  await page.getByTestId("discover-show-more-btn").click();
+  await expect(page.getByTestId("discover-room")).toHaveCount(10);
+  await expect(page.getByTestId("discover-show-more-bar")).toHaveCount(0);
+
+  // Search filters the full set (case-insensitive) to the matching room, even though it was on page 2.
+  await page.getByTestId("discover-search-input").fill("acme");
+  await expect(page.getByTestId("discover-room")).toHaveCount(1);
+  await expect(page.getByTestId("discover-room")).toContainText("Acme special room");
+
+  // Clearing the search restores the list and resets to the first page (8 of 10).
+  await page.getByTestId("discover-search-clear").click();
+  await expect(page.getByTestId("discover-room")).toHaveCount(8);
+
+  // A search with no match shows the empty-result line.
+  await page.getByTestId("discover-search-input").fill("zzz-no-such-room");
+  await expect(page.getByTestId("discover-search-empty")).toBeVisible();
+  await expect(page.getByTestId("discover-room")).toHaveCount(0);
+});
+
+test("discover: a room card is compact and expands to show its details", async ({ page }) => {
+  const fulfill = (body: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+  await page.route("**/dataroom/directory", (r) => r.fulfill(fulfill({
+    count: 1, dataroomId: "",
+    rooms: [{ roomId: LISTED1, name: "Series A data room", description: "Full diligence pack for the Series A round.", memberBucket: "5-19", anonTier: "ok", listedAt: 1 }],
+  })));
+  await page.route("**/dataroom/rooms?owner=**", (r) => r.fulfill(fulfill({ owner: "", count: 0, dataroomId: "", rooms: [] })));
+  await page.goto("/app/dataroom/discover");
+
+  // Collapsed by default: a one-line preview shows, the full detail is not in the DOM.
+  await expect(page.getByTestId("discover-room-preview")).toBeVisible();
+  await expect(page.getByTestId("discover-room-detail")).toHaveCount(0);
+
+  // Expand: the full detail appears (and the preview is replaced).
+  await page.getByTestId("discover-room-toggle").click();
+  await expect(page.getByTestId("discover-room-detail")).toBeVisible();
+  await expect(page.getByTestId("discover-room-detail")).toContainText("Full diligence pack");
+  await expect(page.getByTestId("discover-room-preview")).toHaveCount(0);
+
+  // Collapse again.
+  await page.getByTestId("discover-room-toggle").click();
+  await expect(page.getByTestId("discover-room-detail")).toHaveCount(0);
+  await expect(page.getByTestId("discover-room-preview")).toBeVisible();
 });
 
 test("discover: renders dark", async ({ page }) => {

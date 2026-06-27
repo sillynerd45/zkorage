@@ -8,7 +8,7 @@ import { Card } from "@/components/ui/card";
 import { Verdict } from "@/components/app/blocks";
 import { DecryptedFile } from "@/components/app/DecryptedFile";
 import { AnonymityMeter, ANON_FLOOR } from "@/components/app/dataroom/AnonymityMeter";
-import { BondCount, BOND_FLOOR, Callout, CopyIconButton, SectionLabel } from "@/components/app/dataroom/kit";
+import { actionButtonHover, BondCount, BOND_FLOOR, Callout, CopyIconButton, DocListSkeleton, SectionLabel } from "@/components/app/dataroom/kit";
 import { BondRequirementDetail } from "@/components/app/dataroom/BondRequirementDetail";
 import { plainAmount } from "@/lib/bonded/tokens";
 import { fmtAmount, toBaseUnits } from "@/lib/api";
@@ -72,7 +72,7 @@ function OpenStatus({ s }: { s: ReturnType<typeof useSharedOpen> }) {
             shuffled batch so the room cannot tell when you acted.
           </p>
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" onClick={s.setupAccess} data-testid="access-setup-btn">Set up access</Button>
+            <Button size="sm" onClick={s.setupAccess} data-testid="access-setup-btn" className={actionButtonHover}>Set up access</Button>
             <Button size="sm" variant="ghost" onClick={s.dismiss} data-testid="access-dismiss">Not now</Button>
           </div>
         </div>
@@ -129,7 +129,7 @@ function OpenStatus({ s }: { s: ReturnType<typeof useSharedOpen> }) {
             on the room's list, without revealing which bond or which member.
           </p>
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" onClick={s.setupBondAccess} data-testid="access-bond-prove">Prove access</Button>
+            <Button size="sm" onClick={s.setupBondAccess} data-testid="access-bond-prove" className={actionButtonHover}>Prove access</Button>
             <Button size="sm" variant="ghost" onClick={s.dismiss} data-testid="access-dismiss">Not now</Button>
           </div>
         </div>
@@ -325,7 +325,7 @@ export default function OpenShared() {
                     onClick={s.setupRoomAccess}
                     disabled={s.roomDocs.length === 0 || bondDeadlinePassed}
                     data-testid="access-bond-setup"
-                    className="w-full sm:w-auto"
+                    className={cn("w-full sm:w-auto", actionButtonHover)}
                   >
                     <KeyRound aria-hidden="true" /> Set up access
                   </Button>
@@ -342,7 +342,17 @@ export default function OpenShared() {
           )}
 
           {s.docsLoading && s.roomDocs.length === 0 ? (
-            <p className="text-sm text-muted-foreground" data-testid="access-docs-loading">Loading documents…</p>
+            <>
+              {isBondRoom && (
+                <SectionLabel className="mb-2">
+                  <span className="inline-flex items-center gap-1.5">
+                    <FolderOpen className="size-4" aria-hidden="true" />
+                    Documents in this room
+                  </span>
+                </SectionLabel>
+              )}
+              <DocListSkeleton testId="access-docs-skeleton" label="Loading the room's documents" />
+            </>
           ) : s.roomDocs.length === 0 ? (
             <p className="text-sm text-muted-foreground" data-testid="access-no-docs">This room has no documents yet.</p>
           ) : (
@@ -629,7 +639,7 @@ function BondDeposit({ s }: { s: ReturnType<typeof useSharedOpen> }) {
       )}
 
       <div className="flex flex-wrap gap-2">
-        <Button size="sm" onClick={() => base && void s.lockBond(base)} disabled={!enough || s.bondLocking} data-testid="access-bond-lock">
+        <Button size="sm" onClick={() => base && void s.lockBond(base)} disabled={!enough || s.bondLocking} data-testid="access-bond-lock" className={actionButtonHover}>
           {s.bondLocking ? "Locking…" : "Lock bond and continue"}
         </Button>
         <Button size="sm" variant="ghost" onClick={s.dismiss} data-testid="access-bond-dismiss">Not now</Button>

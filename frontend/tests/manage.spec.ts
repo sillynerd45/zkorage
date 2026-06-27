@@ -348,3 +348,39 @@ test("manage: skeletons while loading, then the selection persists across a tab 
   await expect(page.getByTestId("manage-detail-skeleton")).toHaveCount(0);
   await expect(page.getByTestId("manage-owner-room").first()).toHaveAttribute("aria-pressed", "true");
 });
+
+// Search + "Show more" over the owned-room picker, for an owner with many rooms. The search box appears past
+// the threshold, the first page is capped, search filters the full set, and selecting a filtered room loads it.
+test("manage: search + 'Show more' over many owned rooms; selecting a filtered room loads it", async ({ page }) => {
+  await page.addInitScript(mock);
+  await stubsCommon(page);
+  await page.route("**/dataroom/bond-requirement/**", (r) => (r.request().method() === "GET" ? r.fulfill(json({ found: false, bondOpen: false })) : r.continue()));
+  // 14 owned rooms; "Project Phoenix" sits past the first page so search must scan the whole set.
+  const rooms = Array.from({ length: 14 }, (_, i) => ({
+    roomId: (i + 1).toString(16).padStart(64, "0"),
+    label: i === 13 ? "Project Phoenix" : `Board room ${i}`,
+    owner: ADDR, docCount: 0, ledger: 1, visibility: "private", name: null, description: null,
+  }));
+  await page.route("**/dataroom/rooms?owner=**", (r) => r.fulfill(json({ owner: ADDR, count: rooms.length, dataroomId: "", rooms })));
+  await page.goto("/app/dataroom/manage");
+
+  // 14 rooms > threshold 6 -> the search box shows; the first page caps at 12, with a Show more for the rest.
+  await expect(page.getByTestId("manage-search-input")).toBeVisible();
+  await expect(page.getByTestId("manage-owner-room")).toHaveCount(12);
+  await expect(page.getByTestId("manage-show-more-bar")).toContainText("Showing 12 of 14 rooms");
+
+  // Search filters the whole set (Phoenix was on page 2), then selecting the match loads the room's settings.
+  await page.getByTestId("manage-search-input").fill("phoenix");
+  await expect(page.getByTestId("manage-owner-room")).toHaveCount(1);
+  await expect(page.getByTestId("manage-owner-room")).toContainText("Project Phoenix");
+  await page.getByTestId("manage-owner-room").click();
+  await expect(page.getByTestId("manage-access-model")).toBeVisible({ timeout: 15_000 });
+
+  // Clearing restores the capped first page; a no-match search shows the empty line.
+  await page.getByTestId("manage-search-clear").click();
+  await expect(page.getByTestId("manage-owner-room")).toHaveCount(12);
+  await page.getByTestId("manage-search-input").fill("no-such-room-here");
+  await expect(page.getByTestId("manage-search-empty")).toBeVisible();
+  // The selected room's detail persists below even when the search hides its chip.
+  await expect(page.getByTestId("manage-access-model")).toBeVisible();
+});

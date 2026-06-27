@@ -8,13 +8,26 @@ import {
   Copy,
   FolderLock,
   Loader2,
+  Search,
   Star,
   Users,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import type { CommitteeInfoResp } from "@/lib/api";
+
+// A subtle hover for room-list ACTION buttons (Create Bonded Access, Request to join, Open, Your room, Set up
+// access): a small lift plus a shadow, motion-safe so reduced motion shows no movement. Apply on top of
+// buttonVariants(...) for Link-styled buttons (via cn()), or as className on a <Button>. Scoped on purpose, so
+// the rest of the app's buttons keep their plain hover. The base `transition` (not transition-colors) keeps the
+// color, transform, and shadow animating together.
+export const actionButtonHover =
+  "motion-safe:transition motion-safe:duration-150 motion-safe:ease-out " +
+  "motion-safe:hover:-translate-y-0.5 hover:shadow-md motion-safe:active:translate-y-0";
 
 // Data-Room UI kit. These molecules drive the Data Room pages, plus TaskCard + GroupLabel are reused by the
 // Bonded Proofs Overview (both are route-agnostic launchers). The rest of the app (Home + the five proof
@@ -425,5 +438,80 @@ export function CurrentBadge({ testId }: { testId?: string }) {
     >
       Current
     </span>
+  );
+}
+
+// A search box for a room list (Discover directory, the owner room pickers). The caller's useRoomList does the
+// filtering by name + id + description + label; this is the controlled input with a leading icon and a clear
+// button when non-empty. Shown only when a list is long enough to need it. `testId` is prefixed per surface.
+export function RoomSearch({
+  value,
+  onChange,
+  placeholder = "Search rooms by name or id",
+  testId = "room-search",
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  testId?: string;
+}) {
+  return (
+    <div className="relative">
+      <Search
+        className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+        aria-hidden="true"
+      />
+      <Input
+        type="search"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        aria-label="Search rooms"
+        data-testid={`${testId}-input`}
+        className="pl-9 pr-9"
+      />
+      {value && (
+        <button
+          type="button"
+          onClick={() => onChange("")}
+          aria-label="Clear search"
+          data-testid={`${testId}-clear`}
+          className="absolute right-2 top-1/2 grid size-6 -translate-y-1/2 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        >
+          <X className="size-4" aria-hidden="true" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+// "Show more" pagination for a room list: a button that reveals the next page, plus an honest count. Renders
+// nothing once everything is visible. The count noun changes to "matching rooms" while a search is active so
+// the line reads truthfully (the caller passes the right total + noun).
+export function ShowMore({
+  shown,
+  total,
+  remaining,
+  onMore,
+  noun = "rooms",
+  testId = "show-more",
+}: {
+  shown: number;
+  total: number;
+  remaining: number;
+  onMore: () => void;
+  noun?: string;
+  testId?: string;
+}) {
+  if (remaining <= 0) return null;
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-3" data-testid={`${testId}-bar`}>
+      <Button variant="outline" size="sm" onClick={onMore} data-testid={`${testId}-btn`}>
+        Show more
+      </Button>
+      <span className="text-xs text-muted-foreground">
+        Showing {shown} of {total} {noun}
+      </span>
+    </div>
   );
 }
