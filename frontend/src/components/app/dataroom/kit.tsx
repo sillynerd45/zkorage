@@ -359,6 +359,38 @@ export function DocListSkeleton({ label = "Loading documents", testId }: { label
   );
 }
 
+// A placeholder for the public directory list, matching the real `rounded-xl border px-4 py-3` room card (a
+// name line, a meta line with a mono id + a pill, an optional description line, and a right-aligned action).
+// Three rows read as "a short list is loading"; the real count corrects on swap. Used by Discover > Directory
+// while the listed rooms load (cold path). Widths vary so it does not look like a striped pattern.
+const DIR_SKELETON_W = [
+  { name: "w-40", desc: "w-3/5" },
+  { name: "w-32", desc: "w-1/2" },
+  { name: "w-44", desc: "w-2/3" },
+] as const;
+export function DirectoryListSkeleton({ label = "Loading the directory", testId }: { label?: string; testId?: string }) {
+  return (
+    <div className="space-y-2.5" aria-busy="true" data-testid={testId}>
+      <span className="sr-only" role="status">{label}</span>
+      {DIR_SKELETON_W.map(({ name, desc }, i) => (
+        <div key={`dir-${i}`} className="rounded-xl border border-border/70 px-4 py-3">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-3">
+            <div className="min-w-0 flex-1">
+              <Skeleton className={cn("h-3.5 rounded", name)} />
+              <div className="mt-2 flex items-center gap-2">
+                <Skeleton className="h-3 w-24 rounded" />
+                <Skeleton className="h-5 w-24 rounded-full" />
+              </div>
+              <Skeleton className={cn("mt-2 h-3 rounded", desc)} />
+            </div>
+            <Skeleton className="h-8 w-32 shrink-0 self-start rounded-md" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // A background-refresh indicator shown beside a section label while already-painted (cached) content refreshes.
 // The content stays live and interactive; this is the only signal a refresh is in flight, never a dim or
 // overlay. It renders NOTHING when idle (it sits at the end of its label line, so nothing reflows) so there is

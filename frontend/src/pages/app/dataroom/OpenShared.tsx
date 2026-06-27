@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { ArrowRight, CheckCircle2, Clock, FileText, FolderOpen, Info, KeyRound, Loader2, Lock, RefreshCw, ShieldCheck } from "lucide-react";
 import { useSharedOpen, type SyncState } from "@/lib/hooks/useSharedOpen";
@@ -209,6 +209,25 @@ export default function OpenShared() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paramRoom]);
 
+  // The selected-room card renders directly under the intro (above the rooms list), so a deep link like
+  // "Create Bonded Access" lands with it in view. Keep it in view when the selection changes (deep-link arrival
+  // or an in-list click). `nearest` does nothing if it is already on screen (no jarring jump) and honors
+  // reduced motion.
+  const detailRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!s.room) return;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    detailRef.current?.scrollIntoView({ block: "nearest", behavior: reduce ? "auto" : "smooth" });
+  }, [s.room]);
+
+  // A bond-only room's document list unlocks once the room's access has landed (the first successful open), and
+  // STAYS unlocked while the reader switches documents. A switch briefly re-enters "checking"/"opening", and
+  // the list must not flash back to "Locked" (with a "set up access" note) for someone already admitted. Reset
+  // when the selected room changes.
+  const [roomOpened, setRoomOpened] = useState(false);
+  useEffect(() => { setRoomOpened(false); }, [s.room]);
+  useEffect(() => { if (s.phase === "opened") setRoomOpened(true); }, [s.phase]);
+
   if (!s.connected) {
     return (
       <Card className="rounded-2xl border-brand/40 p-6" data-testid="access-connect-prompt">
@@ -235,6 +254,12 @@ export default function OpenShared() {
   // A past deadline can never be satisfied (a qualifying lock needs unlock_time >= deadline AND now < unlock),
   // so a new reader cannot get in; surface it on the panel instead of only after they try.
   const bondDeadlinePassed = isBondRoom && (s.roomBond?.deadline ?? 0) * 1000 <= Date.now();
+  // For a bond-only room the per-document Open only works once room access has landed. Until then the document
+  // list is a read-only preview (a "Locked" pill, no Open button); the one room-level "Set up access" action
+  // drives the flow, so a per-doc Open would mislead. Once the room has opened it stays unlocked (sticky, so a
+  // document switch does not flash back to "Locked"). A membership room is always "unlocked" (its per-doc Open
+  // runs the per-document access check itself).
+  const docsUnlocked = !isBondRoom || roomOpened;
 
   return (
     <div data-testid="access-card" className="space-y-5">
@@ -244,6 +269,139 @@ export default function OpenShared() {
           Open files from rooms you have access to. The file is decrypted in your browser.
         </p>
       </Card>
+
+      {/* The selected room, pinned directly under the intro so a deep link (for example "Create Bonded Access")
+          lands with it in view, above the rooms list. For a bond-only room this names it + shows its Bonded
+          Access requirement and a room-level set-up action; for a membership room it is the document list with
+          per-document Open. */}
+      {s.room && (
+        <Card ref={detailRef} className={cn("rounded-2xl p-6", isBondRoom && "border-success/40")} data-testid="access-room-detail" data-bonded={isBondRoom ? "true" : "false"}>
+          {/* Header: the room NAME (so it is never mistaken for one of your already-accessible rooms) + a
+              Bonded Access badge for a bond-only room, then the room id. */}
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <SectionLabel className="flex-1">
+              <span className="inline-flex items-center gap-1.5">
+                {isBondRoom ? <KeyRound className="size-4 text-success" aria-hidden="true" /> : <FolderOpen className="size-4" aria-hidden="true" />}
+                <span data-testid="access-room-name">{isBondRoom ? `Bonded Access · ${roomName}` : roomName}</span>
+              </span>
+            </SectionLabel>
+            <code className="font-mono text-xs text-muted-foreground" title={s.room}>{short(s.room, 8)}</code>
+            <CopyIconButton value={s.room} label="room id" />
+          </div>
+
+          {/* Bond-only room: the access panel. The requirement is shown compact (standout), the live set
+              count gates proving, and ONE room-level action runs lock -> wait -> prove -> open. */}
+          {isBondRoom && s.roomBond?.token && s.roomBond.minAmount && s.roomBond.deadline && (
+            <div className="mb-5 space-y-3" data-testid="access-bond-panel">
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                This room uses Bonded Access. Lock a qualifying bond to open its documents. No approval, no
+                membership, and the owner never learns which bond opened a file.
+              </p>
+              {/* The requirement, compact: amount + token + deadline lead, contract/issuer sit muted on the
+                  second line. The same component the Discover card uses, so the surfaces read alike. */}
+              <div className="rounded-xl border border-success/30 bg-success/5 px-3 py-2.5">
+                <BondRequirementDetail
+                  token={s.roomBond.token}
+                  minAmount={s.roomBond.minAmount}
+                  deadline={s.roomBond.deadline}
+                  meta={s.roomBondMeta}
+                  metaLoading={s.roomBondMetaLoading}
+                  compact
+                  idPrefix="access-bond-req"
+                />
+              </div>
+              {s.phase === "idle" ? (
+                // The action block: the qualifying-bonder count for context, then the primary CTA, then one
+                // line of fine print, each on its own line. A hairline separates it from the requirement above.
+                <div className="flex flex-col items-start gap-2.5 border-t border-border/60 pt-3">
+                  <BondCount count={s.roomBondCount} />
+                  {bondDeadlinePassed && (
+                    <p className="text-sm text-warning" data-testid="access-bond-expired">
+                      This room's bond deadline has passed, so a new qualifying bond can no longer be locked. Ask
+                      the room owner to update the requirement.
+                    </p>
+                  )}
+                  <Button
+                    onClick={s.setupRoomAccess}
+                    disabled={s.roomDocs.length === 0 || bondDeadlinePassed}
+                    data-testid="access-bond-setup"
+                    className="w-full sm:w-auto"
+                  >
+                    <KeyRound aria-hidden="true" /> Set up access
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    You lock a qualifying bond once. Then every document in this room opens.
+                  </p>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-border/70 bg-accent/20 px-3.5 py-3" data-testid="access-status" data-phase={s.phase}>
+                  <OpenStatus s={s} />
+                </div>
+              )}
+            </div>
+          )}
+
+          {s.docsLoading && s.roomDocs.length === 0 ? (
+            <p className="text-sm text-muted-foreground" data-testid="access-docs-loading">Loading documents…</p>
+          ) : s.roomDocs.length === 0 ? (
+            <p className="text-sm text-muted-foreground" data-testid="access-no-docs">This room has no documents yet.</p>
+          ) : (
+            <>
+              {isBondRoom && (
+                <SectionLabel className="mb-2">
+                  <span className="inline-flex items-center gap-1.5">
+                    <FolderOpen className="size-4" aria-hidden="true" />
+                    Documents in this room
+                  </span>
+                </SectionLabel>
+              )}
+              {/* Bond-only room, no access yet: the list is a read-only preview. One line points to the single
+                  room-level action so the per-document rows do not read as openable. */}
+              {isBondRoom && !docsUnlocked && (
+                <p className="mb-2 text-xs text-muted-foreground" data-testid="access-docs-locked-note">
+                  {s.roomDocs.length} document{s.roomDocs.length === 1 ? "" : "s"}. Set up access to open{" "}
+                  {s.roomDocs.length === 1 ? "it" : "them"}.
+                </p>
+              )}
+              <div className="divide-y divide-border/70 rounded-xl border" data-testid="access-doc-list">
+                {s.roomDocs.map((d) => {
+                  const active = s.openDocId === d.doc_id;
+                  return (
+                    <div key={d.doc_id} data-testid="access-doc-row">
+                      <div className="flex items-center gap-3 px-3 py-2.5">
+                        <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate font-mono text-xs">{short(d.doc_id, 8)}</div>
+                          <div className="truncate text-[11px] text-muted-foreground">fingerprint {short(d.content_hash, 6)}</div>
+                        </div>
+                        {docsUnlocked ? (
+                          <Button size="sm" onClick={() => s.open(d.doc_id)} data-testid="access-open" disabled={active && s.phase !== "idle" && s.phase !== "opened" && s.phase !== "error"}>
+                            {active && s.phase === "opened" ? "Opened" : "Open"}
+                          </Button>
+                        ) : (
+                          <span
+                            data-testid="access-doc-locked"
+                            className="inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] text-muted-foreground"
+                          >
+                            <Lock className="size-3" aria-hidden="true" /> Locked
+                          </span>
+                        )}
+                      </div>
+                      {/* For a bond-only room the live status shows at the room level above (one place for the
+                          flow); for a membership / legacy room it shows inline under the document. */}
+                      {!isBondRoom && active && s.phase !== "idle" && (
+                        <div className="border-t border-border/70 bg-accent/20 px-3 py-3" data-testid="access-status" data-phase={s.phase}>
+                          <OpenStatus s={s} />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </Card>
+      )}
 
       {/* Two ways in: the rooms you are already approved for, or a room id someone shared. Both open inline below.
           A LIGHT segmented control (muted track, raised active) so it reads below the filled-pill Documents submenu. */}
@@ -365,107 +523,6 @@ export default function OpenShared() {
             to join.
           </p>
           <ManualOpen onSubmit={s.selectRoom} />
-        </Card>
-      )}
-
-      {/* The selected room. For a bond-only room this names it + shows its Bonded Access requirement and a
-          room-level set-up action; for a membership room it is the document list with per-document Open. */}
-      {s.room && (
-        <Card className={cn("rounded-2xl p-6", isBondRoom && "border-success/40")} data-testid="access-room-detail" data-bonded={isBondRoom ? "true" : "false"}>
-          {/* Header: the room NAME (so it is never mistaken for one of your already-accessible rooms) + a
-              Bonded Access badge for a bond-only room, then the room id. */}
-          <div className="mb-3 flex flex-wrap items-center gap-2">
-            <SectionLabel className="flex-1">
-              <span className="inline-flex items-center gap-1.5">
-                {isBondRoom ? <KeyRound className="size-4 text-success" aria-hidden="true" /> : <FolderOpen className="size-4" aria-hidden="true" />}
-                <span data-testid="access-room-name">{isBondRoom ? `Bonded Access · ${roomName}` : roomName}</span>
-              </span>
-            </SectionLabel>
-            <code className="font-mono text-xs text-muted-foreground" title={s.room}>{short(s.room, 8)}</code>
-            <CopyIconButton value={s.room} label="room id" />
-          </div>
-
-          {/* Bond-only room: the access panel. The requirement is shown in detail (standout), the live set
-              count gates proving, and ONE room-level action runs lock -> wait -> prove -> open. */}
-          {isBondRoom && s.roomBond?.token && s.roomBond.minAmount && s.roomBond.deadline && (
-            <div className="mb-5 space-y-3" data-testid="access-bond-panel">
-              <p className="text-sm leading-relaxed text-muted-foreground">
-                This room uses Bonded Access. Lock a qualifying bond to open its documents. No approval, no
-                membership, and the owner never learns which bond opened a file.
-              </p>
-              <div className="rounded-xl border border-success/30 bg-success/5 p-4">
-                <BondRequirementDetail
-                  token={s.roomBond.token}
-                  minAmount={s.roomBond.minAmount}
-                  deadline={s.roomBond.deadline}
-                  meta={s.roomBondMeta}
-                  metaLoading={s.roomBondMetaLoading}
-                  idPrefix="access-bond-req"
-                />
-              </div>
-              {s.phase === "idle" ? (
-                <div className="space-y-2.5">
-                  <BondCount count={s.roomBondCount} />
-                  {bondDeadlinePassed && (
-                    <p className="text-sm text-warning" data-testid="access-bond-expired">
-                      This room's bond deadline has passed, so a new qualifying bond can no longer be locked. Ask
-                      the room owner to update the requirement.
-                    </p>
-                  )}
-                  <Button onClick={s.setupRoomAccess} disabled={s.roomDocs.length === 0 || bondDeadlinePassed} data-testid="access-bond-setup">
-                    <KeyRound aria-hidden="true" /> Set up access
-                  </Button>
-                </div>
-              ) : (
-                <div className="rounded-xl border border-border/70 bg-accent/20 px-3.5 py-3" data-testid="access-status" data-phase={s.phase}>
-                  <OpenStatus s={s} />
-                </div>
-              )}
-            </div>
-          )}
-
-          {s.docsLoading && s.roomDocs.length === 0 ? (
-            <p className="text-sm text-muted-foreground" data-testid="access-docs-loading">Loading documents…</p>
-          ) : s.roomDocs.length === 0 ? (
-            <p className="text-sm text-muted-foreground" data-testid="access-no-docs">This room has no documents yet.</p>
-          ) : (
-            <>
-              {isBondRoom && (
-                <SectionLabel className="mb-2">
-                  <span className="inline-flex items-center gap-1.5">
-                    <FolderOpen className="size-4" aria-hidden="true" />
-                    Documents in this room
-                  </span>
-                </SectionLabel>
-              )}
-              <div className="divide-y divide-border/70 rounded-xl border" data-testid="access-doc-list">
-                {s.roomDocs.map((d) => {
-                  const active = s.openDocId === d.doc_id;
-                  return (
-                    <div key={d.doc_id} data-testid="access-doc-row">
-                      <div className="flex items-center gap-3 px-3 py-2.5">
-                        <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate font-mono text-xs">{short(d.doc_id, 8)}</div>
-                          <div className="truncate text-[11px] text-muted-foreground">fingerprint {short(d.content_hash, 6)}</div>
-                        </div>
-                        <Button size="sm" onClick={() => s.open(d.doc_id)} data-testid="access-open" disabled={active && s.phase !== "idle" && s.phase !== "opened" && s.phase !== "error"}>
-                          {active && s.phase === "opened" ? "Opened" : "Open"}
-                        </Button>
-                      </div>
-                      {/* For a bond-only room the live status shows at the room level above (one place for the
-                          flow); for a membership / legacy room it shows inline under the document. */}
-                      {!isBondRoom && active && s.phase !== "idle" && (
-                        <div className="border-t border-border/70 bg-accent/20 px-3 py-3" data-testid="access-status" data-phase={s.phase}>
-                          <OpenStatus s={s} />
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </>
-          )}
         </Card>
       )}
 
