@@ -2,14 +2,19 @@ import { useEffect, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { FolderOpen, RefreshCw, Settings, ShieldCheck, UserPlus, Users } from "lucide-react";
 import { useEnroll } from "@/lib/hooks/useEnroll";
+import { useRoomList } from "@/lib/hooks/useRoomList";
 import { short } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { EnrollState } from "@/lib/api";
+import type { EnrollState, MyRoom } from "@/lib/api";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { DataRow, Verdict } from "@/components/app/blocks";
-import { Callout, CopyIconButton, SectionLabel } from "@/components/app/dataroom/kit";
+import { Callout, CopyIconButton, RoomSearch, SectionLabel, ShowMore } from "@/components/app/dataroom/kit";
+
+// The text an owned room is matched against in the Approve picker search (label + name + id + description).
+// Module-level + stable so useRoomList's filter memo does not recompute every render.
+const ownerRoomText = (r: MyRoom) => `${r.label ?? ""} ${r.name ?? ""} ${r.roomId} ${r.description ?? ""}`;
 
 // Membership is split into a submenu (like Documents): Join (request to join + your pending requests) and
 // Approve (owner approves members of rooms they own + sets discovery). One sub-tab shows at a time.
@@ -45,6 +50,9 @@ function StatePill({ state }: { state: EnrollState }) {
 // getting in later stays anonymous (the membership proof hides which member acts).
 export default function Membership() {
   const e = useEnroll();
+  // Search + "Show more" over the rooms you own, used by the Approve picker for when you own many. The selected
+  // room's pending list reads e.ownerRoom, so it persists even when a search filters its chip out of view.
+  const list = useRoomList(e.myRooms, ownerRoomText, { pageSize: 12 });
   const { hash } = useLocation();
   const [tab, setTab] = useState<MemberTab>(() => tabFromHash(hash));
   useEffect(() => setTab(tabFromHash(hash)), [hash]);
@@ -274,23 +282,44 @@ export default function Membership() {
             </p>
           ) : (
             <div className="mt-4 space-y-4">
-              <div className="flex flex-wrap gap-2" data-testid="enroll-my-rooms">
-                {e.myRooms.map((r) => (
-                  <button
-                    key={r.roomId}
-                    onClick={() => e.selectOwnerRoom(r.roomId)}
-                    data-testid="enroll-owner-room"
-                    aria-pressed={e.ownerRoom === r.roomId}
-                    className={cn(
-                      "rounded-xl border px-3.5 py-2 text-left text-[13px] transition-colors hover:border-brand/30 hover:bg-accent/40",
-                      e.ownerRoom === r.roomId && "border-brand/40 bg-accent/40",
-                    )}
-                  >
-                    <div className="font-medium">{r.label || short(r.roomId, 8)}</div>
-                    <div className="text-xs text-muted-foreground">{short(r.roomId, 6)}</div>
-                  </button>
-                ))}
-              </div>
+              {list.showSearch && (
+                <div className="max-w-sm">
+                  <RoomSearch value={list.query} onChange={list.setQuery} placeholder="Search your rooms" testId="enroll-search" />
+                </div>
+              )}
+              {list.matched.length === 0 ? (
+                <p className="text-sm text-muted-foreground" data-testid="enroll-search-empty">
+                  No rooms match your search. Try a name or part of a room id.
+                </p>
+              ) : (
+                <div>
+                  <div className="flex flex-wrap gap-2" data-testid="enroll-my-rooms">
+                    {list.visible.map((r) => (
+                      <button
+                        key={r.roomId}
+                        onClick={() => e.selectOwnerRoom(r.roomId)}
+                        data-testid="enroll-owner-room"
+                        aria-pressed={e.ownerRoom === r.roomId}
+                        className={cn(
+                          "rounded-xl border px-3.5 py-2 text-left text-[13px] transition-colors hover:border-brand/30 hover:bg-accent/40",
+                          e.ownerRoom === r.roomId && "border-brand/40 bg-accent/40",
+                        )}
+                      >
+                        <div className="font-medium">{r.label || short(r.roomId, 8)}</div>
+                        <div className="text-xs text-muted-foreground">{short(r.roomId, 6)}</div>
+                      </button>
+                    ))}
+                  </div>
+                  <ShowMore
+                    shown={list.shown}
+                    total={list.searching ? list.matched.length : list.total}
+                    remaining={list.remaining}
+                    onMore={list.showMore}
+                    noun={list.searching ? "matching rooms" : "rooms"}
+                    testId="enroll-show-more"
+                  />
+                </div>
+              )}
 
               {e.ownerRoom && (
                 <div className="space-y-5">

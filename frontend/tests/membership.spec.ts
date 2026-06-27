@@ -179,3 +179,29 @@ test("membership: renders dark + requires a wallet", async ({ page }) => {
   await page.goto("/app/dataroom/membership");
   await expect(page.getByTestId("enroll-connect-prompt")).toBeVisible();
 });
+
+// Approve > the owned-room picker gets the same inline search for an owner with many rooms.
+test("membership Approve: search filters the owned-room picker", async ({ page }) => {
+  const json = (body: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+  await page.addInitScript(mock(ADDR));
+  await stubs(page);
+  // Override the owner rooms (registered after stubs() so it wins): 8 rooms, one searchable name.
+  const rooms = Array.from({ length: 8 }, (_, i) => ({
+    roomId: (i + 1).toString(16).padStart(64, "0"),
+    label: i === 5 ? "Project Phoenix" : `Board room ${i}`,
+    owner: ADDR, docCount: 0, ledger: 1, visibility: "private", name: null, description: null,
+  }));
+  await page.route("**/dataroom/rooms?owner=**", (r) => r.fulfill(json({ owner: ADDR, count: rooms.length, dataroomId: "", rooms })));
+
+  await page.goto("/app/dataroom/membership#approve");
+  await page.getByTestId("member-subtab-approve").click();
+  // 8 rooms > threshold 6 -> the search box shows and filters by name.
+  await expect(page.getByTestId("enroll-search-input")).toBeVisible();
+  await expect(page.getByTestId("enroll-owner-room")).toHaveCount(8);
+  await page.getByTestId("enroll-search-input").fill("phoenix");
+  await expect(page.getByTestId("enroll-owner-room")).toHaveCount(1);
+  await expect(page.getByTestId("enroll-owner-room")).toContainText("Project Phoenix");
+  // A no-match search shows the empty line.
+  await page.getByTestId("enroll-search-input").fill("zzz-none");
+  await expect(page.getByTestId("enroll-search-empty")).toBeVisible();
+});

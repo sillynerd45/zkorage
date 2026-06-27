@@ -2,16 +2,21 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Compass, Globe, KeyRound, Lock, ShieldCheck, Users } from "lucide-react";
 import { useEnroll } from "@/lib/hooks/useEnroll";
+import { useRoomList } from "@/lib/hooks/useRoomList";
 import { useTxSigner } from "@/lib/wallet/WalletContext";
-import { clearBondRequirement, getBondRequirementApi, type RoomVisibility } from "@/lib/api";
+import { clearBondRequirement, getBondRequirementApi, type MyRoom, type RoomVisibility } from "@/lib/api";
 import { short } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Callout, CopyIconButton, CurrentBadge, RefreshBar, RoomChipsSkeleton, SectionLabel } from "@/components/app/dataroom/kit";
+import { Callout, CopyIconButton, CurrentBadge, RefreshBar, RoomChipsSkeleton, RoomSearch, SectionLabel, ShowMore } from "@/components/app/dataroom/kit";
 import { OwnerBondSection } from "@/components/app/dataroom/OwnerBondSection";
+
+// The text an owned room is matched against in the picker search (label + name + id + description). Module-level
+// + stable so useRoomList's filter memo does not recompute every render.
+const ownerRoomText = (r: MyRoom) => `${r.label ?? ""} ${r.name ?? ""} ${r.roomId} ${r.description ?? ""}`;
 
 // Room Management — the owner's settings for a room they own, kept apart from the member-facing
 // Join/Approve. The room uses ONE access model, mutually exclusive:
@@ -87,6 +92,10 @@ function ManageDetailSkeleton() {
 export default function RoomManagement() {
   const e = useEnroll();
   const signer = useTxSigner();
+  // Search + "Show more" over the rooms you own, for when you manage many. The search box only shows past a
+  // small threshold; the selected room's detail below reads e.ownerRoom, so it persists even when a search
+  // filters its chip out of view.
+  const list = useRoomList(e.myRooms, ownerRoomText, { pageSize: 12 });
 
   // Arriving from a Discover "Your room" link (?room=<id>): auto-select that room once it shows up in the
   // owner's list, overriding any restored selection. Guarded by `ownerRoom !== paramRoom` so it runs once.
@@ -247,24 +256,47 @@ export default function RoomManagement() {
             You don't own any rooms yet. Create one in Documents, then manage it here.
           </p>
         ) : (
-          <div className="mt-4 flex flex-wrap gap-2" data-testid="manage-my-rooms">
-            {e.myRooms.map((r) => (
-              <button
-                key={r.roomId}
-                type="button"
-                onClick={() => e.selectOwnerRoom(r.roomId)}
-                data-testid="manage-owner-room"
-                aria-pressed={e.ownerRoom === r.roomId}
-                className={cn(
-                  "rounded-xl border px-3.5 py-2 text-left text-[13px] transition-colors hover:border-brand/30 hover:bg-accent/40",
-                  e.ownerRoom === r.roomId && "border-brand/40 bg-accent/40",
-                )}
-              >
-                <div className="font-medium">{r.label || short(r.roomId, 8)}</div>
-                <div className="text-xs text-muted-foreground">{short(r.roomId, 6)}</div>
-              </button>
-            ))}
-          </div>
+          <>
+            {list.showSearch && (
+              <div className="mt-4 max-w-sm">
+                <RoomSearch value={list.query} onChange={list.setQuery} placeholder="Search your rooms" testId="manage-search" />
+              </div>
+            )}
+            {list.matched.length === 0 ? (
+              <p className="mt-4 text-sm text-muted-foreground" data-testid="manage-search-empty">
+                No rooms match your search. Try a name or part of a room id.
+              </p>
+            ) : (
+              <>
+                <div className="mt-4 flex flex-wrap gap-2" data-testid="manage-my-rooms">
+                  {list.visible.map((r) => (
+                    <button
+                      key={r.roomId}
+                      type="button"
+                      onClick={() => e.selectOwnerRoom(r.roomId)}
+                      data-testid="manage-owner-room"
+                      aria-pressed={e.ownerRoom === r.roomId}
+                      className={cn(
+                        "rounded-xl border px-3.5 py-2 text-left text-[13px] transition-colors hover:border-brand/30 hover:bg-accent/40",
+                        e.ownerRoom === r.roomId && "border-brand/40 bg-accent/40",
+                      )}
+                    >
+                      <div className="font-medium">{r.label || short(r.roomId, 8)}</div>
+                      <div className="text-xs text-muted-foreground">{short(r.roomId, 6)}</div>
+                    </button>
+                  ))}
+                </div>
+                <ShowMore
+                  shown={list.shown}
+                  total={list.searching ? list.matched.length : list.total}
+                  remaining={list.remaining}
+                  onMore={list.showMore}
+                  noun={list.searching ? "matching rooms" : "rooms"}
+                  testId="manage-show-more"
+                />
+              </>
+            )}
+          </>
         )}
       </Card>
 
