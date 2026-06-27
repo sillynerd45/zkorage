@@ -314,6 +314,14 @@ export default function OpenShared() {
                 // The action block: the qualifying-bonder count for context, then the primary CTA, then one
                 // line of fine print, each on its own line. A hairline separates it from the requirement above.
                 <div className="flex flex-col items-start gap-2.5 border-t border-border/60 pt-3">
+                  {/* If this wallet already locked a qualifying bond here (a local hint, no signature), say so,
+                      so the panel does not look like it forgot. Clicking continues from where you left off. */}
+                  {s.roomBondLocked && !bondDeadlinePassed && (
+                    <p className="inline-flex items-start gap-1.5 text-sm text-success" data-testid="access-bond-locked-note">
+                      <CheckCircle2 className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+                      You've already locked a qualifying bond for this room. Continue to pick up where you left off.
+                    </p>
+                  )}
                   <BondCount count={s.roomBondCount} />
                   {bondDeadlinePassed && (
                     <p className="text-sm text-warning" data-testid="access-bond-expired">
@@ -327,11 +335,13 @@ export default function OpenShared() {
                     data-testid="access-bond-setup"
                     className={cn("w-full sm:w-auto", actionButtonHover)}
                   >
-                    <KeyRound aria-hidden="true" /> Set up access
+                    <KeyRound aria-hidden="true" /> {s.roomBondLocked ? "Continue setup" : "Set up access"}
                   </Button>
-                  <p className="text-xs text-muted-foreground">
-                    You lock a qualifying bond once. Then every document in this room opens.
-                  </p>
+                  {!s.roomBondLocked && (
+                    <p className="text-xs text-muted-foreground">
+                      You lock a qualifying bond once. Then every document in this room opens.
+                    </p>
+                  )}
                 </div>
               ) : (
                 <div className="rounded-xl border border-border/70 bg-accent/20 px-3.5 py-3" data-testid="access-status" data-phase={s.phase}>
