@@ -1336,6 +1336,19 @@ export class ZkorageClient {
     return Boolean(await this.simRead(this.cfg.contracts.dataroom, "is_bond_open", [scBytes(roomIdHex)]));
   }
 
+  /** The AUTHORITATIVE recipient_pub (hex) the DR3 keepers seal a document key to for `accessor` in `room_id`,
+   *  read straight from the DataRoom — which resolves it for BOTH access models: the DR2 membership grant's
+   *  recipient_pub for a membership room, or the proof-bound recipient_pub from the bond-OPEN grant for a TRUE
+   *  bond-only room (where no DR2 membership grant exists). `null` if there is no admitting record. A real key
+   *  is exactly 32 bytes; a missing/empty value normalizes to null. This is what `openCommitteeDocument`
+   *  verifies sealed-share tags against, so it must match what the keepers sealed to. */
+  async admissionRecipientPub(roomIdHex: string, accessorHex: string): Promise<string | null> {
+    const v = await this.simRead(this.cfg.contracts.dataroom, "admission_recipient_pub", [scBytes(roomIdHex), scBytes(accessorHex)]);
+    if (v == null) return null;
+    const hex = bytesToHex(v);
+    return hex.length === 64 ? hex : null;
+  }
+
   /** The bond gate's accepted `qual_root` ring (oldest first) for a requirement. */
   async getBondQualRing(reqIdHex: string): Promise<string[]> {
     const v = await this.simRead(this.cfg.contracts.bondGate, "get_qual_ring", [scBytes(reqIdHex)]);
@@ -1813,11 +1826,13 @@ export class ZkorageClient {
     const doc = await this.getCommitteeDocument(roomIdHex, docIdHex);
     if (!doc) return empty;
 
-    // The AUTHORITATIVE recipient_pub is the one the DR2 grant recorded on-chain (proof-bound by NEW-5) —
-    // read it ourselves, never trust the value a share aggregator reports. Opening against the chain key
-    // means a malicious aggregator can at worst cause a FAILED open (unfaithful shares), never a wrong decrypt.
-    const grant = await this.getGrant(roomIdHex, accessorHex);
-    const recipientPub = grant?.recipient_pub ?? "";
+    // The AUTHORITATIVE recipient_pub is the one recorded on-chain (proof-bound by NEW-5) — read it ourselves
+    // via `admission_recipient_pub`, never trust the value a share aggregator reports. That DataRoom resolver
+    // covers BOTH access models: a membership room's DR2 grant recipient_pub, OR a TRUE bond-only room's
+    // bond-OPEN grant recipient_pub (where NO DR2 membership grant exists, so reading get_grant would return
+    // null and the open would fail). Opening against the chain key means a malicious aggregator can at worst
+    // cause a FAILED open (unfaithful shares), never a wrong decrypt.
+    const recipientPub = (await this.admissionRecipientPub(roomIdHex, accessorHex)) ?? "";
     const { shares } = await this.collectSealedShares(roomIdHex, docIdHex, accessorHex, opts);
     if (shares.length < threshold || !recipientPub) {
       return { ...empty, found: true, released: false, contentHash: doc.content_hash, kCommitment: doc.k_commitment, recipientPub };
