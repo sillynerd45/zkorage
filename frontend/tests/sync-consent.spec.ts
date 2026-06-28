@@ -46,7 +46,9 @@ test("the consent dialog appears on connect and can be dismissed", async ({ page
   await stubVaults(page);
   await page.goto("/app");
   await expect(page.getByTestId("sync-consent-dialog")).toBeVisible();
-  await expect(page.getByTestId("sync-consent-title")).toContainText("Sync your rooms and access");
+  await expect(page.getByTestId("sync-consent-title")).toContainText("Sync across your devices");
+  // the points list names both pillars, so the dialog reads as covering Bonded Access too, not only the Data Room
+  await expect(page.getByTestId("sync-consent-point-devices")).toContainText("Bonded Access");
   // initial focus is the non-signing action, so Enter never starts a signature
   await expect(page.getByTestId("sync-consent-dismiss")).toBeFocused();
   await page.getByTestId("sync-consent-dismiss").click();
@@ -89,4 +91,35 @@ test("the wallet menu can turn sync on for a user who dismissed the dialog", asy
   await expect(page.getByTestId("wallet-sync-state")).toHaveText("Off");
   await page.getByTestId("wallet-sync").click();
   await expect(page.getByTestId("wallet-sync-state")).toHaveText("On");
+});
+
+// Login sync must restore BOTH pillars, not just the Data Room. This rounds-trips the REAL backend bond
+// handle-vault (no stub): create + back up a handle, simulate a fresh device, then turn on sync from the
+// connect dialog and confirm the Bonded Access handle comes back (the user no longer sees "Create a handle").
+test("Turn on sync restores the Bonded Access handle, not only Data Room rooms", async ({ page }) => {
+  await page.addInitScript(mock());
+  await page.route("**/horizon-testnet.stellar.org/accounts/**", (route) =>
+    route.fulfill({ json: { balances: [{ asset_type: "native", balance: "10000.0000000" }] } }),
+  );
+
+  await page.goto("/app/bonded/tier");
+  await page.getByTestId("sync-consent-dismiss").click();
+  await page.getByTestId("tier-create-identity").click();
+  await expect(page.getByTestId("tier-identity")).toBeVisible({ timeout: 15_000 });
+  const handle = (await page.getByTestId("tier-identity").innerText()).match(/[0-9a-f]{6}…[0-9a-f]{6}/)?.[0] ?? "";
+  expect(handle).not.toBe("");
+
+  // Fresh device on the same wallet: drop the local handle + the in-memory signature (reload).
+  await page.evaluate(() =>
+    Object.keys(localStorage)
+      .filter((k) => k.startsWith("zkorage-bond-identity"))
+      .forEach((k) => localStorage.removeItem(k)),
+  );
+  await page.reload();
+  await expect(page.getByTestId("tier-create-identity")).toBeVisible({ timeout: 15_000 });
+
+  // Turn on sync from the connect dialog: one signature, and the handle is restored on this page.
+  await page.getByTestId("sync-consent-enable").click();
+  await expect(page.getByTestId("tier-identity")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("tier-identity")).toContainText(handle);
 });
