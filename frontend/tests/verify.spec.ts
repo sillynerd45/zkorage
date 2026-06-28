@@ -21,10 +21,28 @@ test("verify home: a bonded link routes to /verify/bond with the query preserved
   await expect(page).toHaveURL(/\/verify\/bond\?accessor=/);
 });
 
-test("verify home: a reserves issuer routes to /verify/:issuer", async ({ page }) => {
+test("verify home: a reserves link routes to /verify/:issuer", async ({ page }) => {
   await page.goto("/verify");
-  await page.getByTestId("verify-example-reserves").click();
+  await page.getByTestId("verify-input").fill(`/verify/${HEX}`);
+  await page.getByTestId("verify-submit").click();
   await expect(page).toHaveURL(new RegExp(`/verify/${HEX}$`));
+});
+
+test("verify home: the public-room example routes to /verify/room/:id", async ({ page }) => {
+  await page.route("**/dataroom/directory", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        count: 1,
+        dataroomId: "CDUQITRVJOPJNVWBUINLZFI2LHPOLVFW2I7354WEFDG2W3VIG627HLNN",
+        rooms: [{ roomId: ROOM, name: "Demo room", description: null, memberBucket: "5-19", anonTier: "ok", listedAt: 1, bond: null }],
+      }),
+    }),
+  );
+  await page.goto("/verify");
+  await page.getByTestId("verify-example-room").click();
+  await expect(page).toHaveURL(new RegExp(`/verify/room/${ROOM}$`));
 });
 
 test("verify home: garbage shows an inline error and does not navigate", async ({ page }) => {

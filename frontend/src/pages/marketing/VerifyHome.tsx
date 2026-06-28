@@ -1,15 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { BadgeCheck, KeyRound, FolderLock, Landmark, Compass, ArrowRight } from "lucide-react";
-import { getRoomMeta } from "@/lib/api";
+import { getRoomMeta, getDirectory } from "@/lib/api";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { detectVerifyTarget } from "@/lib/verify/detect";
 import { PageHeader, SectionCard } from "@/components/marketing/blocks";
-
-// A working Proof-of-Reserves issuer on testnet, used as the "try one" example so a first-time visitor can see
-// a real re-check without hunting for an id.
-const EXAMPLE_ISSUER = "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c";
 
 const KINDS = [
   {
@@ -35,7 +31,22 @@ export default function VerifyHome() {
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [probing, setProbing] = useState(false);
+  const [exampleRoom, setExampleRoom] = useState<string | null>(null);
   const ranQ = useRef(false);
+
+  // A one-click "try one" example sourced from the live public directory (a room is guaranteed to exist there
+  // and re-verifies on-chain, so it never lands on a misleading verdict). Best-effort: hidden if none.
+  useEffect(() => {
+    let live = true;
+    getDirectory()
+      .then((d) => {
+        if (live && d.rooms[0]) setExampleRoom(d.rooms[0].roomId);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const run = useCallback(
     (raw: string) => {
@@ -106,7 +117,7 @@ export default function VerifyHome() {
                 setValue(e.target.value);
                 if (error) setError(null);
               }}
-              aria-describedby="verify-input-hint"
+              aria-describedby={error ? "verify-input-hint verify-input-error" : "verify-input-hint"}
               aria-invalid={error ? true : undefined}
               placeholder="https://zkorage.wazowsky.id/verify/bond?… or a 64-hex id"
               spellCheck={false}
@@ -126,21 +137,23 @@ export default function VerifyHome() {
             </button>
           </div>
           {error && (
-            <p data-testid="verify-input-error" className="mt-3 text-sm text-destructive">
+            <p id="verify-input-error" data-testid="verify-input-error" className="mt-3 text-sm text-destructive">
               {error}
             </p>
           )}
         </form>
         <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 border-t pt-3 text-sm">
           <span className="text-muted-foreground">Try one:</span>
-          <button
-            type="button"
-            data-testid="verify-example-reserves"
-            onClick={() => navigate(`/verify/${EXAMPLE_ISSUER}`)}
-            className="rounded-sm font-medium text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            A live Proof-of-Reserves
-          </button>
+          {exampleRoom && (
+            <button
+              type="button"
+              data-testid="verify-example-room"
+              onClick={() => navigate(`/verify/room/${exampleRoom}`)}
+              className="rounded-sm font-medium text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              A public Data Room
+            </button>
+          )}
           <Link
             to="/explorer"
             className="inline-flex items-center gap-1 rounded-sm font-medium text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

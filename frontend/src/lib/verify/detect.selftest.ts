@@ -46,6 +46,13 @@ eq("reserves link (hex) -> reserves", detectVerifyTarget(`https://zkorage.wazows
   kind: "reserves",
   issuer: HEX,
 });
+eq("reserves link (pubkey) -> reserves, case preserved", detectVerifyTarget(`https://zkorage.wazowsky.id/verify/${PUB}`), {
+  kind: "reserves",
+  issuer: PUB,
+});
+eq("path-shaped bond paste (no leading slash) -> unknown", detectVerifyTarget(`verify/bond?accessor=${HEX}&req=${ROOM}`), {
+  kind: "unknown",
+});
 
 // bare bond query
 eq("bare bond query -> bond", detectVerifyTarget(`accessor=${HEX}&req=${ROOM}&deadline=9999999999`), {

@@ -3,10 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Apply the saved theme before first paint so dark-mode visitors do not see a flash of the light theme. -->
+    <script>
+      try {
+        if (localStorage.getItem("zkorage-theme") === "dark") document.documentElement.classList.add("dark");
+      } catch (e) {}
+    </script>
     <title>zkorage · prove a private fact, verify it on-chain</title>
-    <meta name="description" content="zkorage proves a fact about private, attested data — reserves, KYC, income, eligibility — and lets anyone verify it on Stellar, without revealing the data." />
+    <meta name="description" content="zkorage proves facts about private data and lets anyone verify them on Stellar, without revealing the data. Share sealed documents in a Data Room, or prove you hold a bond, anonymously." />
     <meta property="og:title" content="zkorage · verifiable claims on Stellar" />
-    <meta property="og:description" content="Prove a private fact. Verify it on the public record — without revealing the data behind it." />
+    <meta property="og:description" content="Prove a private fact. Verify it on Stellar, without revealing the data behind it." />
     <meta property="og:type" content="website" />
     <meta name="theme-color" content="#0f172a" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />

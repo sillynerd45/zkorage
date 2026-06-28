@@ -166,12 +166,12 @@ export default function Explorer() {
       <SectionCard
         label="Public directory"
         aside={
-          <div role="tablist" aria-label="Room type" className="inline-flex rounded-lg border bg-muted p-0.5">
+          <div role="group" aria-label="Filter rooms by access type" className="inline-flex rounded-lg border bg-muted p-0.5">
             {TABS.map((t) => (
               <button
                 key={t.key}
-                role="tab"
-                aria-selected={tab === t.key}
+                type="button"
+                aria-pressed={tab === t.key}
                 data-testid={`explorer-tab-${t.key}`}
                 onClick={() => setTab(t.key)}
                 className={cn(

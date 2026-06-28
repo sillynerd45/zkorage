@@ -45,22 +45,23 @@ export function detectVerifyTarget(raw: string): VerifyTarget {
   const s = (raw ?? "").trim();
   if (!s) return { kind: "unknown" };
 
-  // 1) A link/path that already names the verify route (unambiguous: the path carries the type).
+  // 1) A link/path that already names the verify route (unambiguous: the path carries the type). A
+  //    /verify/<id> link is the reserves deep link (a room link is /verify/room/<id>, matched first). Match
+  //    hex case-insensitively but the Stellar pubkey case-sensitively (real G-addresses are uppercase).
   const u = looseUrl(s);
   if (u) {
     if (u.path.includes("/verify/bond")) return { kind: "bond", search: u.search };
-    const room = u.path.match(/\/verify\/room\/([0-9a-f]{64})/i);
+    const room = u.path.match(/\/verify\/room\/([0-9a-fA-F]{64})(?:\/|$)/);
     if (room) return { kind: "room", roomId: room[1].toLowerCase() };
-    const res = u.path.match(/\/verify\/(G[A-Z2-7]{55}|[0-9a-f]{64})/i);
-    if (res) {
-      const id = res[1];
-      // A /verify/<id> link is the reserves deep link (a room link is /verify/room/<id>, matched above).
-      return STELLAR_PUB.test(id) ? { kind: "reserves", issuer: id } : { kind: "reserves", issuer: id.toLowerCase() };
-    }
+    const hex = u.path.match(/\/verify\/([0-9a-fA-F]{64})(?:\/|$)/);
+    if (hex) return { kind: "reserves", issuer: hex[1].toLowerCase() };
+    const pub = u.path.match(/\/verify\/(G[A-Z2-7]{55})(?:\/|$)/);
+    if (pub) return { kind: "reserves", issuer: pub[1] };
   }
 
-  // 2) A bare bond query (someone copied just the "accessor=..&req=.." part).
-  if (/(^|[?&])accessor=/.test(s) && /(^|[?&])req=/.test(s)) {
+  // 2) A bare bond query (someone copied just the "accessor=..&req=.." part). Require no path separator so a
+  //    path-shaped paste does not get misparsed as a query.
+  if (!s.includes("/") && /(^|[?&])accessor=/.test(s) && /(^|[?&])req=/.test(s)) {
     return { kind: "bond", search: s.startsWith("?") ? s : "?" + s.replace(/^&/, "") };
   }
 
