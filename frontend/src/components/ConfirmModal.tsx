@@ -3,7 +3,8 @@ import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 
 // Confirmation gate for actions that are hard to take back (UX research: honest trust / irreversibility).
-// `tone` selects the standing warning line so every irreversible/outward action reads the same way.
+// `tone` selects the standing warning line so every irreversible/outward action reads the same way. Pass "none"
+// for a plain confirm (no warning line) when the action is not itself irreversible (e.g. confirming a route).
 export type ConfirmTone = "cost" | "outward" | "irreversible";
 
 const TONE_NOTE: Record<ConfirmTone, string> = {
@@ -25,7 +26,7 @@ export function ConfirmModal({
   open: boolean;
   title: string;
   children?: ReactNode;
-  tone?: ConfirmTone;
+  tone?: ConfirmTone | "none";
   confirmLabel?: string;
   cancelLabel?: string;
   onConfirm: () => void;
@@ -86,10 +87,12 @@ export function ConfirmModal({
           {title}
         </h2>
         {children && <div className="mt-2.5 text-sm leading-relaxed text-muted-foreground">{children}</div>}
-        <p role="note" className="mt-3 text-xs leading-relaxed text-warning">
-          <span aria-hidden="true">⚠ </span>
-          {TONE_NOTE[tone]}
-        </p>
+        {tone !== "none" && (
+          <p role="note" className="mt-3 text-xs leading-relaxed text-warning">
+            <span aria-hidden="true">⚠ </span>
+            {TONE_NOTE[tone]}
+          </p>
+        )}
         <div className="mt-5 flex justify-end gap-2.5">
           <Button variant="outline" size="sm" onClick={onCancel} data-testid="confirm-cancel">
             {cancelLabel}
