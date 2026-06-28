@@ -31,6 +31,11 @@ import { readJoinRequests, writeJoinRequests } from "@/lib/dataroom/requests";
 import { pushVault, isVaultSyncOn, setVaultSyncOn } from "@/lib/dataroom/vault";
 import { SYNC_EVENT } from "@/lib/sync/prefs";
 import { syncRestoreAll, syncDisable } from "@/lib/sync/orchestrator";
+import { makeOpenCache } from "@/lib/dataroom/openCache";
+
+// Module-level so opened documents + which rows are expanded survive a submenu switch (which unmounts this
+// panel). Memory-only (decrypted plaintext is sensitive); a full reload clears it.
+const openCache = makeOpenCache<OpenedCommitteeDocument>();
 import { writeOpenTicket, clearOpenTicket, findOpenTicket } from "@/lib/dataroom/openTicket";
 import { markBondLocked, clearBondLocked, hasBondLockedFor } from "@/lib/dataroom/bondLocks";
 import { getBondOpenIdentity } from "@/lib/bonded/bondOpenIdentity";
@@ -394,7 +399,22 @@ export function useSharedOpen() {
     cancelled.current = true; // stop any in-flight poll for the previous room (open()/setupAccess re-arm it)
     resetFlow();
     setRoom(roomId.trim());
+    // Restore this room's opened documents + expanded rows from the module cache (survives a submenu switch).
+    // resetFlow cleared them just above; loading here (same batch) wins. The resume-ticket flow uses setRoom
+    // directly (not selectRoom), so it is never clobbered by this.
+    const c = openCache.get(roomId);
+    setOpenedDocs(c.opened);
+    setExpandedDocs(c.expanded);
+    openCache.setLastRoom(roomId); // remember it so a submenu switch can resume this room
   }, [resetFlow]);
+
+  // Resume the last room the user viewed this session (used on mount when there is no ?room= deep link), so a
+  // submenu switch returns to it with its opened documents restored from the cache. No-op if a room is already
+  // selected or none was viewed yet.
+  const resumeLastRoom = useCallback(() => {
+    const last = openCache.getLastRoom();
+    if (last && !room) selectRoom(last);
+  }, [room, selectRoom]);
 
   // ── the orchestrated open ──────────────────────────────────────────────────────────────────────
   // Get the key from the keepers and decrypt in the browser. Only reached once the on-chain grant exists.
@@ -411,6 +431,7 @@ export function useSharedOpen() {
       if (!(docId in prev)) return prev;
       const next = { ...prev };
       delete next[docId];
+      openCache.setOpened(room, next);
       return next;
     });
     setDocErrors((prev) => {
@@ -435,7 +456,12 @@ export function useSharedOpen() {
       }
       if (cancelled.current) return;
       // Cache the result (success, not-released, or wrong-key) so the row renders it and a re-expand is instant.
-      setOpenedDocs((prev) => ({ ...prev, [docId]: out }));
+      // Mirror to the module cache so it also survives a submenu switch (not just a collapse/re-expand).
+      setOpenedDocs((prev) => {
+        const next = { ...prev, [docId]: out };
+        openCache.setOpened(room, next);
+        return next;
+      });
       if (out.reconstructed) {
         // Room access is established: remember the floor so follow-up documents open with no re-prove.
         setRoomAccessReady(true);
@@ -867,7 +893,11 @@ export function useSharedOpen() {
   const toggleDoc = useCallback(
     (docId: string) => {
       const wasOpen = expandedDocs.includes(docId);
-      setExpandedDocs((prev) => (wasOpen ? prev.filter((d) => d !== docId) : [...prev, docId]));
+      setExpandedDocs((prev) => {
+        const next = wasOpen ? prev.filter((d) => d !== docId) : [...prev, docId];
+        openCache.setExpanded(room, next);
+        return next;
+      });
       if (wasOpen) return;
       if (openedDocs[docId] || docErrors[docId]) return; // a cached result / error (with retry) renders in the row
       // Bond-only room where this wallet holds no qualifying bond (or has no handle yet): do NOT derive an
@@ -882,7 +912,7 @@ export function useSharedOpen() {
       if (phase !== "idle" && phase !== "error") return;
       void open(docId);
     },
-    [expandedDocs, openedDocs, docErrors, roomBond, roomBondHas, roomAccessReady, phase, open],
+    [room, expandedDocs, openedDocs, docErrors, roomBond, roomBondHas, roomAccessReady, phase, open],
   );
 
   // Once the room's access has landed, open any document that is expanded but not yet opened. Runs one at a time
@@ -976,6 +1006,7 @@ export function useSharedOpen() {
     setSync,
     room,
     selectRoom,
+    resumeLastRoom,
     roomDocs,
     docsLoading,
     anonCount,

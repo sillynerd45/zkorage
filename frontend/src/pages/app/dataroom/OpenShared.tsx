@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { ArrowRight, CheckCircle2, ChevronDown, Clock, FileText, FolderOpen, Info, KeyRound, Loader2, Lock, RefreshCw, ShieldCheck } from "lucide-react";
+import { ArrowRight, CheckCircle2, ChevronDown, FileText, FolderOpen, Info, KeyRound, Loader2, Lock, RefreshCw, ShieldCheck } from "lucide-react";
 import { useSharedOpen, type SyncState } from "@/lib/hooks/useSharedOpen";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,9 +45,74 @@ const SYNC_HELP: Record<SyncState, string> = {
 
 // The status of the in-progress Open for one document. Each branch is plain and short; "approved" reads as a
 // positive next step, not a denial.
+// A compact stepper for the multi-step open/setup, so the wait reads as progress instead of a bare spinner. A
+// bonded room records on-chain directly (3 steps); a membership room adds the batch-window wait (4 steps). The
+// current phase maps to the active step. Models the Store flow's stepper (Anchor.tsx).
+function OpenStepper({ s }: { s: ReturnType<typeof useSharedOpen> }) {
+  const isBond = Boolean(s.roomBond?.bondOpen) || Boolean(s.bondReq);
+  const steps = isBond
+    ? ["Prove you qualify", "Record access on-chain", "Get the key, decrypt here"]
+    : ["Prove access", "Record access on-chain", "Wait for the batch window", "Get the key, decrypt here"];
+  const activeIdx =
+    s.phase === "proving" ? 0 : s.phase === "queuing" ? 1 : s.phase === "waiting" ? 2 : steps.length - 1; // "opening"
+  const pct = Math.round((activeIdx / steps.length) * 100);
+  const time = s.flushAt ? new Date(s.flushAt).toLocaleTimeString() : null;
+  return (
+    <div className="space-y-2.5" data-testid="access-stepper">
+      <p className="text-sm font-medium text-foreground">Setting up your access. This runs once for the room.</p>
+      <div
+        className="h-1.5 overflow-hidden rounded-full bg-muted"
+        role="progressbar"
+        aria-valuenow={pct}
+        aria-valuemin={0}
+        aria-valuemax={100}
+      >
+        <div className="h-full rounded-full bg-brand transition-[width] duration-500 ease-out" style={{ width: `${Math.max(8, pct)}%` }} />
+      </div>
+      <ol className="space-y-1.5" aria-label="Opening the document">
+        {steps.map((label, i) => {
+          const status = i < activeIdx ? "done" : i === activeIdx ? "active" : "pending";
+          return (
+            <li key={label} data-testid={`access-step-${i}`} data-status={status} className="flex items-center gap-2.5 text-[13px]">
+              <span
+                className={cn(
+                  "grid size-5 shrink-0 place-items-center rounded-full border text-[11px] font-medium",
+                  status === "done"
+                    ? "border-success/50 bg-success/10 text-success"
+                    : status === "active"
+                      ? "border-brand/50 bg-brand/10 text-brand"
+                      : "border-input text-muted-foreground",
+                )}
+              >
+                {status === "done" ? "✓" : status === "active" ? <Loader2 className="size-3 animate-spin" aria-hidden="true" /> : i + 1}
+              </span>
+              <span className={cn(status === "pending" ? "text-muted-foreground" : "text-foreground", status === "active" && "font-medium")}>
+                {label}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+      {(s.phase === "proving" || s.phase === "queuing") && s.proveStep && (
+        <p className="text-xs text-muted-foreground">
+          {s.proveStep}{s.proveBy ? ` (proving on: ${s.proveBy})` : ""}
+        </p>
+      )}
+      {s.phase === "waiting" && (
+        <p className="text-xs text-muted-foreground" data-testid="access-waiting">
+          Goes live at the next batch window{time ? `, around ${time}` : ""}. You can leave this page; it keeps
+          going and opens the document once your access lands.
+        </p>
+      )}
+      {s.phase === "opening" && (
+        <p className="text-xs text-muted-foreground">Getting the key and decrypting in your browser.</p>
+      )}
+    </div>
+  );
+}
+
 function OpenStatus({ s }: { s: ReturnType<typeof useSharedOpen> }) {
   const retry = () => s.openDocId && s.open(s.openDocId);
-  const time = s.flushAt ? new Date(s.flushAt).toLocaleTimeString() : null;
 
   switch (s.phase) {
     case "checking":
@@ -162,33 +227,9 @@ function OpenStatus({ s }: { s: ReturnType<typeof useSharedOpen> }) {
       );
     case "proving":
     case "queuing":
-      return (
-        <div className="space-y-1" data-testid="access-proving">
-          <p className="flex items-center gap-2 text-sm text-foreground">
-            <Loader2 className="size-4 animate-spin" aria-hidden="true" /> Setting up your access. This runs once and can take a few minutes.
-          </p>
-          {s.proveStep && (
-            <p className="text-xs text-muted-foreground">
-              {s.proveStep}{s.proveBy ? ` (proving on: ${s.proveBy})` : ""}
-            </p>
-          )}
-        </div>
-      );
     case "waiting":
-      return (
-        <div className="space-y-1" data-testid="access-waiting">
-          <p className="flex items-center gap-2 text-sm text-foreground">
-            <Clock className="size-4" aria-hidden="true" /> Almost there. Your access goes live at the next batch window{time ? `, around ${time}` : ""}.
-          </p>
-          <p className="text-xs text-muted-foreground">You can leave this page and come back; it keeps going and opens the document once your access lands.</p>
-        </div>
-      );
     case "opening":
-      return (
-        <p className="flex items-center gap-2 text-sm text-foreground" data-testid="access-opening">
-          <Loader2 className="size-4 animate-spin" aria-hidden="true" /> Getting the key and decrypting in your browser…
-        </p>
-      );
+      return <OpenStepper s={s} />;
     case "revoked":
       return (
         <div className="space-y-2">
@@ -213,10 +254,13 @@ export default function OpenShared() {
   const [openTab, setOpenTab] = useState<"rooms" | "search">("rooms");
 
   // Deep link from "Open documents" (Membership / Discover): /app/dataroom/documents?room=<id>#open selects it.
+  // With no deep link, resume the room the user was last viewing this session, so a submenu switch (which
+  // unmounts this panel) returns to it with its opened documents restored, instead of dropping to the room list.
   const [params] = useSearchParams();
   const paramRoom = params.get("room");
   useEffect(() => {
     if (paramRoom) s.selectRoom(paramRoom);
+    else s.resumeLastRoom();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paramRoom]);
 
