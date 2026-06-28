@@ -138,11 +138,11 @@ export function useAnchor() {
   // a per-doc error map, which rows are expanded, and the in-flight doc id. Restored from ownerOpenCache when a
   // room is selected, so they survive a submenu switch.
   const [ownerOpenedDocs, setOwnerOpenedDocs] = useState<Record<string, OpenedDocument>>(() =>
-    seededRoom ? ownerOpenCache.get(seededRoom).opened : {},
+    seededRoom ? ownerOpenCache.get(address ?? "", seededRoom).opened : {},
   );
   const [ownerOpenErrors, setOwnerOpenErrors] = useState<Record<string, string>>({});
   const [ownerExpanded, setOwnerExpanded] = useState<string[]>(() =>
-    seededRoom ? ownerOpenCache.get(seededRoom).expanded : [],
+    seededRoom ? ownerOpenCache.get(address ?? "", seededRoom).expanded : [],
   );
   const [ownerOpeningId, setOwnerOpeningId] = useState<string | null>(null);
 
@@ -171,7 +171,7 @@ export function useAnchor() {
   const selectBrowseRoom = useCallback((room: string) => {
     setBrowseRoom(room);
     if (address) lastBrowseCache.set(address, room);
-    const c = ownerOpenCache.get(room);
+    const c = ownerOpenCache.get(address ?? "", room);
     setOwnerOpenedDocs(c.opened);
     setOwnerExpanded(c.expanded);
     setOwnerOpenErrors({});
@@ -203,7 +203,7 @@ export function useAnchor() {
     const finalRoom = owned ? restored : "";
     setBrowseRoom(finalRoom);
     if (finalRoom) {
-      const c = ownerOpenCache.get(finalRoom);
+      const c = ownerOpenCache.get(address ?? "", finalRoom);
       setOwnerOpenedDocs(c.opened);
       setOwnerExpanded(c.expanded);
       setOwnerOpenErrors({});
@@ -383,7 +383,7 @@ export function useAnchor() {
       if (!result.faithful) {
         throw new Error("this document is not sealed to your wallet's room key, so you cannot reopen it here (it was stored by a different wallet, or your wallet's signing format changed)");
       }
-      setOwnerOpenedDocs((prev) => { const next = { ...prev, [docIdHex]: result }; ownerOpenCache.setOpened(roomIdHex, next); return next; });
+      setOwnerOpenedDocs((prev) => { const next = { ...prev, [docIdHex]: result }; ownerOpenCache.setOpened(address ?? "", roomIdHex, next); return next; });
     } catch (e) {
       setOwnerOpenErrors((prev) => ({ ...prev, [docIdHex]: String((e as Error).message ?? e) }));
     } finally {
@@ -397,7 +397,7 @@ export function useAnchor() {
     const wasOpen = ownerExpanded.includes(docIdHex);
     setOwnerExpanded((prev) => {
       const next = wasOpen ? prev.filter((d) => d !== docIdHex) : [...prev, docIdHex];
-      ownerOpenCache.setExpanded(roomIdHex, next);
+      ownerOpenCache.setExpanded(address ?? "", roomIdHex, next);
       return next;
     });
     if (wasOpen) return;

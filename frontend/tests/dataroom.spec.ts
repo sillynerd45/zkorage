@@ -164,9 +164,12 @@ test("dataroom Browse: lists a committee doc and wires the owner-open", async ({
   await page.getByTestId("my-file-toggle").first().click();
   await expect(page.getByTestId("my-file-content").first()).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("owner-open-error")).toBeVisible({ timeout: 30_000 });
-  // collapsing keeps the row; re-expanding shows the cached error without another open attempt
+  // collapsing hides the card; re-expanding shows the CACHED error again (toggleOwnerDoc early-returns when a
+  // result/error is cached, so it does not re-run the open).
   await page.getByTestId("my-file-toggle").first().click();
   await expect(page.getByTestId("my-file-content")).toHaveCount(0);
+  await page.getByTestId("my-file-toggle").first().click();
+  await expect(page.getByTestId("owner-open-error")).toBeVisible();
 });
 
 // Loading + persistence in My files: a room's documents load behind a shimmer skeleton (the documents read is

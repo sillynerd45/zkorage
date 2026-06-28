@@ -399,22 +399,42 @@ export function useSharedOpen() {
     cancelled.current = true; // stop any in-flight poll for the previous room (open()/setupAccess re-arm it)
     resetFlow();
     setRoom(roomId.trim());
-    // Restore this room's opened documents + expanded rows from the module cache (survives a submenu switch).
-    // resetFlow cleared them just above; loading here (same batch) wins. The resume-ticket flow uses setRoom
-    // directly (not selectRoom), so it is never clobbered by this.
-    const c = openCache.get(roomId);
+    // Restore this account's opened documents + expanded rows for this room from the module cache (survives a
+    // submenu switch). resetFlow cleared them just above; loading here (same batch) wins. The resume-ticket flow
+    // uses setRoom directly (not selectRoom), so it is never clobbered by this.
+    const owner = address ?? "";
+    const c = openCache.get(owner, roomId);
     setOpenedDocs(c.opened);
     setExpandedDocs(c.expanded);
-    openCache.setLastRoom(roomId); // remember it so a submenu switch can resume this room
-  }, [resetFlow]);
+    openCache.setLastRoom(owner, roomId); // remember it so a submenu switch can resume this room
+  }, [resetFlow, address]);
 
-  // Resume the last room the user viewed this session (used on mount when there is no ?room= deep link), so a
-  // submenu switch returns to it with its opened documents restored from the cache. No-op if a room is already
-  // selected or none was viewed yet.
+  // Resume the last room this account viewed this session (used on mount when there is no ?room= deep link), so
+  // a submenu switch returns to it with its opened documents restored. No-op if a room is already selected, none
+  // was viewed yet, OR an outstanding batch ticket exists (the resume-ticket effect owns the mount then, and
+  // selectRoom here would reset its "waiting" state — the `!room` guard cannot see that effect's setRoom yet).
   const resumeLastRoom = useCallback(() => {
-    const last = openCache.getLastRoom();
+    if (address && findOpenTicket(address)) return;
+    const last = openCache.getLastRoom(address ?? "");
     if (last && !room) selectRoom(last);
-  }, [room, selectRoom]);
+  }, [room, selectRoom, address]);
+
+  // On an in-session wallet account switch, drop the previous account's selection + decrypted docs from view, so
+  // account B never sees account A's plaintext while this panel stays mounted (the module cache is already
+  // per-account, so this only covers the live React state). Guarded so it does NOT run on mount: a submenu
+  // remount is a fresh component, where resume / resumeLastRoom restore THIS account's own cache.
+  const seenAddr = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    const prev = seenAddr.current;
+    seenAddr.current = address;
+    // Only an account SWITCH (one connected address to a different connected one) drops the view. The first run
+    // (undefined), the initial connect (null -> A), and a disconnect (A -> null) are NOT switches, so they must
+    // not reset, or they would wipe a deep-linked / resumed room the moment the wallet connects.
+    if (!prev || !address || prev === address) return;
+    cancelled.current = true;
+    resetFlow();
+    setRoom("");
+  }, [address, resetFlow]);
 
   // ── the orchestrated open ──────────────────────────────────────────────────────────────────────
   // Get the key from the keepers and decrypt in the browser. Only reached once the on-chain grant exists.
@@ -431,7 +451,7 @@ export function useSharedOpen() {
       if (!(docId in prev)) return prev;
       const next = { ...prev };
       delete next[docId];
-      openCache.setOpened(room, next);
+      openCache.setOpened(address ?? "", room, next);
       return next;
     });
     setDocErrors((prev) => {
@@ -459,7 +479,7 @@ export function useSharedOpen() {
       // Mirror to the module cache so it also survives a submenu switch (not just a collapse/re-expand).
       setOpenedDocs((prev) => {
         const next = { ...prev, [docId]: out };
-        openCache.setOpened(room, next);
+        openCache.setOpened(address ?? "", room, next);
         return next;
       });
       if (out.reconstructed) {
@@ -479,7 +499,7 @@ export function useSharedOpen() {
       setPhase("idle");
       setOpenDocId((cur) => (cur === docId ? null : cur));
     }
-  }, [room]);
+  }, [room, address]);
 
   // Poll the batch ticket until the access lands on-chain (submitted), then auto-open. Returns true if it
   // landed. Shared by a fresh setup and by resuming a persisted ticket.
@@ -895,7 +915,7 @@ export function useSharedOpen() {
       const wasOpen = expandedDocs.includes(docId);
       setExpandedDocs((prev) => {
         const next = wasOpen ? prev.filter((d) => d !== docId) : [...prev, docId];
-        openCache.setExpanded(room, next);
+        openCache.setExpanded(address ?? "", room, next);
         return next;
       });
       if (wasOpen) return;
@@ -912,7 +932,7 @@ export function useSharedOpen() {
       if (phase !== "idle" && phase !== "error") return;
       void open(docId);
     },
-    [room, expandedDocs, openedDocs, docErrors, roomBond, roomBondHas, roomAccessReady, phase, open],
+    [room, address, expandedDocs, openedDocs, docErrors, roomBond, roomBondHas, roomAccessReady, phase, open],
   );
 
   // Once the room's access has landed, open any document that is expanded but not yet opened. Runs one at a time

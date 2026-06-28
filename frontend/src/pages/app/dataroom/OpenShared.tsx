@@ -228,8 +228,17 @@ function OpenStatus({ s }: { s: ReturnType<typeof useSharedOpen> }) {
     case "proving":
     case "queuing":
     case "waiting":
-    case "opening":
       return <OpenStepper s={s} />;
+    case "opening":
+      // A follow-up document (room access already set up) goes straight to fetch+decrypt, so show the single
+      // line, not the full "setting up" stepper. The first document's opening step keeps the stepper.
+      return s.roomAccessReady ? (
+        <p className="flex items-center gap-2 text-sm text-foreground" data-testid="access-opening">
+          <Loader2 className="size-4 animate-spin" aria-hidden="true" /> Getting the key and decrypting in your browser…
+        </p>
+      ) : (
+        <OpenStepper s={s} />
+      );
     case "revoked":
       return (
         <div className="space-y-2">
