@@ -22,6 +22,10 @@ export function SyncConsentDialog() {
   // trap effect (which would steal focus back to the dismiss button on every keystroke).
   const dontAskRef = useRef(false);
   dontAskRef.current = dontAsk;
+  // Read busy through a ref so the focus-trap effect runs once per open (keying it on sync.busy would tear down
+  // and rebuild the trap when signing starts, dropping focus to the background while the buttons are disabled).
+  const busyRef = useRef(false);
+  busyRef.current = sync.busy;
 
   const dismissRef = useRef<HTMLButtonElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
@@ -54,7 +58,7 @@ export function SyncConsentDialog() {
     restoreRef.current = document.activeElement as HTMLElement | null;
     dismissRef.current?.focus(); // focus the non-signing action so Enter never starts a signature
     const onKey = (e: KeyboardEvent) => {
-      if (sync.busy) return; // do not let Escape close mid-signature
+      if (busyRef.current) return; // do not let Escape close mid-signature
       if (e.key === "Escape") {
         dismiss();
         return;
@@ -80,7 +84,7 @@ export function SyncConsentDialog() {
       restoreRef.current?.focus?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, sync.busy]);
+  }, [open]);
 
   const close = useCallback(() => {
     if (address) handled.current.add(address);
@@ -123,7 +127,7 @@ export function SyncConsentDialog() {
       >
         <div className="flex items-center gap-2.5">
           <span className="grid size-9 place-items-center rounded-lg bg-primary/10 text-primary">
-            <RefreshCw className="size-4.5" aria-hidden="true" />
+            <RefreshCw className="size-5" aria-hidden="true" />
           </span>
           <h2 id={titleId} className="text-base font-semibold tracking-tight" data-testid="sync-consent-title">
             Sync your rooms and access to other devices?

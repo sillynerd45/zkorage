@@ -247,7 +247,7 @@ export function FreighterButton() {
               <button
                 type="button"
                 role="menuitem"
-                onClick={() => void sync.toggle()}
+                onClick={() => void sync.toggle().catch(() => {})}
                 disabled={sync.busy}
                 data-testid="wallet-sync"
                 className="mt-1 flex w-full items-center justify-between rounded-md px-2 py-1.5 text-xs transition-colors hover:bg-accent hover:text-accent-foreground disabled:opacity-50"

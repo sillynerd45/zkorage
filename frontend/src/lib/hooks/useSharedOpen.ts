@@ -28,8 +28,9 @@ import { sdk } from "@/lib/sdk";
 import { useWallet, useTxSigner } from "@/lib/wallet/WalletContext";
 import { useDataRoomIdentity } from "@/lib/hooks/useDataRoomIdentity";
 import { readJoinRequests, writeJoinRequests } from "@/lib/dataroom/requests";
-import { pullVault, pushVault, forgetVault, isVaultSyncOn, setVaultSyncOn } from "@/lib/dataroom/vault";
+import { pushVault, isVaultSyncOn, setVaultSyncOn } from "@/lib/dataroom/vault";
 import { SYNC_EVENT } from "@/lib/sync/prefs";
+import { syncRestoreAll, syncDisable } from "@/lib/sync/orchestrator";
 import { writeOpenTicket, clearOpenTicket, findOpenTicket } from "@/lib/dataroom/openTicket";
 import { markBondLocked, clearBondLocked, hasBondLockedFor } from "@/lib/dataroom/bondLocks";
 import { getBondOpenIdentity } from "@/lib/bonded/bondOpenIdentity";
@@ -115,11 +116,17 @@ export function useSharedOpen() {
       const on = isVaultSyncOn(connected ? address : null);
       setSyncOn(on);
       if (address) reloadOpenable(address);
-      if (on && ident.hasSignature(address)) setSyncState("synced");
+      if (on && address && ident.hasSignature(address)) {
+        // The originator (the connect dialog or the wallet menu) already pulled both pillars and emitted, so
+        // mark this address synced to keep the pull-on-connect effect (re-run by syncOn flipping on) from
+        // pulling the rooms vault a second time.
+        syncedFor.current = address;
+        setSyncState("synced");
+      }
     };
     window.addEventListener(SYNC_EVENT, onSync);
     return () => window.removeEventListener(SYNC_EVENT, onSync);
-  }, [connected, address, reloadOpenable, ident]);
+  }, [connected, address, reloadOpenable, ident.hasSignature]);
 
   // Public directory names/descriptions (listed rooms only) so an approved room shows a human name like the
   // Discover tab, not just an id. One public read; a private/unlisted room falls back to your own label.
@@ -180,11 +187,9 @@ export function useSharedOpen() {
     (async () => {
       try {
         setSyncState("syncing");
-        const sig = await ident.getSignature();
-        await pullVault(address, sig);
+        await syncRestoreAll(address, signMessage); // both pillars, one cached signature
         if (!live) return;
         reloadOpenable(address);
-        await pushVault(address, sig);
         if (live) setSyncState("synced");
       } catch {
         if (live) setSyncState("error");
@@ -195,17 +200,15 @@ export function useSharedOpen() {
   }, [connected, address, syncOn]);
   useEffect(() => { syncedFor.current = null; }, [address]);
 
-  // One-tap unlock: sign once, pull the vault, merge, push the union back.
+  // One-tap unlock: sign once, restore both pillars (rooms + Bonded Access), merge, push the union back.
   const unlockSync = useCallback(async () => {
     if (!address) return;
     setSyncMsg(null);
     unlocking.current = true;
     setSyncState("syncing");
     try {
-      const sig = await ident.getSignature();
-      await pullVault(address, sig);
+      await syncRestoreAll(address, signMessage);
       reloadOpenable(address);
-      await pushVault(address, sig);
       syncedFor.current = address;
       setSyncState("synced");
     } catch (e) {
@@ -214,7 +217,7 @@ export function useSharedOpen() {
     } finally {
       unlocking.current = false;
     }
-  }, [address, ident, reloadOpenable]);
+  }, [address, signMessage, reloadOpenable]);
 
   // Turn sync on or off. Turning it ON is an explicit opt-in, so sign + pull right away (no separate Unlock
   // step); a declined signature lands in the "error" state with a retry. Turning it OFF deletes the server copy.
@@ -229,21 +232,17 @@ export function useSharedOpen() {
       } else {
         setSyncState("off");
         syncedFor.current = null;
-        // Only delete the server copy if the wallet already signed this session: turning a setting OFF should
-        // not pop the wallet. If not signed, say so honestly (a signature is needed to locate the copy).
-        if (ident.hasSignature(address)) {
-          try {
-            await forgetVault(await ident.getSignature());
-            setSyncMsg("Sync off. Your saved copy was deleted.");
-          } catch {
-            setSyncMsg("Sync off. The saved copy was not deleted.");
-          }
-        } else {
-          setSyncMsg("Sync off on this device. Sign in once to also delete the saved copy.");
-        }
+        // syncDisable only deletes the server copy if the wallet already signed this session, so turning a
+        // setting OFF never pops the wallet; it also keeps the Bonded Access handle backup intact.
+        const deleted = await syncDisable(address, signMessage);
+        setSyncMsg(
+          deleted
+            ? "Sync off. Your saved copy was deleted."
+            : "Sync off on this device. Sign in once to also delete the saved copy.",
+        );
       }
     },
-    [address, ident, unlockSync],
+    [address, signMessage, unlockSync],
   );
 
   // The open flow. One document is "active" (openDocId + phase) at a time, but every document that opened stays
