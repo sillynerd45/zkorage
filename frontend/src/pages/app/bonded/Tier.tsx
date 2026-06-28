@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Wallet, ShieldCheck, Loader2, AlertTriangle, RefreshCw, UserPlus, Lock, Users, CalendarClock } from "lucide-react";
 import { useBonded } from "@/lib/hooks/useBonded";
 import { useWallet } from "@/lib/wallet/WalletContext";
@@ -37,6 +37,21 @@ import { cn } from "@/lib/utils";
 // requirement, the stronger the set. The default below gives newcomers one shared requirement to converge on.
 const DEFAULT_DEADLINE_UNIX = 1_800_000_000; // ~2027-01-15
 const DEFAULT_AMOUNT = "100";
+
+// The requirement form (token, amount, deadline) the user last had, kept per wallet so leaving for another
+// Bonded Proofs submenu and coming back restores it (the page unmounts on navigation, so local state alone
+// would reset to the defaults). Module-level, in-memory, survives within one app session. Only the public
+// requirement is held, never a secret. The token may be one the wallet does not currently list (e.g. arrived
+// via a Data Room "Check Bonded Access" link), so its symbol/decimals are kept too, to re-inject it.
+type SavedForm = {
+  tokenKey: string;
+  amount: string;
+  deadlineAt: string;
+  token: string | null;
+  symbol: string | null;
+  decimals: number | null;
+};
+const tierFormCache = new Map<string, SavedForm>();
 // How long a background proof can be in flight before the page offers a retry (the prover can queue; the
 // is_granted poll still flips to granted whenever it actually lands, so this only governs the retry prompt).
 const PROVE_STALE_MS = 20 * 60_000;
@@ -90,6 +105,33 @@ export default function BondedTier() {
   const [deadlineAt, setDeadlineAt] = useState(toLocalInput(DEFAULT_DEADLINE_UNIX));
   const deadlineRef = useRef<HTMLInputElement>(null);
 
+  // A requirement passed in by a Data Room "Check Bonded Access" redirect (?token=&min=&deadline=&dec=&sym=),
+  // so a reader who has no qualifying bond lands here with the room's exact requirement ready to lock. Parsed
+  // once (undefined = not parsed yet, null = none) and consumed by reloadTokens, so it wins over the saved form.
+  const [params] = useSearchParams();
+  const prefillRef = useRef<SavedForm | null | undefined>(undefined);
+  if (prefillRef.current === undefined) {
+    const t = params.get("token");
+    const min = params.get("min");
+    const dl = params.get("deadline");
+    if (t && min && dl) {
+      const dec = Number(params.get("dec")) || 7;
+      prefillRef.current = {
+        tokenKey: "",
+        token: t,
+        symbol: params.get("sym") || short(t, 4),
+        decimals: dec,
+        amount: plainAmount(min, dec),
+        deadlineAt: toLocalInput(Number(dl)),
+      };
+    } else {
+      prefillRef.current = null;
+    }
+  }
+  // The wallet address whose saved form has been restored, so the write-back effect does not clobber the cache
+  // with the defaults before the restore for that address has run.
+  const restoredRef = useRef<string | null>(null);
+
   const [qual, setQual] = useState<BondQualSet | null>(null);
   const [qualLoading, setQualLoading] = useState(false);
   const [status, setStatus] = useState<BondStatus | null>(null);
@@ -139,15 +181,42 @@ export default function BondedTier() {
     setSyncMsg("");
   }, [b.address]);
 
-  // Load the wallet's tokens once connected (these are what you can bond).
+  // Load the wallet's tokens once connected (these are what you can bond), then restore the form the user last
+  // had for this wallet (or a requirement passed in by a Data Room redirect). A wanted token that the wallet
+  // does not currently list is injected as a synthetic option so it stays selectable.
   const reloadTokens = useCallback(async () => {
-    if (!b.address) return;
+    const addr = b.address;
+    if (!addr) return;
     setLoadingTokens(true);
     try {
-      const list = await loadWalletTokens(b.address);
+      let list = await loadWalletTokens(addr);
       if (!alive.current) return;
+      // The form to restore: a one-shot redirect prefill wins, else this wallet's saved form, else nothing.
+      const want = prefillRef.current ?? tierFormCache.get(addr) ?? null;
+      if (prefillRef.current) prefillRef.current = null; // consume the redirect prefill once
+      let wantKey = "";
+      if (want) {
+        if (want.token) {
+          let opt = list.find((t) => t.contractId === want.token);
+          if (!opt && want.symbol) {
+            opt = { key: `req:${want.token}`, symbol: want.symbol, contractId: want.token, decimals: want.decimals ?? 7, balanceBase: "0", kind: "custom" };
+            list = [...list, opt];
+          }
+          wantKey = opt?.key ?? want.tokenKey;
+        } else {
+          wantKey = want.tokenKey;
+        }
+      }
       setTokens(list);
-      setTokenKey((prev) => (prev && list.some((t) => t.key === prev) ? prev : list[0]?.key ?? ""));
+      setTokenKey((prev) => {
+        if (wantKey && list.some((t) => t.key === wantKey)) return wantKey;
+        return prev && list.some((t) => t.key === prev) ? prev : list[0]?.key ?? "";
+      });
+      if (want) {
+        setAmount(want.amount);
+        setDeadlineAt(want.deadlineAt);
+      }
+      restoredRef.current = addr;
     } finally {
       if (alive.current) setLoadingTokens(false);
     }
@@ -155,6 +224,21 @@ export default function BondedTier() {
   useEffect(() => {
     void reloadTokens();
   }, [reloadTokens]);
+
+  // Persist the requirement form for this wallet so it survives leaving for another Bonded Proofs submenu and
+  // returning. Gated on `restoredRef` so the initial defaults do not overwrite a saved form before it loads.
+  useEffect(() => {
+    const addr = b.address ?? "";
+    if (restoredRef.current !== addr) return;
+    tierFormCache.set(addr, {
+      tokenKey,
+      amount,
+      deadlineAt,
+      token: selected?.contractId ?? null,
+      symbol: selected?.symbol ?? null,
+      decimals: selected?.decimals ?? null,
+    });
+  }, [b.address, tokenKey, amount, deadlineAt, selected]);
 
   // The live qualifying set for the current requirement (anonymity-set size + the derived req_id).
   const refreshQual = useCallback(async () => {

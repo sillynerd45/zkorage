@@ -82,18 +82,21 @@ async function stubReaderCommon(page: import("@playwright/test").Page, enrollSta
 
 const bondReqFound = json({ found: true, scope: "room", gate: "C".repeat(56), reqId: "ab".repeat(32), token: TOKEN, minAmount: MIN, deadline: DEADLINE });
 
+// Every room's documents are chevron-expandable now; expanding one drives its open flow (and the status shows
+// inline under that document). For a legacy bond-implies-membership room this starts the deposit/prove flow.
 async function openTheDoc(page: import("@playwright/test").Page) {
   await page.goto(`/app/dataroom/documents?room=${ROOM}#open`);
   await expect(page.getByTestId("access-room-detail")).toBeVisible({ timeout: 30_000 });
-  await page.getByTestId("access-open").first().click();
+  await page.getByTestId("access-doc-toggle").first().click();
 }
 
-// A TRUE bond-only room has no per-document Open while locked (the docs are a read-only preview). Access is
-// driven by the ONE room-level "Set up access" action, so the bond-only reader flow starts there.
+// A TRUE bond-only room is opened per-document too: expanding a document runs the open proof for a reader who
+// holds a qualifying bond. (A reader with no qualifying bond is pointed to Bonded Proofs instead; those tests
+// assert the banner CTA directly rather than calling this.)
 async function openBondOnlyRoom(page: import("@playwright/test").Page) {
   await page.goto(`/app/dataroom/documents?room=${ROOM}#open`);
   await expect(page.getByTestId("access-bond-panel")).toBeVisible({ timeout: 30_000 });
-  await page.getByTestId("access-bond-setup").click();
+  await page.getByTestId("access-doc-toggle").first().click();
 }
 
 test("BA5: a bonded doc with no qualifying bond shows the inline deposit step", async ({ page }) => {
@@ -275,17 +278,21 @@ test("Room Management: the owner sets Bonded Access via a classic asset", async 
 // ── TRUE bond-only reader (no approval, no enrollment) ──
 const bondReqOpen = json({ found: true, scope: "room", bondOpen: true, mode: "open", gate: "C".repeat(56), reqId: "ab".repeat(32), token: TOKEN, minAmount: MIN, deadline: DEADLINE });
 
-test("bond-only: a non-member reader goes straight to deposit (no approval needed)", async ({ page }) => {
+test("bond-only: a reader with no qualifying bond is pointed to Bonded Proofs (no in-room lock)", async ({ page }) => {
   await page.addInitScript(mock);
   await stubReaderCommon(page, "none"); // NOT enrolled, never asked to join
   await page.route("**/dataroom/bond-requirement/**", (r) => (r.request().method() === "GET" ? r.fulfill(bondReqOpen) : r.continue()));
-  // 3 other bonders (at the floor), reader not among them -> they must deposit.
+  // 3 other bonders (at the floor), reader not among them -> they hold no qualifying bond.
   await page.route("**/bonded/bond/qual-set**", (r) => r.fulfill(json(qualSet(3, [decoy(1), decoy(2), decoy(3)]))));
 
-  await openBondOnlyRoom(page);
-  // The key difference from the membership-bond path: a non-member is NOT dead-ended at "bond-not-member".
-  await expect(page.getByTestId("access-status")).toHaveAttribute("data-phase", "bond-deposit", { timeout: 30_000 });
-  await expect(page.getByTestId("access-bond-deposit")).toBeVisible();
+  await page.goto(`/app/dataroom/documents?room=${ROOM}#open`);
+  // Bonds are created in Bonded Proofs now: the room banner offers "Create Bonded Access" (pre-filled), and
+  // there is NO in-room deposit step.
+  const cta = page.getByTestId("access-bond-create-room");
+  await expect(cta).toBeVisible({ timeout: 30_000 });
+  await expect(cta).toContainText("Create Bonded Access");
+  await expect(cta).toHaveAttribute("href", new RegExp(`/app/bonded/tier\\?token=${encodeURIComponent(TOKEN)}`));
+  await expect(page.getByTestId("access-bond-deposit")).toHaveCount(0);
 });
 
 test("bond-only: prove runs ONLY the bond-open proof, never a membership proof", async ({ page }) => {
@@ -310,14 +317,14 @@ test("bond-only: prove runs ONLY the bond-open proof, never a membership proof",
   expect(memberProve).toBe(0);
 });
 
-test("bond-only: the Open page shows a named bonded panel + a room-level Set up access", async ({ page }) => {
+test("bond-only: the Open page names the bonded room + shows the requirement; no in-room lock", async ({ page }) => {
   const errs: string[] = [];
   page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/i.test(m.text())) errs.push(m.text()); });
   const ISSUER = "GDFEJBM6RGK2IL2PIMGVNTGSO7O2NOVILFQUMIC55YMFKSGACA5IO2PM";
   await page.addInitScript(mock);
   await stubReaderCommon(page, "none");
   await page.route("**/dataroom/bond-requirement/**", (r) => (r.request().method() === "GET" ? r.fulfill(bondReqOpen) : r.continue()));
-  await page.route("**/bonded/bond/qual-set**", (r) => r.fulfill(json(qualSet(1, [decoy(1)])))); // 1 of 3, below the floor
+  await page.route("**/bonded/bond/qual-set**", (r) => r.fulfill(json(qualSet(1, [decoy(1)])))); // reader not in the set -> holds no bond
   // a directory NAME for the room + an issuer for the token, so the panel can show both.
   await page.route("**/dataroom/directory", (r) => r.fulfill(json({ count: 1, dataroomId: "", rooms: [{ roomId: ROOM, name: "Acme bonded room", description: "deal", memberBucket: "under 5", anonTier: "forming", listedAt: 1 }] })));
   await page.route("**/escrow/token-balance**", (r) => r.fulfill(json({ owner: ADDR, token: TOKEN, balance: "5000000000", decimals: 7, symbol: "TUSD", issuer: ISSUER })));
@@ -333,63 +340,54 @@ test("bond-only: the Open page shows a named bonded panel + a room-level Set up 
   await expect(req).toContainText(/:\d{2}/); // the deadline includes the time
   await expect(req.locator(`a[href="https://stellar.expert/explorer/testnet/contract/${TOKEN}"]`)).toBeVisible();
   await expect(page.getByTestId("access-bond-req-issuer").locator(`a[href="https://stellar.expert/explorer/testnet/account/${ISSUER}"]`)).toBeVisible();
-  // The set count + a single room-level "Set up access" action (not buried per-document).
   await expect(panel.getByTestId("bond-count")).toBeVisible();
-  await expect(page.getByTestId("access-bond-setup")).toContainText("Set up access");
   // The privacy note is bond-aware (NOT the membership "approved members" copy).
   await expect(page.getByTestId("access-privacy")).toContainText("qualifying bond");
   await expect(page.getByTestId("access-privacy")).not.toContainText("members the owner approved");
 
-  // While locked (no access yet) the documents are a read-only preview: a "Locked" pill, never a misleading
-  // per-document "Open" button. A one-line note points to the single room-level action.
-  await expect(page.getByTestId("access-docs-locked-note")).toContainText("Set up access to open");
-  await expect(page.getByTestId("access-doc-locked").first()).toBeVisible();
-  await expect(page.getByTestId("access-open")).toHaveCount(0);
+  // Bonds are created in Bonded Proofs now: the reader (no qualifying bond) is offered "Create Bonded Access",
+  // and there is NO in-room lock/deposit and NO room-level "Set up access" button.
+  const cta = page.getByTestId("access-bond-create-room");
+  await expect(cta).toContainText("Create Bonded Access");
+  await expect(cta).toHaveAttribute("href", new RegExp(`/app/bonded/tier\\?token=${encodeURIComponent(TOKEN)}`));
+  await expect(page.getByTestId("access-bond-setup")).toHaveCount(0);
+  await expect(page.getByTestId("access-bond-deposit")).toHaveCount(0);
 
-  // Clicking the room-level "Set up access" drives the flow to the deposit step, shown at the room level.
-  await page.getByTestId("access-bond-setup").click();
-  await expect(page.getByTestId("access-status")).toHaveAttribute("data-phase", "bond-deposit", { timeout: 30_000 });
-  await expect(page.getByTestId("access-bond-deposit")).toBeVisible();
+  // Documents are listed and expandable; expanding one points to creating a bond, never an in-room deposit.
+  await page.getByTestId("access-doc-toggle").first().click();
+  await expect(page.getByTestId("access-doc-need-lock")).toBeVisible();
+  await expect(page.getByTestId("access-bond-deposit")).toHaveCount(0);
   await page.screenshot({ path: "tests/bonded-open-panel.png", fullPage: true });
   expect(errs, errs.join("\n")).toHaveLength(0);
 });
 
-test("bond-only: when this wallet already locked a bond, the panel says 'Continue setup', not a bare 'Set up access'", async ({ page }) => {
+test("bond-only: a reader who holds a qualifying bond expands a document to open it (below floor waits)", async ({ page }) => {
   await page.addInitScript(mock);
-  // a local marker (this browser) that this wallet locked a bond for ROOM under the current requirement's reqId
-  await page.addInitScript(`localStorage.setItem("zkorage.dr.bondlocked.${ADDR}", JSON.stringify({ "${ROOM}": "${"ab".repeat(32)}" }));`);
   await stubReaderCommon(page, "none");
   await page.route("**/dataroom/bond-requirement/**", (r) => (r.request().method() === "GET" ? r.fulfill(bondReqOpen) : r.continue()));
   await page.route("**/bonded/bond/qual-set**", (r) => r.fulfill(json(qualSet(2, [mine(1), decoy(2)])))); // reader's bond is in the set, below the floor
 
   await page.goto(`/app/dataroom/documents?room=${ROOM}#open`);
   await expect(page.getByTestId("access-bond-panel")).toBeVisible({ timeout: 30_000 });
-  // On landing (no wallet signature yet) the local marker drives a "you've already locked a bond" hint, and
-  // the CTA reads "Continue setup" instead of the bare "Set up access".
-  await expect(page.getByTestId("access-bond-locked-note")).toContainText("already locked a qualifying bond");
-  await expect(page.getByTestId("access-bond-setup")).toContainText("Continue setup");
+  // The reader holds a qualifying bond -> no "Create Bonded Access" CTA; the banner invites expanding a doc.
+  await expect(page.getByTestId("access-bond-create-room")).toHaveCount(0);
+  // Expanding a document runs the open flow; below the floor it waits for more bonders (no in-room lock).
+  await page.getByTestId("access-doc-toggle").first().click();
+  await expect(page.getByTestId("access-status")).toHaveAttribute("data-phase", "bond-below-floor", { timeout: 30_000 });
+  await expect(page.getByTestId("access-bond-deposit")).toHaveCount(0);
 });
 
-test("bond-only: with no saved handle, a fresh Bonded Access identity is minted and recognised", async ({ page }) => {
+test("bond-only: with no Bonded Access handle, the reader is sent to Bonded Proofs to create one", async ({ page }) => {
   await page.addInitScript(mock);
-  // Drop the seeded local handle so the open flow takes the mint path (empty vault -> enrollBond).
+  // Drop the seeded local handle: with no handle this wallet cannot hold a qualifying bond, so the open flow
+  // never derives an identity (no surprise signature). It points to Bonded Proofs, where bonds are created.
   await page.addInitScript(`localStorage.removeItem("zkorage-bond-identity.${ADDR}")`);
   await stubReaderCommon(page, "none");
   await page.route("**/dataroom/bond-requirement/**", (r) => (r.request().method() === "GET" ? r.fulfill(bondReqOpen) : r.continue()));
-  // The wallet has no vaulted handle, so the flow mints a fresh one (and best-effort backs it up).
-  await page.route("**/bonded/bond/handle-vault/**", (r) =>
-    r.fulfill(json(r.request().method() === "GET" ? { found: false, blob: null } : { ok: true })),
-  );
-  const MINT_SECRET = "33".repeat(32);
-  const MINT_COMMIT = bondAccessCommitment(MINT_SECRET).toLowerCase();
-  await page.route("**/bonded/bond/enroll", (r) =>
-    r.fulfill(json({ ok: true, setId: "x", memberIndex: 0, memberCount: 1, memberRoot: "00".repeat(32),
-      minted: { idSecret: MINT_SECRET, idTrapdoor: "44".repeat(32), holderSeed: "55".repeat(32), accessor: "66".repeat(32), qualCommitment: MINT_COMMIT } })),
-  );
-  // The minted handle's bond is in the qualifying set, at the floor -> bond-ready (no membership proof needed).
-  await page.route("**/bonded/bond/qual-set**", (r) =>
-    r.fulfill(json(qualSet(3, [{ id: 7, commitment: MINT_COMMIT, amount: MIN, unlock_time: DEADLINE, depositor: ADDR }, decoy(2), decoy(3)]))),
-  );
-  await openBondOnlyRoom(page);
-  await expect(page.getByTestId("access-status")).toHaveAttribute("data-phase", "bond-ready", { timeout: 30_000 });
+  await page.route("**/bonded/bond/qual-set**", (r) => r.fulfill(json(qualSet(3, [decoy(1), decoy(2), decoy(3)]))));
+
+  await page.goto(`/app/dataroom/documents?room=${ROOM}#open`);
+  const cta = page.getByTestId("access-bond-create-room");
+  await expect(cta).toBeVisible({ timeout: 30_000 });
+  await expect(cta).toHaveAttribute("href", /\/app\/bonded\/tier\?/);
 });

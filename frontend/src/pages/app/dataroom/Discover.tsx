@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useLocation } from "react-router-dom";
-import { ChevronDown, Clock, Compass, FolderOpen, KeyRound, Search, Settings2, ShieldCheck, UserPlus, Users } from "lucide-react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { ChevronDown, Clock, Compass, FolderOpen, KeyRound, Loader2, Search, Settings2, ShieldCheck, UserPlus, Users } from "lucide-react";
+import { bondAccessCommitment } from "zkorage-sdk";
 import { useDirectory } from "@/lib/hooks/useDirectory";
 import { useRoomList } from "@/lib/hooks/useRoomList";
 import { useWallet } from "@/lib/wallet/WalletContext";
 import { joinRequestStates } from "@/lib/dataroom/requests";
+import { loadIdentityAt } from "@/lib/bonded/handle";
 import { short } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -12,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { actionButtonHover, Callout, CopyIconButton, DirectoryListSkeleton, RefreshBar, RoomSearch, ShowMore } from "@/components/app/dataroom/kit";
 import { BondRequirementDetail } from "@/components/app/dataroom/BondRequirementDetail";
-import { getMyRooms, type AnonTier, type DirectoryBond, type DirectoryRoom, type EnrollState } from "@/lib/api";
+import { getBondQualSet, getMyRooms, type AnonTier, type DirectoryBond, type DirectoryRoom, type EnrollState } from "@/lib/api";
 
 // The text a directory room is matched against in search (name + id + description). Module-level + stable so
 // useRoomList's filter memo does not recompute every render.
@@ -81,6 +83,14 @@ function BucketBadge({ tier, bucket, compact = false }: { tier: AnonTier; bucket
 
 const joinLink = (roomId: string) => `/app/dataroom/membership?room=${roomId}`;
 const accessLink = (roomId: string) => `/app/dataroom/documents?room=${roomId}#open`;
+// The same Open link, asking the page to set up bonded access at once (the reader already holds a qualifying
+// bond, so the open proof can start without a manual click). Membership rooms ignore the flag.
+const accessSetupLink = (roomId: string) => `/app/dataroom/documents?room=${roomId}&setup=bond#open`;
+// The standalone Bonded Access page (Bonded Proofs), pre-filled with a room's requirement so a reader with no
+// qualifying bond lands ready to lock one. This is where bonds are created now; the Data Room never locks one.
+const tierCreateLink = (bond: DirectoryBond) =>
+  `/app/bonded/tier?token=${encodeURIComponent(bond.token)}&min=${bond.minAmount}&deadline=${bond.deadline}` +
+  `&dec=${bond.decimals}&sym=${encodeURIComponent(bond.symbol)}`;
 
 // The directory's per-room action reflects your LOCAL request history (this browser, when connected): an
 // approved room opens documents, a pending one shows it's already requested, anything else invites you to join.
@@ -174,17 +184,50 @@ function BondToEnterPill() {
   );
 }
 
-// A bond-only room's action. It routes to Documents > Open, the single flow that handles a bonded room: it
-// shows the requirement, locks a qualifying bond (deposit auto-filled to the minimum), proves access, and
-// opens, OR opens straight away if this wallet already has access. The label is "Create Bonded Access" (not
-// "Open"), because a visitor without a bond yet must set one up first; the standalone Bonded Access page is a
-// different system and cannot grant room access, so it is intentionally not the destination.
-function BondCreateLink({ roomId }: { roomId: string }) {
+// A bond-only room's action: "Check Bonded Access". On click it checks whether this wallet already holds a
+// qualifying bond for the room's requirement (the reusable per-wallet Bonded Access handle's commitment in the
+// live qualifying set), then routes:
+//   - has a qualifying bond  -> Documents > Open, asking it to set up access at once (opens straight away if a
+//                               grant already exists, else runs the one-time open proof). No bond is locked here.
+//   - no qualifying bond     -> Bonded Proofs > Bonded Access, pre-filled with this requirement, to lock one.
+// The check reads the handle from this browser (no signature) and one public set; with no handle the wallet
+// cannot hold a bond, so it routes to Bonded Proofs. Without a connected wallet it cannot tell, so it hands off
+// to the Open page (which prompts connect and runs the same check).
+function BondCheckButton({ roomId, bond }: { roomId: string; bond: DirectoryBond }) {
+  const navigate = useNavigate();
+  const { connected, address } = useWallet();
+  const [busy, setBusy] = useState(false);
+  const check = async () => {
+    setBusy(true);
+    try {
+      if (!connected || !address) {
+        navigate(accessLink(roomId));
+        return;
+      }
+      const handle = loadIdentityAt(address);
+      if (!handle) {
+        navigate(tierCreateLink(bond));
+        return;
+      }
+      const mine = bondAccessCommitment(handle.idSecret).toLowerCase();
+      const q = await getBondQualSet(bond.token, bond.minAmount, bond.deadline).catch(() => null);
+      // On a read error we cannot be sure, so route to the Open page (which re-checks) rather than wrongly
+      // sending a bond holder to lock again.
+      if (!q) {
+        navigate(accessLink(roomId));
+        return;
+      }
+      const hasBond = q.locks.some((l) => l.commitment.toLowerCase() === mine);
+      navigate(hasBond ? accessSetupLink(roomId) : tierCreateLink(bond));
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
-    <Link to={accessLink(roomId)} data-testid="discover-bond-create" className={cn(buttonVariants({ size: "sm" }), actionButtonHover)}>
-      <KeyRound aria-hidden="true" />
-      Create Bonded Access
-    </Link>
+    <Button size="sm" onClick={check} disabled={busy} data-testid="discover-bond-check" className={actionButtonHover}>
+      {busy ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : <KeyRound aria-hidden="true" />}
+      {busy ? "Checking…" : "Check Bonded Access"}
+    </Button>
   );
 }
 
@@ -193,7 +236,7 @@ function BondCreateLink({ roomId }: { roomId: string }) {
 // bond requirement, which is otherwise hidden to keep the row compact. A membership room is never expandable.
 // Filled bg-background to stand out as a nested row on the section card.
 function DirectoryRoomCard({ room, isOwn, state }: { room: DirectoryRoom; isOwn: boolean; state?: EnrollState }) {
-  // A TRUE bond-only room shows the bond requirement + a "Create Bonded Access" action instead of a member
+  // A TRUE bond-only room shows the bond requirement + a "Check Bonded Access" action instead of a member
   // bucket + request-to-join. Owners still see "Your room".
   const bond = room.bond && room.bond.bondOpen ? room.bond : null;
   // Only a bond-only room expands (to reveal the requirement). A membership room has nothing to hide, so no
@@ -265,7 +308,7 @@ function DirectoryRoomCard({ room, isOwn, state }: { room: DirectoryRoom; isOwn:
           {isOwn ? (
             <OwnRoomLink roomId={room.roomId} />
           ) : bond ? (
-            <BondCreateLink roomId={room.roomId} />
+            <BondCheckButton roomId={room.roomId} bond={bond} />
           ) : (
             <JoinButton roomId={room.roomId} state={state} />
           )}
@@ -450,7 +493,7 @@ export default function Discover() {
 
           {d.lookupResult && (() => {
             const lr = d.lookupResult;
-            // A bond-only room resolved by id shows its requirement + "Create Bonded Access", same as the
+            // A bond-only room resolved by id shows its requirement + "Check Bonded Access", same as the
             // directory; an own room shows "Your room". A private id stays dark (no bond info revealed).
             const lbond = lr.bond && lr.bond.bondOpen ? lr.bond : null;
             const lisOwn = ownedRooms.has(lr.roomId.toLowerCase());
@@ -512,7 +555,7 @@ export default function Discover() {
                     {lisOwn ? (
                       <OwnRoomLink roomId={lr.roomId} />
                     ) : lbond ? (
-                      <BondCreateLink roomId={lr.roomId} />
+                      <BondCheckButton roomId={lr.roomId} bond={lbond} />
                     ) : (
                       <JoinButton roomId={lr.roomId} state={statusByRoom[lr.roomId.toLowerCase()]} />
                     )}

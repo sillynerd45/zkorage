@@ -98,6 +98,25 @@ test("tier: multi-token requirement, handle mints, anonymity-set gating (light +
   expect(errs, errs.join("\n")).toHaveLength(0);
 });
 
+test("tier: a requirement passed via query params pre-fills the form (Data Room redirect)", async ({ page }) => {
+  const TOKEN = "CCFHRZAP7GYUBNJ4RN7NBZL5GS7Q32F4CIXDTWTTIGPYEDWRIS2TUPA5"; // not in the wallet -> synthetic option
+  const DEADLINE = 1893456000; // a fixed future unix
+  await page.addInitScript(mock(DEPLOYER));
+  await stubHorizon(page);
+  await page.route("**/bonded/bond/qual-set**", (r) => r.fulfill({ json: {
+    token: TOKEN, minAmount: "1000000000", deadline: DEADLINE, reqId: "ab".repeat(32),
+    anonSetSize: 0, minAnonSet: 3, belowMin: true, computedRoot: "", published: false, ringLen: 0, locks: [],
+  } }));
+  await page.goto(`/app/bonded/tier?token=${TOKEN}&min=1000000000&deadline=${DEADLINE}&dec=7&sym=ZKUSD`);
+  await expect(page.getByTestId("bonded-tier")).toBeVisible();
+  // The token from the link is selected (a synthetic option, since the wallet does not hold it), and the amount
+  // + deadline reflect the requirement, so a reader sent here from "Check Bonded Access" lands ready to lock.
+  await expect(page.getByTestId("tier-token")).toHaveValue(`req:${TOKEN}`, { timeout: 30_000 });
+  await expect(page.getByRole("option", { name: /ZKUSD/ })).toBeAttached();
+  await expect(page.getByTestId("tier-amount")).toHaveValue("100");
+  await expect(page.getByTestId("tier-deadline-trigger")).toContainText(/20\d\d/);
+});
+
 // A qualifying bond the wallet already holds, plus matching backend reads, so the "use a bond you hold"
 // loader + the "already held" detection can be exercised without an on-chain deposit. The lock's token is a
 // valid C-address that is NOT in the wallet picker, so loading it also exercises the synthetic-token path.
