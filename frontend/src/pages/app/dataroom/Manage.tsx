@@ -240,9 +240,11 @@ export default function RoomManagement() {
     setClearErr(null);
     setSwitched(false);
     setClearing(true);
-    const roomId = e.ownerRoom.trim();
+    // Cache + reconcile key on the same (untrimmed) value as shownRoom/the room-select effect; trim only for the
+    // contract call, so reconcileModel's shownRoom guard never mismatches.
+    const room = e.ownerRoom;
     try {
-      const r = await clearBondRequirement(roomId, signer);
+      const r = await clearBondRequirement(room.trim(), signer);
       if (!r.ok) {
         setClearErr(r.error ?? "Could not switch to membership.");
         return;
@@ -250,11 +252,11 @@ export default function RoomManagement() {
       // The clear succeeded on-chain, so reflect membership at once (the button is replaced by the membership
       // note). Then reconcile with the chain, tolerant of RPC lag, so a momentarily stale read cannot flip it
       // back to "Switch to membership".
-      bondReqCache.set(roomId, { found: false, bondOpen: false });
+      bondReqCache.set(room, { found: false, bondOpen: false });
       setFound(false);
       setBondOpen(false);
       setSwitched(true);
-      reconcileModel(roomId, false);
+      reconcileModel(room, false);
     } catch (err) {
       setClearErr(String((err as Error).message ?? err));
     } finally {

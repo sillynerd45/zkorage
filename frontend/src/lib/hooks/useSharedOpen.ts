@@ -69,18 +69,6 @@ export type OpenPhase =
   | "bond-below-floor" // has a qualifying bond, fewer than BOND_FLOOR qualifying bonders
   | "bond-ready"; // has a qualifying bond, at/above the floor -> offer the one-time bond proof
 
-// The phases where a flow is actively processing the active document (not awaiting a user choice). While one of
-// these runs, expanding another document queues it (it opens on its own once the room's access lands), so the
-// reader never kicks off two setups at once.
-const PROCESSING_PHASES: ReadonlySet<OpenPhase> = new Set([
-  "checking",
-  "proving",
-  "queuing",
-  "waiting",
-  "opening",
-  "bond-detecting",
-]);
-
 // Cross-device sync status for the encrypted rooms vault.
 export type SyncState =
   | "off" // sync turned off (or no wallet)
@@ -258,6 +246,9 @@ export function useSharedOpen() {
   const [flowErr, setFlowErr] = useState<string | null>(null);
   // The decrypted result per document (success OR a not-released / wrong-key result, so the row can show why).
   const [openedDocs, setOpenedDocs] = useState<Record<string, OpenedCommitteeDocument>>({});
+  // A per-document open ERROR (a thrown keeper/RPC failure), so one document failing does not strand the others:
+  // the auto-open chain skips a failed document, and its row shows a retry instead of a perpetual spinner.
+  const [docErrors, setDocErrors] = useState<Record<string, string>>({});
   const [expandedDocs, setExpandedDocs] = useState<string[]>([]);
   // True once the room's access has landed (a first reconstructed open). Subsequent documents then open by just
   // fetching + decrypting, with no gate re-check and no new proof. `openFloorRef` remembers the anonymity floor
@@ -370,8 +361,10 @@ export function useSharedOpen() {
   const resetFlow = useCallback(() => {
     setOpenDocId(null);
     setPhase("idle");
+    setIdentity(null);
     setAccess(null);
     setOpenedDocs({});
+    setDocErrors({});
     setExpandedDocs([]);
     setRoomAccessReady(false);
     openFloorRef.current = ANON_FLOOR;
@@ -400,9 +393,15 @@ export function useSharedOpen() {
     setOpenDocId(docId);
     setPhase("opening");
     setFlowErr(null);
-    // Drop any stale cached result for this doc (e.g. a previous "not released yet"), so the row shows the
-    // opening spinner during a retry instead of the old failure.
+    // Drop any stale cached result OR prior error for this doc (e.g. a previous "not released yet" / a thrown
+    // keeper failure), so the row shows the opening spinner during a retry instead of the old failure.
     setOpenedDocs((prev) => {
+      if (!(docId in prev)) return prev;
+      const next = { ...prev };
+      delete next[docId];
+      return next;
+    });
+    setDocErrors((prev) => {
       if (!(docId in prev)) return prev;
       const next = { ...prev };
       delete next[docId];
@@ -435,8 +434,12 @@ export function useSharedOpen() {
       setOpenDocId((cur) => (cur === docId ? null : cur));
     } catch (e) {
       if (cancelled.current) return;
-      setFlowErr(String((e as Error).message ?? e));
-      setPhase("error");
+      // Record a per-document error and free the slot, so a thrown failure on one document does not strand the
+      // others: the auto-open chain skips this doc, and its row shows a retry. (Setup-flow errors stay on
+      // `flowErr`/phase "error"; this is only the keeper-fetch step.)
+      setDocErrors((prev) => ({ ...prev, [docId]: String((e as Error).message ?? e) }));
+      setPhase("idle");
+      setOpenDocId((cur) => (cur === docId ? null : cur));
     }
   }, [room]);
 
@@ -854,26 +857,31 @@ export function useSharedOpen() {
       const wasOpen = expandedDocs.includes(docId);
       setExpandedDocs((prev) => (wasOpen ? prev.filter((d) => d !== docId) : [...prev, docId]));
       if (wasOpen) return;
-      if (openedDocs[docId]) return; // a cached result (success or a retry-able failure) renders in the row
+      if (openedDocs[docId] || docErrors[docId]) return; // a cached result / error (with retry) renders in the row
       // Bond-only room where this wallet holds no qualifying bond (or has no handle yet): do NOT derive an
       // identity or prompt for a signature on a casual expand. The row shows the "create a bond" pointer; the
       // reader locks one on Bonded Proofs (the only place bonds are created now).
       if (roomBond?.bondOpen && roomBondHas === false) return;
       if (roomAccessReady) return; // the auto-open effect opens it
-      if (PROCESSING_PHASES.has(phase)) return; // a setup is running; this one queues
+      // A flow is already active for another document (processing OR awaiting the reader's one-time setup): this
+      // one queues, and opens on its own once the room's access lands. Keeps a single document driving the gate
+      // so the "Set up access" / "Prove access" prompt does not hop between rows. (An errored flow does not
+      // block, so the reader can try a different document.)
+      if (phase !== "idle" && phase !== "error") return;
       void open(docId);
     },
-    [expandedDocs, openedDocs, roomBond, roomBondHas, roomAccessReady, phase, open],
+    [expandedDocs, openedDocs, docErrors, roomBond, roomBondHas, roomAccessReady, phase, open],
   );
 
   // Once the room's access has landed, open any document that is expanded but not yet opened. Runs one at a time
-  // (doOpen flips phase to "opening", which gates this effect) and chains as each completes.
+  // (doOpen flips phase to "opening", which gates this effect) and chains as each completes. A document that
+  // failed to fetch is skipped (its row offers a retry), so one failure does not stall the rest.
   useEffect(() => {
     if (!roomAccessReady || !identity) return;
     if (phase !== "idle") return; // a doOpen / setup is in flight
-    const next = expandedDocs.find((d) => !openedDocs[d] && d !== openDocId);
+    const next = expandedDocs.find((d) => !openedDocs[d] && !docErrors[d] && d !== openDocId);
     if (next) void doOpen(next, identity, openFloorRef.current);
-  }, [roomAccessReady, identity, phase, expandedDocs, openedDocs, openDocId, doOpen]);
+  }, [roomAccessReady, identity, phase, expandedDocs, openedDocs, docErrors, openDocId, doOpen]);
 
   // Auto-run the one-time setup after a "Check Bonded Access" redirect, once the flow resolves to a ready state.
   useEffect(() => {
@@ -966,6 +974,7 @@ export function useSharedOpen() {
     openDocId,
     expandedDocs,
     openedDocs,
+    docErrors,
     roomAccessReady,
     phase,
     identity,

@@ -122,9 +122,9 @@ function OpenStatus({ s }: { s: ReturnType<typeof useSharedOpen> }) {
       return (
         <div className="space-y-2" data-testid="access-bond-need-lock">
           <p className="text-sm text-muted-foreground">
-            You don't hold a qualifying bond for this room yet. Bonds are created in Bonded Proofs. Lock one
-            there, then come back to open this room. One bond opens every room with the same requirement, so
-            there is no second lock.
+            You don't hold a qualifying bond for this room here yet. Set up Bonded Access in Bonded Proofs to
+            lock one, or restore a bond you locked on another device. One bond opens every room with the same
+            requirement, so there is no second lock.
           </p>
           <Link to={tierCreateLink(s)} className={cn(buttonVariants({ size: "sm" }), actionButtonHover)} data-testid="access-bond-create">
             <KeyRound aria-hidden="true" /> Create Bonded Access
@@ -239,11 +239,14 @@ export default function OpenShared() {
   useEffect(() => {
     if (setupParam !== "bond") return;
     if (!s.room || !s.roomBond || s.roomDocs.length === 0) return;
+    // Only auto-fire for the room the deep link actually targeted, so the sticky param never auto-starts setup
+    // on a DIFFERENT bond room the reader navigates to within the page.
+    if (!paramRoom || s.room.toLowerCase() !== paramRoom.toLowerCase()) return;
     if (autoFiredFor.current === s.room) return;
     autoFiredFor.current = s.room;
     s.setupRoomAccess(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [setupParam, s.room, s.roomBond, s.roomDocs.length]);
+  }, [setupParam, paramRoom, s.room, s.roomBond, s.roomDocs.length]);
 
   if (!s.connected) {
     return (
@@ -332,9 +335,9 @@ export default function OpenShared() {
                 ) : s.roomBondHas === false ? (
                   <div className="space-y-2" data-testid="access-bond-need-lock-room">
                     <p className="text-sm text-muted-foreground">
-                      You don't hold a qualifying bond for this room yet. Bonds are created in Bonded Proofs.
-                      Lock one there, then open this room here. One bond opens every room with the same
-                      requirement, so there is no second lock.
+                      You don't hold a qualifying bond for this room here yet. Set up Bonded Access in Bonded
+                      Proofs to lock one, or restore a bond you locked on another device. One bond opens every
+                      room with the same requirement, so there is no second lock.
                     </p>
                     <Link to={tierCreateLink(s)} className={cn(buttonVariants({ size: "sm" }), actionButtonHover)} data-testid="access-bond-create-room">
                       <KeyRound aria-hidden="true" /> Create Bonded Access
@@ -372,6 +375,13 @@ export default function OpenShared() {
                   Documents in this room
                 </span>
               </SectionLabel>
+              {/* A membership room's rows have no Open button now (just a chevron), so say what expanding does.
+                  A bond-only room already explains the flow in its banner above. */}
+              {!isBondRoom && (
+                <p className="mb-2 text-xs text-muted-foreground" data-testid="access-docs-hint">
+                  Open a document to read it inline. The first one sets up your access; the rest open right away.
+                </p>
+              )}
               <div className="divide-y divide-border/70 rounded-xl border" data-testid="access-doc-list">
                 {s.roomDocs.map((d) => (
                   <DocRow key={d.doc_id} s={s} doc={d} />
@@ -529,6 +539,7 @@ export default function OpenShared() {
 function DocRow({ s, doc }: { s: ReturnType<typeof useSharedOpen>; doc: DataroomDoc }) {
   const expanded = s.expandedDocs.includes(doc.doc_id);
   const res = s.openedDocs[doc.doc_id];
+  const docErr = s.docErrors[doc.doc_id];
   const active = s.openDocId === doc.doc_id;
   const needLock = Boolean(s.roomBond?.bondOpen) && s.roomBondHas === false;
   return (
@@ -556,7 +567,7 @@ function DocRow({ s, doc }: { s: ReturnType<typeof useSharedOpen>; doc: Dataroom
         />
       </button>
       {expanded && (
-        <div className="border-t border-border/70 bg-accent/20 px-3 py-3" data-testid="access-doc-content" data-phase={active ? s.phase : undefined}>
+        <div className="border-t border-border/70 bg-accent/20 px-3 py-3" data-testid="access-doc-content">
           {res?.reconstructed ? (
             <div data-testid="access-plaintext">
               <DecryptedFile plaintext={res.plaintext} plaintextUtf8={res.plaintextUtf8} />
@@ -571,15 +582,21 @@ function DocRow({ s, doc }: { s: ReturnType<typeof useSharedOpen>; doc: Dataroom
               <Verdict ok={false}>The released parts could not be rebuilt with your key.</Verdict>
               <Button size="sm" variant="outline" onClick={() => s.open(doc.doc_id)} data-testid="access-retry">Try again</Button>
             </div>
-          ) : active ? (
-            <OpenStatus s={s} />
-          ) : needLock ? (
-            <div className="space-y-2" data-testid="access-doc-need-lock">
-              <p className="text-sm text-muted-foreground">Create a qualifying bond to open this document.</p>
-              <Link to={tierCreateLink(s)} className={cn(buttonVariants({ size: "sm" }), actionButtonHover)} data-testid="access-bond-create">
-                <KeyRound aria-hidden="true" /> Create Bonded Access
-              </Link>
+          ) : docErr ? (
+            <div className="space-y-2">
+              <Verdict ok={false}>That didn't work. {docErr}</Verdict>
+              <Button size="sm" variant="outline" onClick={() => s.open(doc.doc_id)} data-testid="access-retry">Try again</Button>
             </div>
+          ) : active ? (
+            <div data-testid="access-status" data-phase={s.phase}>
+              <OpenStatus s={s} />
+            </div>
+          ) : needLock ? (
+            // No qualifying bond (or an expired requirement): the single call to action lives in the room banner
+            // above (Create Bonded Access, or the expired note). Point there instead of a duplicate button.
+            <p className="text-sm text-muted-foreground" data-testid="access-doc-need-lock">
+              Set up Bonded Access above to open this document.
+            </p>
           ) : s.roomAccessReady ? (
             <p className="flex items-center gap-2 text-sm text-muted-foreground" data-testid="access-doc-queued">
               <Loader2 className="size-4 animate-spin" aria-hidden="true" /> Opening…
@@ -684,19 +701,11 @@ function BondDeposit({ s }: { s: ReturnType<typeof useSharedOpen> }) {
         <Button size="sm" variant="ghost" onClick={s.dismiss} data-testid="access-bond-dismiss">Not now</Button>
       </div>
 
+      {/* This inline deposit is only reached on the legacy bond-implies-membership path (a TRUE bond-only room
+          never locks here; it points to Bonded Proofs). So the copy is the plain public-lock note. */}
       <Callout icon={Info}>
-        {req.bondOpen ? (
-          <>
-            You lock once: this bond also opens every other room with the same requirement, and your standalone
-            Bonded Access, with no new deposit. Locking is public: your wallet, the token, and the amount show
-            on-chain. Opening a document later is private: the proof hides which bond is yours.
-          </>
-        ) : (
-          <>
-            Locking is public: your wallet, the token, and the amount show on-chain. Opening a document later is
-            private: the proof hides which bond is yours.
-          </>
-        )}
+        Locking is public: your wallet, the token, and the amount show on-chain. Opening a document later is
+        private: the proof hides which bond is yours.
       </Callout>
     </div>
   );
