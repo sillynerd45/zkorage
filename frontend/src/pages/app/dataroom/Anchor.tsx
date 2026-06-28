@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLocation } from "react-router-dom";
 import {
+  CheckCircle2,
+  ChevronDown,
   Download,
   FileText,
   Fingerprint,
@@ -17,6 +19,7 @@ import {
   X,
 } from "lucide-react";
 import { useAnchor, type StoreStage } from "@/lib/hooks/useAnchor";
+import type { DataroomDoc } from "@/lib/api";
 import { short, explorer } from "@/lib/format";
 import { humanError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
@@ -147,6 +150,95 @@ function StoreProgressDialog({ open, stage, step }: { open: boolean; stage: Stor
   );
 }
 
+// One My-files document row. A committee doc (what the Store form makes) is an expandable card: a chevron
+// toggle opens it INLINE with the owner escrow copy (your wallet-derived room key, no keepers / no membership
+// proof) and several can stay open at once, like the Open tab. A legacy DR1 doc is sealed to a single recipient
+// key, so the owner cannot reopen it here; that row hands off to "Open with a key".
+function MyFileRow({
+  a,
+  d,
+  onOpenWithKey,
+}: {
+  a: ReturnType<typeof useAnchor>;
+  d: DataroomDoc;
+  onOpenWithKey: (docId: string) => void;
+}) {
+  if (d.kind !== "committee") {
+    return (
+      <div className="flex items-center gap-3 px-3 py-2.5" data-testid="doc-row" data-kind="dr1">
+        <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-brand/10 text-brand">
+          <FileText className="size-4" aria-hidden="true" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-mono text-[13px]" title={d.doc_id}>{short(d.doc_id, 10)}</div>
+          <div className="truncate text-xs text-muted-foreground">
+            Recorded at ledger {d.ledger} · sealed to x25519 {short(d.recipient_pub ?? "", 6)}
+          </div>
+        </div>
+        <Button size="sm" variant="outline" onClick={() => onOpenWithKey(d.doc_id)} data-testid="doc-open-with-key">
+          <LockKeyholeOpen className="size-3.5" aria-hidden="true" /> Open with a key
+        </Button>
+      </div>
+    );
+  }
+  const expanded = a.ownerExpanded.includes(d.doc_id);
+  const res = a.ownerOpenedDocs[d.doc_id];
+  const err = a.ownerOpenErrors[d.doc_id];
+  const opening = a.ownerOpeningId === d.doc_id;
+  return (
+    <div data-testid="doc-row" data-kind="committee" data-expanded={expanded ? "true" : "false"} data-open={res?.faithful ? "true" : "false"}>
+      <button
+        type="button"
+        onClick={() => a.toggleOwnerDoc(a.browseRoom, d.doc_id)}
+        aria-expanded={expanded}
+        data-testid="my-file-toggle"
+        className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset"
+      >
+        <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-mono text-[13px]" title={d.doc_id}>{short(d.doc_id, 10)}</div>
+          <div className="truncate text-xs text-muted-foreground">Recorded at ledger {d.ledger} · anonymous (keeper-released)</div>
+        </div>
+        {res?.faithful && (
+          <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-500" data-testid="my-file-open-badge">
+            <CheckCircle2 className="size-3.5" aria-hidden="true" /> Open
+          </span>
+        )}
+        <span className="inline-flex shrink-0 items-center gap-1 rounded-full border bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground">
+          <Lock className="size-3" aria-hidden="true" /> Encrypted
+        </span>
+        <ChevronDown
+          className={cn("size-4 shrink-0 text-muted-foreground motion-safe:transition-transform motion-safe:duration-150", expanded && "rotate-180")}
+          aria-hidden="true"
+        />
+      </button>
+      {expanded && (
+        <div className="border-t border-border/70 bg-accent/20 px-3 py-3" data-testid="my-file-content">
+          {res?.faithful ? (
+            <div data-testid="owner-open-result">
+              <Verdict ok>Opened with your wallet's room key. The document never left your browser in the clear.</Verdict>
+              <div className="mt-3" data-testid="owner-open-plaintext">
+                <DecryptedFile plaintext={res.plaintext} plaintextUtf8={res.plaintextUtf8} />
+              </div>
+            </div>
+          ) : err ? (
+            <div className="space-y-2">
+              <p className="text-sm text-destructive" data-testid="owner-open-error">{err}</p>
+              <Button size="sm" variant="outline" onClick={() => a.openOwnerDoc(a.browseRoom, d.doc_id)} data-testid="my-file-retry">Try again</Button>
+            </div>
+          ) : opening ? (
+            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" aria-hidden="true" /> Opening with your wallet's room key…
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground">Expanding opens this with your wallet's room key.</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Anchor() {
   const a = useAnchor();
   const { hash } = useLocation();
@@ -164,14 +256,6 @@ export default function Anchor() {
     a.setOpenRoom(a.browseRoom);
     a.setOpenDoc(docId);
     setTab("bykey");
-  };
-
-  // Open a doc from the Browse list. A committee doc (the kind the Store form makes) the owner reopens INLINE
-  // via the escrow copy sealed to their wallet's room key (no keepers, no membership, no anonymity floor). A
-  // legacy DR1 seal still hands off to the Open sub-tab (it needs a recipient private key).
-  const openDocFromBrowse = (d: { kind?: string; doc_id: string }) => {
-    if (d.kind === "committee") a.openOwnerDoc(a.browseRoom, d.doc_id);
-    else openFromBrowse(d.doc_id);
   };
 
   const q = docQuery.trim().toLowerCase();
@@ -723,72 +807,13 @@ export default function Anchor() {
                   ) : shownDocs.length === 0 ? (
                     <p className="text-sm text-muted-foreground">No documents match your search.</p>
                   ) : (
+                    // Expandable cards: a committee doc opens INLINE below its row (owner escrow copy), several
+                    // stay open, and the opened content survives a submenu switch. A legacy DR1 doc hands off to
+                    // "Open with a key" (it is sealed to a single recipient key, not the wallet's room key).
                     <div className="divide-y divide-border/70 rounded-xl border" data-testid="dataroom-docs">
-                      {shownDocs.map((d) => {
-                        const opening = a.ownerOpeningId === d.doc_id;
-                        return (
-                          <div
-                            key={`${d.kind ?? "dr1"}-${d.index}`}
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => openDocFromBrowse(d)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" || e.key === " ") {
-                                e.preventDefault();
-                                openDocFromBrowse(d);
-                              }
-                            }}
-                            data-testid="doc-row"
-                            data-kind={d.kind ?? "dr1"}
-                            aria-busy={opening}
-                            className="group/row flex cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors hover:bg-accent/40 focus-visible:bg-accent/40 focus-visible:outline-none"
-                          >
-                            <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-brand/10 text-brand">
-                              <FileText className="size-4" aria-hidden="true" />
-                            </span>
-                            <div className="min-w-0 flex-1">
-                              <div className="truncate font-mono text-[13px]" title={d.doc_id}>
-                                {short(d.doc_id, 10)}
-                              </div>
-                              <div className="truncate text-xs text-muted-foreground">
-                                {d.kind === "committee"
-                                  ? `Recorded at ledger ${d.ledger} · anonymous (keeper-released)`
-                                  : `Recorded at ledger ${d.ledger} · sealed to x25519 ${short(d.recipient_pub ?? "", 6)}`}
-                              </div>
-                            </div>
-                            <span className="inline-flex shrink-0 items-center gap-1 rounded-full border bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground">
-                              <Lock className="size-3" aria-hidden="true" /> Encrypted
-                            </span>
-                            <span
-                              className={cn(
-                                "inline-flex shrink-0 items-center gap-1 rounded-md border border-input px-2.5 py-1 text-xs font-medium text-muted-foreground transition-opacity",
-                                opening ? "opacity-100" : "opacity-0 group-hover/row:opacity-100 group-focus-visible/row:opacity-100",
-                              )}
-                            >
-                              <LockKeyholeOpen className="size-3.5" aria-hidden="true" /> {opening ? "Opening…" : "Open"}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {/* Owner-reopen result: a committee doc you stored, decrypted in your browser with your
-                      wallet-derived room key (the escrow copy). No keepers, no membership proof. */}
-                  {a.ownerOpenErr && (
-                    <p className="mt-2 text-sm text-destructive" data-testid="owner-open-error">
-                      {a.ownerOpenErr}
-                    </p>
-                  )}
-                  {a.ownerOpened && (
-                    <div className="mt-2 rounded-xl border bg-muted/20 p-4" data-testid="owner-open-result">
-                      <Verdict ok>Opened with your wallet's room key. The document never left your browser in the clear.</Verdict>
-                      <div className="mt-3" data-testid="owner-open-plaintext">
-                        <DecryptedFile
-                          plaintext={a.ownerOpened.result.plaintext}
-                          plaintextUtf8={a.ownerOpened.result.plaintextUtf8}
-                        />
-                      </div>
+                      {shownDocs.map((d) => (
+                        <MyFileRow key={`${d.kind ?? "dr1"}-${d.index}`} a={a} d={d} onOpenWithKey={openFromBrowse} />
+                      ))}
                     </div>
                   )}
                 </div>

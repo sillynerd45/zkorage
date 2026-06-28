@@ -12,6 +12,7 @@ import {
   type SubmitDocResp,
 } from "@/lib/api";
 import { useTxSigner, useWallet } from "@/lib/wallet/WalletContext";
+import { makeOpenCache } from "@/lib/dataroom/openCache";
 import {
   DEMO_DATAROOM,
   recipientPublicKeyFromSecret,
@@ -63,6 +64,9 @@ const myRoomsCache = new Map<string, MyRoom[]>(); // keyed by wallet address
 // Keyed by room id (trimmed); grows with the number of distinct rooms browsed this session (cleared on reload).
 const docsCache = new Map<string, DataroomDoc[]>();
 const lastBrowseCache = new Map<string, string>(); // keyed by wallet address -> last selected room id
+// Decrypted owner-opened committee docs + which My-files rows are expanded, per room, so they survive a submenu
+// switch (which unmounts the panel). Memory-only (decrypted plaintext is sensitive); a reload clears it.
+const ownerOpenCache = makeOpenCache<OpenedDocument>();
 
 // A background refresh that found nothing new should not re-render the list, so compare before swapping. Both
 // are flat records of primitives, so a stable-shape JSON compare is sufficient (matching useBonded).
@@ -129,17 +133,23 @@ export function useAnchor() {
   const [roomsRefreshing, setRoomsRefreshing] = useState(false); // warm: refreshing the cached room list
   // The most recently requested browse room, so a slow response for room A cannot overwrite room B's docs.
   const docsReq = useRef(seededRoom);
-  // Owner re-open of a committee doc via the escrow copy (no membership proof, no anonymity floor): the
-  // decrypted result, the in-flight doc id, and any error. Cleared whenever the browsed room changes.
-  const [ownerOpened, setOwnerOpened] = useState<{ docId: string; result: OpenedDocument } | null>(null);
-  const [ownerOpenErr, setOwnerOpenErr] = useState<string | null>(null);
+  // Owner re-open of committee docs via the escrow copy (no membership proof, no anonymity floor). Per document
+  // now, so several rows can stay open at once (expandable cards, like the Open tab): the decrypted result map,
+  // a per-doc error map, which rows are expanded, and the in-flight doc id. Restored from ownerOpenCache when a
+  // room is selected, so they survive a submenu switch.
+  const [ownerOpenedDocs, setOwnerOpenedDocs] = useState<Record<string, OpenedDocument>>(() =>
+    seededRoom ? ownerOpenCache.get(seededRoom).opened : {},
+  );
+  const [ownerOpenErrors, setOwnerOpenErrors] = useState<Record<string, string>>({});
+  const [ownerExpanded, setOwnerExpanded] = useState<string[]>(() =>
+    seededRoom ? ownerOpenCache.get(seededRoom).expanded : [],
+  );
   const [ownerOpeningId, setOwnerOpeningId] = useState<string | null>(null);
 
   // Load a room's documents: paint the cached list at once when we have one (then refresh in the background),
   // otherwise show the skeleton while the first read runs. A race guard (docsReq) drops a stale response so
   // clicking room B while room A is still loading never shows A's documents under B.
   const refreshDocs = useCallback((room: string) => {
-    setOwnerOpened(null); setOwnerOpenErr(null);
     const r = room.trim();
     docsReq.current = r;
     if (!/^[0-9a-fA-F]{64}$/.test(r)) { setDocs([]); setDocsLoading(false); setDocsRefreshing(false); return; }
@@ -156,10 +166,15 @@ export function useAnchor() {
       .finally(() => { if (docsReq.current === r) { setDocsLoading(false); setDocsRefreshing(false); } });
   }, []);
 
-  // Select a room in the My files browser: remember it (so it is restored on return) and load its documents.
+  // Select a room in the My files browser: remember it (so it is restored on return), restore its opened docs +
+  // expanded rows from the cache (survives a submenu switch), and load its documents.
   const selectBrowseRoom = useCallback((room: string) => {
     setBrowseRoom(room);
     if (address) lastBrowseCache.set(address, room);
+    const c = ownerOpenCache.get(room);
+    setOwnerOpenedDocs(c.opened);
+    setOwnerExpanded(c.expanded);
+    setOwnerOpenErrors({});
     refreshDocs(room);
   }, [address, refreshDocs]);
 
@@ -187,8 +202,20 @@ export function useAnchor() {
     const owned = connected && address ? (myRoomsCache.get(address) ?? []).some((r) => r.roomId === restored) : false;
     const finalRoom = owned ? restored : "";
     setBrowseRoom(finalRoom);
-    if (finalRoom) refreshDocs(finalRoom);
-    else { docsReq.current = ""; setDocs([]); setDocsLoading(false); setDocsRefreshing(false); }
+    if (finalRoom) {
+      const c = ownerOpenCache.get(finalRoom);
+      setOwnerOpenedDocs(c.opened);
+      setOwnerExpanded(c.expanded);
+      setOwnerOpenErrors({});
+      refreshDocs(finalRoom);
+    } else {
+      docsReq.current = "";
+      setDocs([]);
+      setDocsLoading(false);
+      setDocsRefreshing(false);
+      setOwnerOpenedDocs({});
+      setOwnerExpanded([]);
+    }
   }, [connected, address, loadMyRooms, refreshDocs]);
 
   // Clear the pre-submit validation message as soon as the user fixes the offending input (or connects),
@@ -346,7 +373,8 @@ export function useAnchor() {
   // no membership proof, no anonymity floor. Derives the room key once (cached for the session), then opens
   // client-side. faithful=false means this wallet did not store the doc (the escrow is not sealed to its key).
   async function openOwnerDoc(roomIdHex: string, docIdHex: string) {
-    setOwnerOpenErr(null); setOwnerOpened(null); setOwnerOpeningId(docIdHex);
+    setOwnerOpenErrors((prev) => { if (!(docIdHex in prev)) return prev; const n = { ...prev }; delete n[docIdHex]; return n; });
+    setOwnerOpeningId(docIdHex);
     try {
       const ident = await identity.derive(roomIdHex);
       if (!ident) throw new Error(identity.error || "could not derive your room key from the wallet");
@@ -355,12 +383,26 @@ export function useAnchor() {
       if (!result.faithful) {
         throw new Error("this document is not sealed to your wallet's room key, so you cannot reopen it here (it was stored by a different wallet, or your wallet's signing format changed)");
       }
-      setOwnerOpened({ docId: docIdHex, result });
+      setOwnerOpenedDocs((prev) => { const next = { ...prev, [docIdHex]: result }; ownerOpenCache.setOpened(roomIdHex, next); return next; });
     } catch (e) {
-      setOwnerOpenErr(String((e as Error).message ?? e));
+      setOwnerOpenErrors((prev) => ({ ...prev, [docIdHex]: String((e as Error).message ?? e) }));
     } finally {
       setOwnerOpeningId(null);
     }
+  }
+
+  // Expand or collapse a My-files row. Expanding an un-opened committee doc opens it (owner escrow, no keepers,
+  // no membership proof); collapsing keeps the cached content, so re-expanding is instant. Several stay open.
+  function toggleOwnerDoc(roomIdHex: string, docIdHex: string) {
+    const wasOpen = ownerExpanded.includes(docIdHex);
+    setOwnerExpanded((prev) => {
+      const next = wasOpen ? prev.filter((d) => d !== docIdHex) : [...prev, docIdHex];
+      ownerOpenCache.setExpanded(roomIdHex, next);
+      return next;
+    });
+    if (wasOpen) return;
+    if (ownerOpenedDocs[docIdHex] || ownerOpenErrors[docIdHex]) return; // a cached result / error renders in the row
+    void openOwnerDoc(roomIdHex, docIdHex);
   }
 
   async function onOpen() {
@@ -433,10 +475,12 @@ export function useAnchor() {
     sealedToYou,
     onStoreShared,
     sharedResult,
-    ownerOpened,
-    ownerOpenErr,
+    ownerOpenedDocs,
+    ownerOpenErrors,
+    ownerExpanded,
     ownerOpeningId,
     openOwnerDoc,
+    toggleOwnerDoc,
     identityDrift: identity.drift,
   };
 }
