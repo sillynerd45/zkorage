@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams, Link } from "react-router-dom";
-import { BadgeCheck, KeyRound, FolderLock, Landmark, Compass, ArrowRight } from "lucide-react";
+import { BadgeCheck, KeyRound, FolderLock, Compass, ArrowRight } from "lucide-react";
 import { getRoomMeta, getDirectory } from "@/lib/api";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -17,11 +17,6 @@ const KINDS = [
     icon: FolderLock,
     title: "A Data Room",
     body: "Paste a room id (64 hex). We confirm the room exists on the public Data Room contract and show how readers get in. The documents stay encrypted.",
-  },
-  {
-    icon: Landmark,
-    title: "A Proof-of-Reserves",
-    body: "Paste an issuer id. We recompute the journal, re-check the Groth16 proof on-chain, and confirm reserves cover the circulating supply. The reserve figure stays private.",
   },
 ];
 
@@ -106,7 +101,7 @@ export default function VerifyHome() {
             Paste a verify link or an id
           </label>
           <p id="verify-input-hint" className="mt-1 text-xs leading-relaxed text-muted-foreground">
-            A bonded access link, a Data Room id, or a Proof-of-Reserves issuer id.
+            A bonded access link or a Data Room id.
           </p>
           <div className="mt-3 flex flex-col gap-2 sm:flex-row">
             <input

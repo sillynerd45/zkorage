@@ -86,23 +86,6 @@ const FAQS: { q: string; a: ReactNode }[] = [
   },
 ];
 
-// Ambient backdrop: soft blue to emerald glow + a faint grid, concentrated behind the hero and masked to fade
-// out down the page. Decorative only (aria-hidden + pointer-events-none, scoped to the page's -z-10 layer).
-function AuroraBackdrop() {
-  return (
-    <div aria-hidden className="pointer-events-none absolute inset-y-0 left-1/2 -z-10 w-screen -translate-x-1/2 overflow-hidden">
-      {/* Full-bleed so the glow reaches the viewport edges, not just the padded content column (which read as
-          a rectangle). Soft radial glows behind the hero; each fades to transparent on its own (closest-side),
-          so the backdrop dissolves into the page with no hard edge or rectangular band. */}
-      <div className="absolute -left-40 -top-48 h-[600px] w-[600px] rounded-full blur-3xl motion-safe:animate-aurora-one bg-[radial-gradient(closest-side,hsl(var(--brand)/0.20),transparent)]" />
-      <div className="absolute -right-36 -top-40 h-[560px] w-[560px] rounded-full blur-3xl motion-safe:animate-aurora-two bg-[radial-gradient(closest-side,hsl(var(--success)/0.16),transparent)]" />
-      <div className="absolute left-1/2 top-24 h-[520px] w-[820px] -translate-x-1/2 rounded-full blur-3xl motion-safe:animate-aurora-one bg-[radial-gradient(closest-side,hsl(var(--brand)/0.10),transparent)]" />
-      {/* Faint grid, masked to a soft ellipse from the top (see .aurora-grid in index.css), so it has no edge. */}
-      <div className="aurora-grid absolute inset-x-0 top-0 h-[620px] opacity-50 dark:opacity-30" />
-    </div>
-  );
-}
-
 function PillarCard({
   eyebrow,
   title,
@@ -324,9 +307,7 @@ function FaqItem({ q, a }: { q: string; a: ReactNode }) {
 
 export default function Landing() {
   return (
-    <div data-testid="overview" className="relative isolate">
-      <AuroraBackdrop />
-
+    <div data-testid="overview" className="relative">
       {/* hero */}
       <section className="mb-16 pt-6 sm:mb-20 sm:pt-10">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand">
