@@ -4,7 +4,9 @@ import AppShell from "./shells/AppShell";
 // public (marketing top-bar)
 import Landing from "./pages/marketing/Landing";
 import Docs from "./pages/marketing/Docs";
+import VerifyHome from "./pages/marketing/VerifyHome";
 import Verify from "./pages/marketing/Verify";
+import VerifyRoom from "./pages/marketing/VerifyRoom";
 import VerifyBond from "./pages/marketing/VerifyBond";
 import Explorer from "./pages/marketing/Explorer";
 // app (sidebar)
@@ -51,9 +53,12 @@ export default function App() {
         <Route path="/" element={<Landing />} />
         <Route path="/docs" element={<Docs />} />
         <Route path="/docs/:section" element={<Docs />} />
-        <Route path="/verify" element={<Verify />} />
-        {/* Static /verify/bond outranks the dynamic /verify/:issuer in React Router v6. */}
+        {/* /verify is the smart-input home (paste a link or id, auto-detect + route). The deep links below
+            stay so every result is shareable. React Router v6 ranks by specificity: the static /verify/bond
+            and the two-segment /verify/room/:id both outrank the dynamic /verify/:issuer. */}
+        <Route path="/verify" element={<VerifyHome />} />
         <Route path="/verify/bond" element={<VerifyBond />} />
+        <Route path="/verify/room/:id" element={<VerifyRoom />} />
         <Route path="/verify/:issuer" element={<Verify />} />
         <Route path="/explorer" element={<Explorer />} />
         <Route path="*" element={<Landing />} />

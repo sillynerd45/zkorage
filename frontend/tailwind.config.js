@@ -57,6 +57,18 @@ export default {
         shimmer: {
           "100%": { transform: "translateX(100%)" },
         },
+        // Landing hero aurora: two soft blobs drift on different timings so the glow reads as organic, not a
+        // single pulsing circle. Gentle endpoints so the reduced-motion freeze-frame looks intentional.
+        "aurora-one": {
+          "0%": { transform: "translate3d(-4%, -2%, 0) scale(1)" },
+          "50%": { transform: "translate3d(6%, 5%, 0) scale(1.12)" },
+          "100%": { transform: "translate3d(-2%, 1%, 0) scale(1.05)" },
+        },
+        "aurora-two": {
+          "0%": { transform: "translate3d(3%, 1%, 0) scale(1.06)" },
+          "50%": { transform: "translate3d(-6%, -4%, 0) scale(1)" },
+          "100%": { transform: "translate3d(2%, -2%, 0) scale(1.1)" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down .2s ease-out",
@@ -67,6 +79,8 @@ export default {
         // Slower + softer than the indeterminate bar: skeletons are ambient, the refresh bar is a foreground
         // "working" signal, so the two loading states read differently.
         shimmer: "shimmer 1.6s ease-in-out infinite",
+        "aurora-one": "aurora-one 22s ease-in-out infinite alternate",
+        "aurora-two": "aurora-two 18s ease-in-out infinite alternate",
       },
     },
   },

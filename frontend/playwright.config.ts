@@ -20,6 +20,9 @@ export default defineConfig({
     viewport: { width: 1100, height: 1400 },
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
+    // The landing reveal-on-scroll only hides content when motion is allowed; force reduced-motion so every
+    // section is settled-visible for assertions + screenshots (also matches the locked no-flashy-motion rule).
+    reducedMotion: "reduce",
     // HARD REQUIREMENT (do not remove): force software rendering in Chromium. Headless-Chrome GPU/compositor
     // teardown crashed this dev box with a Windows BSOD (PFN_LIST_CORRUPT, 0x4E in nt!MiDecommitFreePage),
     // twice, including during screenshotting. Disabling the GPU path avoids it. See CLAUDE.md hard rules +

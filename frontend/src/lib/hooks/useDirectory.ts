@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { getDirectory, getRoomMeta, type DirectoryRoom, type RoomMeta } from "@/lib/api";
 import { isHex32 } from "@/lib/format";
 
-// M5 — the public discovery surface (wallet not required). Two reads:
+// M5: the public discovery surface (wallet not required). Two reads:
 //   - the directory: rooms whose owner opted into "listed", with coarse member buckets (never exact).
 //   - resolve-by-id: paste an exact room id; a private room reveals nothing, an unlisted/listed one resolves.
 // Visibility is a discovery convenience, not the privacy mechanism (that is the membership proof + the k=5
@@ -12,6 +12,7 @@ import { isHex32 } from "@/lib/format";
 // unmount within one app session, so navigating away and back repaints instantly instead of flashing a cold
 // load, then a background refresh swaps in fresh data. Cleared on a full page reload. Public data, no secrets.
 let directoryCache: DirectoryRoom[] | null = null;
+let dataroomIdCache: string | null = null;
 
 export function useDirectory() {
   // Seed from the cache for an instant warm paint; cold (no cache yet) starts empty + loading.
@@ -19,6 +20,7 @@ export function useDirectory() {
   const [loading, setLoading] = useState(directoryCache === null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [dataroomId, setDataroomId] = useState<string | null>(dataroomIdCache);
 
   const reload = useCallback(async () => {
     const warm = directoryCache !== null;
@@ -28,7 +30,9 @@ export function useDirectory() {
     try {
       const r = await getDirectory();
       directoryCache = r.rooms;
+      dataroomIdCache = r.dataroomId ?? null;
       setRooms(r.rooms);
+      setDataroomId(r.dataroomId ?? null);
     } catch (e) {
       // On a warm background refresh, keep the cached list painted and stay silent; only surface the error on a
       // cold load (nothing to show otherwise).
@@ -72,6 +76,7 @@ export function useDirectory() {
     loading,
     refreshing,
     error,
+    dataroomId,
     reload,
     lookupId,
     setLookupId,

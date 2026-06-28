@@ -1,42 +1,71 @@
 import { test, expect } from "@playwright/test";
 
-const CHECKS = [
-  "journalWellFormed", "digestMatches", "imagePinned", "resultTrue", "claimTypeOk",
-  "issuerAllowed", "notExpired", "proofValidOnChain", "supplyBoundMatches",
-];
+// The public /verify page is now a smart-input router: paste a verify link or a bare id and it auto-detects
+// the proof type and routes to the right on-chain read. The PoR (/verify/:issuer) and bond (/verify/bond)
+// deep links still render their dedicated verdict pages (covered by por.spec / verify-bond.spec).
 
-// Public "verify it yourself" page: loads the audit bundle, re-verifies against the chain, and
-// renders a checklist. This also probes whether the browser can reach the public RPC directly
-// (trustless path) or must fall back to the backend (C7).
-test("verify page: independent re-verify → VERIFIED + full checklist", async ({ page }) => {
-  const consoleErrors: string[] = [];
-  page.on("console", (m) => { if (m.type() === "error") consoleErrors.push(m.text()); });
+const HEX = "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c";
+const ROOM = "46745e986e85e583e76eb57217419021e3e3e23835c9b27bb562a596b7b34209";
 
+test("verify home: renders the smart input", async ({ page }) => {
   await page.goto("/verify");
+  await expect(page.getByText("Verify it yourself").first()).toBeVisible();
+  await expect(page.getByTestId("verify-input")).toBeVisible();
+  await expect(page.getByTestId("verify-submit")).toBeVisible();
+});
 
-  const verdict = page.getByTestId("verify-verdict");
-  await expect(verdict).toHaveAttribute("data-state", /verified|rejected/, { timeout: 90_000 });
+test("verify home: a bonded link routes to /verify/bond with the query preserved", async ({ page }) => {
+  await page.goto("/verify");
+  await page.getByTestId("verify-input").fill(`https://zkorage.wazowsky.id/verify/bond?accessor=${HEX}&req=${ROOM}&amount=100`);
+  await page.getByTestId("verify-submit").click();
+  await expect(page).toHaveURL(/\/verify\/bond\?accessor=/);
+});
 
-  const state = await verdict.getAttribute("data-state");
-  const trust = (await page.getByTestId("trust-mode").textContent())?.trim();
-  console.log("VERDICT STATE:", state);
-  console.log("TRUST MODE:", trust);
+test("verify home: a reserves issuer routes to /verify/:issuer", async ({ page }) => {
+  await page.goto("/verify");
+  await page.getByTestId("verify-example-reserves").click();
+  await expect(page).toHaveURL(new RegExp(`/verify/${HEX}$`));
+});
 
-  for (const k of CHECKS) {
-    const ok = await page.getByTestId(`check-${k}`).getAttribute("data-ok");
-    console.log(`  check ${k}: ${ok}`);
-  }
+test("verify home: garbage shows an inline error and does not navigate", async ({ page }) => {
+  await page.goto("/verify");
+  await page.getByTestId("verify-input").fill("hello world");
+  await page.getByTestId("verify-submit").click();
+  await expect(page.getByTestId("verify-input-error")).toBeVisible();
+  await expect(page).toHaveURL(/\/verify$/);
+});
 
-  // CLI recipe + badge present
-  await expect(page.getByTestId("cli-recipe")).toBeVisible();
-  await expect(page.getByTestId("badge-img")).toBeVisible();
+test("verify home: a known room id probes the room and routes to /verify/room/:id", async ({ page }) => {
+  await page.route("**/dataroom/room-meta/**", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ roomId: ROOM, visibility: "listed", discoverable: true, exists: true, name: "Demo room", bond: null }),
+    }),
+  );
+  await page.goto("/verify");
+  await page.getByTestId("verify-input").fill(ROOM);
+  await page.getByTestId("verify-submit").click();
+  await expect(page).toHaveURL(new RegExp(`/verify/room/${ROOM}$`));
+  await expect(page.getByTestId("verify-room-verdict")).toHaveAttribute("data-state", "exists");
+});
 
-  await page.screenshot({ path: "tests/verify-page.png", fullPage: true });
-  if (consoleErrors.length) console.log("CONSOLE ERRORS:", consoleErrors);
+test("verify home: an id with no public room falls back to reserves", async ({ page }) => {
+  await page.route("**/dataroom/room-meta/**", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ roomId: HEX, visibility: "private", discoverable: false }),
+    }),
+  );
+  await page.goto("/verify");
+  await page.getByTestId("verify-input").fill(HEX);
+  await page.getByTestId("verify-submit").click();
+  await expect(page).toHaveURL(new RegExp(`/verify/${HEX}$`));
+});
 
-  // every check should pass for the seeded valid claim
-  for (const k of CHECKS) {
-    await expect(page.getByTestId(`check-${k}`)).toHaveAttribute("data-ok", "true");
-  }
-  expect(state).toBe("verified");
+test("verify home: a ?q handoff auto-runs (forwarded from the landing CTA)", async ({ page }) => {
+  const q = encodeURIComponent(`/verify/${HEX}`);
+  await page.goto(`/verify?q=${q}`);
+  await expect(page).toHaveURL(new RegExp(`/verify/${HEX}$`));
 });

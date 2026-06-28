@@ -49,13 +49,22 @@ test("docs side-rail navigates to developers + glossary", async ({ page }) => {
   await expect(page.getByText("Plain-language glossary")).toBeVisible();
 });
 
-test("landing → docs and verify CTAs work", async ({ page }) => {
+test("landing → sections + verify CTAs work", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByTestId("hero-open-app")).toBeVisible();
-  await expect(page.getByText("What you can do")).toBeVisible();
+  // the redesigned sections are present
+  for (const id of ["how-it-works", "pillars", "pillar-dataroom", "pillar-bonded", "verify-cta", "live-status", "faq", "closing-cta"]) {
+    await expect(page.getByTestId(id)).toBeVisible();
+  }
   await expect(page.getByText("Don't trust. Verify.")).toBeVisible();
-  await page.getByRole("link", { name: "Verify a proof" }).click();
-  await expect(page).toHaveURL(/\/verify$/);
+  // the "Don't trust. Verify." Explorer action navigates
+  await page.getByTestId("verify-cta-explorer").click();
+  await expect(page).toHaveURL(/\/explorer$/);
+  // the smart-input forwards the pasted value to the Verify page as ?q=
+  await page.goto("/");
+  await page.getByTestId("verify-cta-input").fill("not-a-real-id");
+  await page.getByTestId("verify-cta-input").press("Enter");
+  await expect(page).toHaveURL(/\/verify\?q=not-a-real-id$/);
 });
 
 // ── Freighter wallet ────────────────────────────────────────────────────────────────────────

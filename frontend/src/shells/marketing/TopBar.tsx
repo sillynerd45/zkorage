@@ -1,6 +1,7 @@
 import { Link, NavLink } from "react-router-dom";
 import { ShieldCheck, ArrowRight } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { cn } from "@/lib/utils";
 
 // Public marketing nav. The app's ZK operations live behind "Open app →"; the top bar carries only the
@@ -36,7 +37,8 @@ export function TopBar() {
             </NavLink>
           ))}
         </nav>
-        <div className="ml-auto flex items-center gap-3">
+        <div className="ml-auto flex items-center gap-2">
+          <ThemeToggle />
           <Link to="/app" className={cn(buttonVariants({ size: "sm" }))} data-testid="open-app">
             Open app <ArrowRight className="size-4" />
           </Link>
