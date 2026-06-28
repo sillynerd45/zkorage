@@ -278,6 +278,27 @@ test("tier: a granted requirement disables Prove with the already-have-access st
   await expect(prove).toBeDisabled({ timeout: 15_000 });
   await expect(prove).toContainText("You already have access");
   await expect(page.getByTestId("tier-granted-help")).toBeVisible();
+
+  // The live "granted" detection ALSO records the grant into "Your access" (not only the background pending
+  // poll), so a grant that landed out-of-band still appears there.
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(() => {
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (k && k.startsWith("zkorage-bond-grants.")) {
+              try {
+                const a = JSON.parse(localStorage.getItem(k) || "[]");
+                if (Array.isArray(a) && a.length > 0) return true;
+              } catch { /* ignore */ }
+            }
+          }
+          return false;
+        }),
+      { timeout: 10_000 },
+    )
+    .toBe(true);
 });
 
 test("tier: clicking Prove starts a background proof and shows in-progress (persists across reload)", async ({ page }) => {

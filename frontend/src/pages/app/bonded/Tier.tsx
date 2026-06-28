@@ -24,7 +24,7 @@ import {
   type LockView,
 } from "@/lib/api";
 import { loadWalletTokens, plainAmount, type TokenOption } from "@/lib/bonded/tokens";
-import { recordBondGrant } from "@/lib/bonded/grants";
+import { recordBondGrant, readBondGrants } from "@/lib/bonded/grants";
 import { readPending, addPending, removePending, type BondPending } from "@/lib/bonded/pending";
 import { pushGrantsVault, pullGrantsVault } from "@/lib/bonded/grantsSync";
 import { idKey, loadIdentityAt, getBondSig, hasBondSig } from "@/lib/bonded/handle";
@@ -344,6 +344,21 @@ export default function BondedTier() {
     const iv = setInterval(() => void refreshPending(), 6000);
     return () => clearInterval(iv);
   }, [refreshPending]);
+
+  // Belt-and-braces for "Your access": the background pending poll records a grant when IT observes the proof
+  // land, but a grant can land OUT-OF-BAND (a manual / late submit, or after the pending entry was already
+  // cleared), so the live status shows "Access granted" with no record. When the live status finds a grant for
+  // the current requirement that is not yet in "Your access", record + sync it. recordBondGrant upserts by
+  // reqId, so this stays idempotent with the pending poll.
+  useEffect(() => {
+    const acc = identity?.accessor;
+    if (!granted || !acc || !reqId || !selected || !minAmountBase) return;
+    if (readBondGrants(acc).some((r) => r.reqId.toLowerCase() === reqId.toLowerCase())) return;
+    recordBondGrant(acc, { reqId, tokenSymbol: selected.symbol, minAmount: minAmountBase, decimals: selected.decimals, deadline: deadlineUnix });
+    removePending(acc, reqId);
+    void backupGrants();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [granted, identity?.accessor, reqId]);
 
   // Encrypt the handle under the wallet signature and store the opaque blob in the vault, so it follows the
   // wallet to other devices. Non-fatal: a decline or error leaves the local handle usable; the user can retry.
