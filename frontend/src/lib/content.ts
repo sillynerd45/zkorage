@@ -217,8 +217,9 @@ export interface DocsSection {
 
 export const DOCS_SECTIONS: DocsSection[] = [
   { slug: "", label: "Overview", blurb: "What zkorage is and how the engine works." },
-  { slug: "capabilities", label: "Capabilities", blurb: "What each proof does, and what stays private." },
-  { slug: "verify", label: "Verify it yourself", blurb: "Re-check any proof against the public chain." },
+  { slug: "data-room", label: "Data Room", blurb: "How a sealed room stores and opens a document, and how access works." },
+  { slug: "bonded-proofs", label: "Bonded Proofs", blurb: "How a bond is created, and how it opens a room." },
+  { slug: "verify", label: "Verify it yourself", blurb: "Re-check any proof, room, or bond against the public chain." },
   { slug: "developers", label: "Developers", blurb: "SDK, MCP server, and REST API." },
   { slug: "glossary", label: "Glossary", blurb: "Plain-language definitions." },
 ];
