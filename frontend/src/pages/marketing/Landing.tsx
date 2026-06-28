@@ -314,7 +314,8 @@ export default function Landing() {
           zkorage · verifiable claims on Stellar
         </p>
         <h1 className="mt-3 max-w-3xl text-4xl font-bold leading-[1.08] tracking-tight sm:text-5xl">
-          Prove a private fact. <span className="text-muted-foreground">Verify it on Stellar.</span>
+          <span className="block">Share sealed documents.</span>
+          <span className="block text-muted-foreground">Open them anonymously.</span>
         </h1>
         <p className="mt-4 max-w-2xl text-base leading-relaxed text-muted-foreground sm:text-lg">
           zkorage seals sensitive documents and proves facts about private data, so a verifier learns one fact
