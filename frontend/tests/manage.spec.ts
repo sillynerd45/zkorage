@@ -196,6 +196,67 @@ test("manage: switching to membership sticks even if the chain read lags (stale 
   await expect(page.getByTestId("manage-model-current-membership")).toBeVisible();
 });
 
+test("manage: switching to membership holds even when the chain read NEVER catches up within the poll window", async ({ page }) => {
+  // The harder variant: the post-clear GET keeps returning the OLD found:true for the WHOLE reconcile window
+  // (testnet RPC lag exceeding the poll, which is what the user hit). The reconcile must give up by trusting
+  // the confirmed clear, never committing the stale read, so the model stays membership without a reload.
+  await page.addInitScript(mock);
+  await stubsCommon(page);
+  let cleared = false;
+  let postClearReads = 0;
+  const bond = { found: true, scope: "room", bondOpen: true, mode: "open", gate: "C".repeat(56), reqId: "ab".repeat(32), token: TOKEN, minAmount: MIN, deadline: DEADLINE };
+  await page.route("**/dataroom/bond-requirement/**", (r) => {
+    if (r.request().method() !== "GET") return r.continue();
+    if (cleared) postClearReads++;
+    return r.fulfill(json(bond)); // ALWAYS bond-only, even after the clear: the read never catches up
+  });
+  await page.route("**/dataroom/bond-requirement/clear", (r) => { cleared = true; return r.fulfill(json({ ok: true, mode: "xdr", xdr: "AAAA", source: ADDR })); });
+  await page.route("**/tx/submit", (r) => r.fulfill(json({ ok: true, txHash: "ab".repeat(8) })));
+
+  await page.goto("/app/dataroom/manage");
+  await page.getByTestId("manage-owner-room").first().click();
+  await expect(page.getByTestId("manage-model-current-bond")).toBeVisible({ timeout: 15_000 });
+  await page.getByTestId("manage-model-membership").click();
+  await page.getByTestId("manage-switch-membership").click();
+  await expect.poll(() => cleared, { timeout: 15_000 }).toBe(true);
+  await expect(page.getByTestId("manage-switched")).toBeVisible({ timeout: 15_000 });
+  // Let the reconcile run its full poll course (it stops after the give-up), then confirm it never reverted.
+  await expect.poll(() => postClearReads, { timeout: 20_000 }).toBeGreaterThanOrEqual(5);
+  await expect(page.getByTestId("manage-model-current-membership")).toBeVisible();
+  await expect(page.getByTestId("manage-switch-membership")).toHaveCount(0);
+  await expect(page.getByTestId("manage-model-current-bond")).toHaveCount(0);
+});
+
+test("manage: clearing from the Current card holds membership even when the read never catches up", async ({ page }) => {
+  // Same sustained-lag stress, via the OwnerBondSection "Clear requirement" path, which fires reconcile(true)
+  // then reconcile(false). The generation guard must drop the stale true-reconcile so it cannot commit
+  // found:true at its give-up; the false-reconcile keeps membership despite the never-catching-up read.
+  await page.addInitScript(mock);
+  await stubsCommon(page);
+  let cleared = false;
+  let postClearReads = 0;
+  const bond = { found: true, scope: "room", bondOpen: true, mode: "open", gate: "C".repeat(56), reqId: "ab".repeat(32), token: TOKEN, minAmount: MIN, deadline: DEADLINE };
+  await page.route("**/dataroom/bond-requirement/**", (r) => {
+    if (r.request().method() !== "GET") return r.continue();
+    if (cleared) postClearReads++;
+    return r.fulfill(json(bond)); // ALWAYS bond-only, even after the clear
+  });
+  await page.route("**/dataroom/bond-requirement/clear", (r) => { cleared = true; return r.fulfill(json({ ok: true, mode: "xdr", xdr: "AAAA", source: ADDR })); });
+  await page.route("**/tx/submit", (r) => r.fulfill(json({ ok: true, txHash: "ab".repeat(8) })));
+
+  await page.goto("/app/dataroom/manage");
+  await page.getByTestId("manage-owner-room").first().click();
+  await expect(page.getByTestId("manage-access-model")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("bond-current")).toBeVisible({ timeout: 15_000 });
+  await page.getByTestId("bond-clear").click();
+  await expect.poll(() => cleared, { timeout: 15_000 }).toBe(true);
+  await expect(page.getByTestId("manage-membership-panel")).toBeVisible({ timeout: 15_000 });
+  await expect.poll(() => postClearReads, { timeout: 20_000 }).toBeGreaterThanOrEqual(5);
+  await expect(page.getByTestId("manage-model-current-membership")).toBeVisible();
+  await expect(page.getByTestId("bond-section")).toHaveCount(0);
+  await expect(page.getByTestId("manage-model-current-bond")).toHaveCount(0);
+});
+
 test("manage: a bond-only room shows the Current requirement card (standout + contract/issuer links) + a submenu to edit", async ({ page }) => {
   const errs: string[] = [];
   page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/i.test(m.text())) errs.push(m.text()); });
