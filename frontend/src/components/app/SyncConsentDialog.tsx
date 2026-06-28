@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, Cloud, ShieldCheck, KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useWallet } from "@/lib/wallet/WalletContext";
 import { getSyncPref, isDontAsk, setDontAsk } from "@/lib/sync/prefs";
@@ -125,23 +125,54 @@ export function SyncConsentDialog() {
         data-testid="sync-consent-dialog"
         className="w-full max-w-[480px] animate-fade-in rounded-xl border bg-card p-6 text-card-foreground shadow-xl"
       >
-        <div className="flex items-center gap-2.5">
-          <span className="grid size-9 place-items-center rounded-lg bg-primary/10 text-primary">
+        <div className="flex items-center gap-3">
+          <span className="grid size-10 place-items-center rounded-xl bg-primary/10 text-primary">
             <RefreshCw className="size-5" aria-hidden="true" />
           </span>
           <h2 id={titleId} className="text-base font-semibold tracking-tight" data-testid="sync-consent-title">
-            Sync your rooms and access to other devices?
+            Sync across your devices?
           </h2>
         </div>
 
         <p id={bodyId} className="mt-3 text-sm leading-relaxed text-muted-foreground">
-          Your "rooms you can open" list and your Bonded Access handle live in this browser only. Sync carries
-          them to your other devices, encrypted with a key that only your wallet can derive.
+          Keep your rooms and Bonded Access on every device you use.
         </p>
-        <p role="note" className="mt-2.5 text-xs leading-relaxed text-muted-foreground">
-          Turning this on signs one fixed message to derive that key. It never moves funds and never approves a
-          transaction. We store only the encrypted copy, which we cannot read and cannot link to your wallet.
-        </p>
+
+        <ul className="mt-4 space-y-1 rounded-lg border bg-muted/30 p-2" data-testid="sync-consent-points">
+          <li
+            className="flex items-center gap-3 rounded-md px-2 py-2"
+            data-testid="sync-consent-point-devices"
+          >
+            <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
+              <Cloud className="size-4" aria-hidden="true" />
+            </span>
+            <span className="text-sm leading-snug text-card-foreground">
+              Your rooms and Bonded Access, on every device
+            </span>
+          </li>
+          <li
+            className="flex items-center gap-3 rounded-md px-2 py-2"
+            data-testid="sync-consent-point-encrypted"
+          >
+            <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
+              <ShieldCheck className="size-4" aria-hidden="true" />
+            </span>
+            <span className="text-sm leading-snug text-card-foreground">
+              Encrypted with your wallet, we cannot read it
+            </span>
+          </li>
+          <li
+            className="flex items-center gap-3 rounded-md px-2 py-2"
+            data-testid="sync-consent-point-signature"
+          >
+            <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
+              <KeyRound className="size-4" aria-hidden="true" />
+            </span>
+            <span className="text-sm leading-snug text-card-foreground">
+              One signature, no funds move
+            </span>
+          </li>
+        </ul>
 
         <label className="mt-4 flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
           <input
