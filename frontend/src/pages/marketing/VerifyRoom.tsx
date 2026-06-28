@@ -77,7 +77,11 @@ export default function VerifyRoom() {
 
       <SectionCard>
         {state === "loading" && <p className="text-sm text-muted-foreground">Reading the Data Room contract…</p>}
-        {state === "error" && <Verdict ok={false}>{err}</Verdict>}
+        {state === "error" && (
+          <Verdict ok={false}>
+            {valid ? "Could not reach the Data Room contract. Try Re-check on-chain below." : err}
+          </Verdict>
+        )}
         {state === "done" && (
           <div data-testid="verify-room-verdict" data-state={exists ? "exists" : "not-found"}>
             <Verdict ok={exists}>
@@ -86,7 +90,7 @@ export default function VerifyRoom() {
             {!exists && (
               <p className="mt-3 border-t pt-3 text-sm leading-relaxed text-muted-foreground">
                 A private room reveals nothing here by design. If you expected a result, double-check the id. If
-                this is a Proof-of-Reserves issuer, {""}
+                this is a Proof-of-Reserves issuer,{" "}
                 <Link to={`/verify/${roomId}`} className="rounded-sm font-medium text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                   verify it as reserves
                 </Link>

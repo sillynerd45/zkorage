@@ -51,7 +51,7 @@ function RoomRow({ room }: { room: DirectoryRoom }) {
           </>
         ) : (
           <span>
-            Members: <span className="font-medium text-foreground">{room.memberBucket}</span> . approval by the owner
+            Members: <span className="font-medium text-foreground">{room.memberBucket}</span> · approval by the owner
           </span>
         )}
       </div>

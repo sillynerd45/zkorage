@@ -49,11 +49,12 @@ export default function VerifyHome() {
       if (t.kind === "reserves") return navigate(`/verify/${t.issuer}`);
       if (t.kind === "room") return navigate(`/verify/room/${t.roomId}`);
       // Ambiguous bare hex (a room id and a reserves issuer share the 64-hex shape): probe the public room
-      // first; if there is no such room, fall back to a reserves issuer.
+      // first; if there is no such room, fall back to a reserves issuer. Race a short timeout so a stalled
+      // read never strands the button on "Checking…" (we just fall back to reserves).
       setProbing(true);
-      getRoomMeta(t.id)
+      const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 6000));
+      void Promise.race([getRoomMeta(t.id).catch(() => null), timeout])
         .then((m) => navigate(m && (m.discoverable || m.exists) ? `/verify/room/${t.id}` : `/verify/${t.id}`))
-        .catch(() => navigate(`/verify/${t.id}`))
         .finally(() => setProbing(false));
     },
     [navigate],
@@ -135,10 +136,7 @@ export default function VerifyHome() {
           <button
             type="button"
             data-testid="verify-example-reserves"
-            onClick={() => {
-              setValue(EXAMPLE_ISSUER);
-              run(EXAMPLE_ISSUER);
-            }}
+            onClick={() => navigate(`/verify/${EXAMPLE_ISSUER}`)}
             className="rounded-sm font-medium text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             A live Proof-of-Reserves
