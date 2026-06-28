@@ -11,12 +11,11 @@ import {
   FolderLock,
   BadgeCheck,
   Compass,
-  Terminal,
   Lock,
   type LucideIcon,
 } from "lucide-react";
 
-export type CapabilityGroup = "prove" | "dataroom" | "bonded" | "verify" | "developer";
+export type CapabilityGroup = "prove" | "dataroom" | "bonded" | "verify";
 
 export interface GroupMeta {
   key: CapabilityGroup;
@@ -29,7 +28,6 @@ export const GROUPS: GroupMeta[] = [
   { key: "dataroom", label: "Data Room", blurb: "Share sealed documents and control who can open them, anonymously." },
   { key: "bonded", label: "Bonded Proofs", blurb: "Lock tokens until a chosen time, and prove facts that hold only while the bond stays locked." },
   { key: "verify", label: "Verify & explore", blurb: "Re-check any proof yourself, or browse every record on the public ledger." },
-  { key: "developer", label: "Developer", blurb: "Use zkorage from your own code. There is an SDK, an MCP server, and a REST API." },
 ];
 
 export interface Capability {
@@ -134,16 +132,6 @@ export const CAPABILITIES: Capability[] = [
     proves: "on-chain history",
     cta: "Open Explorer",
   },
-  {
-    key: "developer",
-    title: "Developer",
-    to: "/docs/developers",
-    group: "developer",
-    icon: Terminal,
-    blurb: "Read-only TypeScript SDK, MCP server, and REST API. No key custody.",
-    proves: "SDK · MCP · REST",
-    cta: "Open Developer",
-  },
 ];
 
 export const byGroup = (g: CapabilityGroup) => CAPABILITIES.filter((c) => c.group === g);
@@ -220,7 +208,6 @@ export const DOCS_SECTIONS: DocsSection[] = [
   { slug: "data-room", label: "Data Room", blurb: "How a sealed room stores and opens a document, and how access works." },
   { slug: "bonded-proofs", label: "Bonded Proofs", blurb: "How a bond is created, and how it opens a room." },
   { slug: "verify", label: "Verify it yourself", blurb: "Re-check any proof, room, or bond against the public chain." },
-  { slug: "developers", label: "Developers", blurb: "SDK, MCP server, and REST API." },
   { slug: "glossary", label: "Glossary", blurb: "Plain-language definitions." },
 ];
 
