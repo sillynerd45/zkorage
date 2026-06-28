@@ -32,7 +32,7 @@ import { pullVault, pushVault, forgetVault, isVaultSyncOn, setVaultSyncOn } from
 import { writeOpenTicket, clearOpenTicket, findOpenTicket } from "@/lib/dataroom/openTicket";
 import { markBondLocked, clearBondLocked, hasBondLockedFor } from "@/lib/dataroom/bondLocks";
 import { getBondOpenIdentity } from "@/lib/bonded/bondOpenIdentity";
-import { getBondSig } from "@/lib/bonded/handle";
+import { getBondSig, loadIdentityAt } from "@/lib/bonded/handle";
 import { isHex32 } from "@/lib/format";
 
 // "Open a document" (Model B). One screen, one action: the member lands on the rooms they are approved for,
@@ -60,14 +60,26 @@ export type OpenPhase =
   | "queuing" // handing the proof to the batching relay
   | "waiting" // queued for the batch window
   | "opening" // getting the key + decrypting
-  | "opened" // done (the file is in `opened`)
   | "error"
   // ── Bonded Access (BA5): a bonded room/document requires a qualifying bond proof instead of plain membership.
   | "bond-detecting" // reading the room's bond requirement
   | "bond-not-member" // bonded room, reader not on the approved list
-  | "bond-deposit" // approved member, no qualifying bond yet -> the inline deposit step
+  | "bond-deposit" // legacy bond-implies-membership room, no qualifying bond yet -> the inline deposit step
+  | "bond-need-lock" // TRUE bond-only room, no qualifying bond -> lock one in Bonded Proofs (no inline deposit)
   | "bond-below-floor" // has a qualifying bond, fewer than BOND_FLOOR qualifying bonders
   | "bond-ready"; // has a qualifying bond, at/above the floor -> offer the one-time bond proof
+
+// The phases where a flow is actively processing the active document (not awaiting a user choice). While one of
+// these runs, expanding another document queues it (it opens on its own once the room's access lands), so the
+// reader never kicks off two setups at once.
+const PROCESSING_PHASES: ReadonlySet<OpenPhase> = new Set([
+  "checking",
+  "proving",
+  "queuing",
+  "waiting",
+  "opening",
+  "bond-detecting",
+]);
 
 // Cross-device sync status for the encrypted rooms vault.
 export type SyncState =
@@ -233,7 +245,9 @@ export function useSharedOpen() {
     [address, ident, unlockSync],
   );
 
-  // The open flow for ONE document at a time.
+  // The open flow. One document is "active" (openDocId + phase) at a time, but every document that opened stays
+  // open: its decrypted content is cached in `openedDocs` so switching between documents needs no re-check and
+  // no re-prove, and several can be expanded at once. `expandedDocs` is which rows are open in the UI.
   const [openDocId, setOpenDocId] = useState<string | null>(null);
   const [phase, setPhase] = useState<OpenPhase>("idle");
   const [identity, setIdentity] = useState<DataRoomIdentity | null>(null);
@@ -241,8 +255,18 @@ export function useSharedOpen() {
   const [proveStep, setProveStep] = useState("");
   const [proveBy, setProveBy] = useState<string | null>(null);
   const [flushAt, setFlushAt] = useState<number | null>(null);
-  const [opened, setOpened] = useState<OpenedCommitteeDocument | null>(null);
   const [flowErr, setFlowErr] = useState<string | null>(null);
+  // The decrypted result per document (success OR a not-released / wrong-key result, so the row can show why).
+  const [openedDocs, setOpenedDocs] = useState<Record<string, OpenedCommitteeDocument>>({});
+  const [expandedDocs, setExpandedDocs] = useState<string[]>([]);
+  // True once the room's access has landed (a first reconstructed open). Subsequent documents then open by just
+  // fetching + decrypting, with no gate re-check and no new proof. `openFloorRef` remembers the anonymity floor
+  // that worked, for those follow-up opens.
+  const [roomAccessReady, setRoomAccessReady] = useState(false);
+  const openFloorRef = useRef(ANON_FLOOR);
+  // Set when arriving from a "Check Bonded Access" redirect (?setup=bond): auto-run the one-time setup once the
+  // flow resolves to a ready state, so the reader does not have to click again.
+  const autoSetupRef = useRef(false);
 
   // ── Bonded Access (BA5) state ──
   const [bondReq, setBondReq] = useState<BondRequirement | null>(null);
@@ -259,6 +283,10 @@ export function useSharedOpen() {
   const [roomBondMeta, setRoomBondMeta] = useState<{ symbol: string; decimals: number; issuer: string | null } | null>(null);
   const [roomBondMetaLoading, setRoomBondMetaLoading] = useState(false);
   const [roomBondCount, setRoomBondCount] = useState<number | null>(null);
+  // Whether this wallet actually holds a qualifying bond for the room's requirement (its reusable Bonded Access
+  // handle's commitment is in the live qualifying set). null while unknown. Drives the room banner: hold one ->
+  // "open a document below"; hold none -> point to Bonded Proofs to lock one (no bond is ever locked here now).
+  const [roomBondHas, setRoomBondHas] = useState<boolean | null>(null);
   // True if this wallet has a LOCAL marker that it already locked a qualifying bond for this room's current
   // requirement, so the idle panel can say "you've locked a bond, continue" instead of a bare "Set up access".
   // A hint only (no wallet signature); the live check on click is authoritative. Set/cleared as the flow learns
@@ -295,9 +323,9 @@ export function useSharedOpen() {
   // it is a bond-only room and can show the bond-aware panel. Loads the token meta + the live qualifying-set
   // count for display. A membership / legacy room leaves roomBond null (the per-document flow handles those).
   useEffect(() => {
-    if (!isHex32(room)) { setRoomBond(null); setRoomBondMeta(null); setRoomBondCount(null); setRoomBondMetaLoading(false); setRoomBondLocked(false); return; }
+    if (!isHex32(room)) { setRoomBond(null); setRoomBondMeta(null); setRoomBondCount(null); setRoomBondMetaLoading(false); setRoomBondLocked(false); setRoomBondHas(null); return; }
     let live = true;
-    setRoomBond(null); setRoomBondMeta(null); setRoomBondCount(null); setRoomBondMetaLoading(true); setRoomBondLocked(false);
+    setRoomBond(null); setRoomBondMeta(null); setRoomBondCount(null); setRoomBondMetaLoading(true); setRoomBondLocked(false); setRoomBondHas(null);
     getBondRequirementApi(room.trim())
       .then((r) => {
         if (!live) return;
@@ -307,8 +335,20 @@ export function useSharedOpen() {
           // reqId, so a changed requirement does not show a stale hint).
           setRoomBondLocked(hasBondLockedFor(address, room.trim(), r.reqId));
           getBondQualSet(r.token, r.minAmount, r.deadline)
-            .then((q) => { if (live) setRoomBondCount(q.anonSetSize); })
-            .catch(() => { if (live) setRoomBondCount(null); });
+            .then((q) => {
+              if (!live) return;
+              setRoomBondCount(q.anonSetSize);
+              // Does this wallet already hold a qualifying bond? Read the reusable handle from this browser (no
+              // signature) and look for its commitment in the set. No handle -> no qualifying bond.
+              const handle = loadIdentityAt(address);
+              if (handle) {
+                const mine = bondAccessCommitment(handle.idSecret).toLowerCase();
+                setRoomBondHas(q.locks.some((l) => l.commitment.toLowerCase() === mine));
+              } else {
+                setRoomBondHas(false);
+              }
+            })
+            .catch(() => { if (live) { setRoomBondCount(null); setRoomBondHas(null); } });
           if (address) {
             getTokenBalance(address, r.token)
               .then((t) => { if (live) setRoomBondMeta({ symbol: t.symbol, decimals: t.decimals, issuer: t.issuer ?? null }); })
@@ -326,12 +366,16 @@ export function useSharedOpen() {
     return () => { live = false; };
   }, [room, address]);
 
-  // Reset the per-doc open flow whenever the selected room changes.
+  // Reset the open flow whenever the selected room changes (drops the per-document open cache too).
   const resetFlow = useCallback(() => {
     setOpenDocId(null);
     setPhase("idle");
     setAccess(null);
-    setOpened(null);
+    setOpenedDocs({});
+    setExpandedDocs([]);
+    setRoomAccessReady(false);
+    openFloorRef.current = ANON_FLOOR;
+    autoSetupRef.current = false;
     setFlowErr(null);
     setProveStep("");
     setProveBy(null);
@@ -353,8 +397,17 @@ export function useSharedOpen() {
   // membership path, BOND_FLOOR (3) on a bonded room (a bonded room is sized to the bond floor, so 5 would
   // wrongly refuse a 3-member room).
   const doOpen = useCallback(async (docId: string, id: DataRoomIdentity, minAnonSet: number = ANON_FLOOR) => {
+    setOpenDocId(docId);
     setPhase("opening");
     setFlowErr(null);
+    // Drop any stale cached result for this doc (e.g. a previous "not released yet"), so the row shows the
+    // opening spinner during a retry instead of the old failure.
+    setOpenedDocs((prev) => {
+      if (!(docId in prev)) return prev;
+      const next = { ...prev };
+      delete next[docId];
+      return next;
+    });
     try {
       const open1 = () =>
         sdk.openCommitteeDocument(room.trim(), docId.trim(), id.accessor, id.recipientSecret, { minAnonSet });
@@ -370,8 +423,16 @@ export function useSharedOpen() {
         out = await open1();
       }
       if (cancelled.current) return;
-      setOpened(out);
-      setPhase("opened");
+      // Cache the result (success, not-released, or wrong-key) so the row renders it and a re-expand is instant.
+      setOpenedDocs((prev) => ({ ...prev, [docId]: out }));
+      if (out.reconstructed) {
+        // Room access is established: remember the floor so follow-up documents open with no re-prove.
+        setRoomAccessReady(true);
+        openFloorRef.current = minAnonSet;
+      }
+      // Free the active slot (the row now renders from openedDocs); a queued document opens via the effect.
+      setPhase("idle");
+      setOpenDocId((cur) => (cur === docId ? null : cur));
     } catch (e) {
       if (cancelled.current) return;
       setFlowErr(String((e as Error).message ?? e));
@@ -513,11 +574,15 @@ export function useSharedOpen() {
         // The live read found no qualifying bond for this member, so a stale "you locked one" hint is wrong.
         clearBondLocked(address, room.trim());
         setRoomBondLocked(false);
-        setPhase("bond-deposit");
+        setRoomBondHas(false);
+        // TRUE bond-only (no-approval): bonds are locked on Bonded Proofs > Bonded Access now, never here, so
+        // point the reader there (no inline deposit). The legacy bond-implies-membership path still locks inline.
+        setPhase(req.bondOpen ? "bond-need-lock" : "bond-deposit");
         return;
       }
       markBondLocked(address, room.trim(), req.reqId);
       setRoomBondLocked(true);
+      setRoomBondHas(true);
       setPhase(qual && qual.anonSetSize < BOND_FLOOR ? "bond-below-floor" : "bond-ready");
     },
     [address, room],
@@ -537,11 +602,13 @@ export function useSharedOpen() {
     if (!hasBond) {
       clearBondLocked(address, room.trim());
       setRoomBondLocked(false);
-      setPhase("bond-deposit");
+      setRoomBondHas(false);
+      setPhase(bondReq.bondOpen ? "bond-need-lock" : "bond-deposit");
       return;
     }
     markBondLocked(address, room.trim(), bondReq.reqId);
     setRoomBondLocked(true);
+    setRoomBondHas(true);
     setPhase(qual && qual.anonSetSize < BOND_FLOOR ? "bond-below-floor" : "bond-ready");
   }, [identity, bondReq, room, address]);
 
@@ -689,14 +756,26 @@ export function useSharedOpen() {
 
   // The single Open action for a document: derive identity, read live status, branch.
   const open = useCallback(
-    async (docId: string) => {
+    async (docId: string, opts?: { autoSetup?: boolean }) => {
       if (!isHex32(room) || !isHex32(docId)) { setFlowErr("This document id is not valid."); setPhase("error"); return; }
+      // Already opened in this session -> just make sure the row is expanded; no re-check, no re-fetch.
+      if (openedDocs[docId]?.reconstructed) {
+        setExpandedDocs((prev) => (prev.includes(docId) ? prev : [...prev, docId]));
+        return;
+      }
       cancelled.current = false;
+      setExpandedDocs((prev) => (prev.includes(docId) ? prev : [...prev, docId]));
       setOpenDocId(docId);
-      setOpened(null);
       setFlowErr(null);
       setProveStep("");
       setBondReq(null);
+      if (opts?.autoSetup) autoSetupRef.current = true;
+      // Room access already landed (a document opened before): open this one by just fetching + decrypting, with
+      // no gate re-check and no new proof.
+      if (roomAccessReady && identity) {
+        await doOpen(docId, identity, openFloorRef.current);
+        return;
+      }
       setPhase("checking");
       try {
         // Read the room's requirement first to pick the identity. A TRUE bond-only room opens with the REUSABLE
@@ -763,18 +842,63 @@ export function useSharedOpen() {
         setPhase("error");
       }
     },
-    [room, ident, belowFloor, doOpen, resolveBondPhase, address, signMessage],
+    [room, ident, belowFloor, doOpen, resolveBondPhase, address, signMessage, openedDocs, roomAccessReady, identity],
   );
+
+  // Expand or collapse a document row. Expanding an un-opened document starts its open: the first one runs the
+  // gate / setup; the rest queue and open on their own once the room's access lands (the auto-open effect). A
+  // document already processing blocks starting another, so two setups never run at once. Collapsing keeps the
+  // cached content, so re-expanding is instant.
+  const toggleDoc = useCallback(
+    (docId: string) => {
+      const wasOpen = expandedDocs.includes(docId);
+      setExpandedDocs((prev) => (wasOpen ? prev.filter((d) => d !== docId) : [...prev, docId]));
+      if (wasOpen) return;
+      if (openedDocs[docId]) return; // a cached result (success or a retry-able failure) renders in the row
+      // Bond-only room where this wallet holds no qualifying bond (or has no handle yet): do NOT derive an
+      // identity or prompt for a signature on a casual expand. The row shows the "create a bond" pointer; the
+      // reader locks one on Bonded Proofs (the only place bonds are created now).
+      if (roomBond?.bondOpen && roomBondHas === false) return;
+      if (roomAccessReady) return; // the auto-open effect opens it
+      if (PROCESSING_PHASES.has(phase)) return; // a setup is running; this one queues
+      void open(docId);
+    },
+    [expandedDocs, openedDocs, roomBond, roomBondHas, roomAccessReady, phase, open],
+  );
+
+  // Once the room's access has landed, open any document that is expanded but not yet opened. Runs one at a time
+  // (doOpen flips phase to "opening", which gates this effect) and chains as each completes.
+  useEffect(() => {
+    if (!roomAccessReady || !identity) return;
+    if (phase !== "idle") return; // a doOpen / setup is in flight
+    const next = expandedDocs.find((d) => !openedDocs[d] && d !== openDocId);
+    if (next) void doOpen(next, identity, openFloorRef.current);
+  }, [roomAccessReady, identity, phase, expandedDocs, openedDocs, openDocId, doOpen]);
+
+  // Auto-run the one-time setup after a "Check Bonded Access" redirect, once the flow resolves to a ready state.
+  useEffect(() => {
+    if (!autoSetupRef.current) return;
+    if (phase === "bond-ready") { autoSetupRef.current = false; void setupBondAccess(); }
+    else if (phase === "approved") { autoSetupRef.current = false; void setupAccess(); }
+    else if (phase !== "checking" && phase !== "bond-detecting") {
+      // A blocked/terminal state (below-floor, need-lock, not-member, error, ...): nothing to auto-run.
+      autoSetupRef.current = false;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
 
   const dismiss = useCallback(() => { resetFlow(); }, [resetFlow]); // "Not now"
 
-  // Room-level "Set up access" for a bond-only room: start the open flow on the room's first document. The bond
-  // grants ROOM access (any one document's open detects the requirement and runs deposit -> wait -> prove ->
-  // open), so the reader does not need to pick a document first. After access lands, every document opens.
-  const setupRoomAccess = useCallback(() => {
-    const first = roomDocs[0];
-    if (first) void open(first.doc_id);
-  }, [roomDocs, open]);
+  // Open (and expand) the room's first document, optionally auto-running the one-time setup. Used by the
+  // "Check Bonded Access" redirect (?setup=bond) so a reader who already holds a qualifying bond lands and the
+  // open proof starts on its own; the decrypted content then appears under that document.
+  const setupRoomAccess = useCallback(
+    (autoSetup = false) => {
+      const first = roomDocs[0];
+      if (first) void open(first.doc_id, { autoSetup });
+    },
+    [roomDocs, open],
+  );
 
   // Resume a persisted batch wait on landing: if this wallet has an outstanding ticket, auto-select its room
   // and pick the flow back up (poll, then auto-open) so leaving the tab does not lose the "waiting" state.
@@ -791,6 +915,7 @@ export function useSharedOpen() {
     cancelled.current = false;
     setRoom(t.roomId);
     setOpenDocId(t.docId);
+    setExpandedDocs([t.docId]); // expand it so the waiting status (and then the content) shows under it
     setFlushAt(t.flushAt);
     setPhase("waiting");
     (async () => {
@@ -837,14 +962,17 @@ export function useSharedOpen() {
     belowFloor,
     // open flow
     open,
+    toggleDoc,
     openDocId,
+    expandedDocs,
+    openedDocs,
+    roomAccessReady,
     phase,
     identity,
     access,
     proveStep,
     proveBy,
     flushAt,
-    opened,
     flowErr,
     setupAccess,
     dismiss,
@@ -863,6 +991,7 @@ export function useSharedOpen() {
     roomBondMetaLoading,
     roomBondCount,
     roomBondLocked,
+    roomBondHas,
     setupRoomAccess,
   };
 }
