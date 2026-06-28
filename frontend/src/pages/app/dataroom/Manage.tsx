@@ -115,13 +115,13 @@ export default function RoomManagement() {
   const [bondOpen, setBondOpen] = useState<boolean | null>(cachedBond ? cachedBond.bondOpen : null);
   const [picked, setPicked] = useState<AccessModel>(cachedBond ? (cachedBond.found ? "bond" : "membership") : "membership");
   const [bondRefreshing, setBondRefreshing] = useState(false); // a background refresh of an already-painted room
-  const [reqRefresh, setReqRefresh] = useState(0);
   const [clearing, setClearing] = useState(false);
   const [clearErr, setClearErr] = useState<string | null>(null);
-  // syncedRoom: the room whose `picked` has been synced to the chain model (so a reqRefresh after a set/clear
-  // updates the markers but never yanks the owner's pick). shownRoom: the room currently displayed, so a
-  // reqRefresh bump for the SAME room refreshes silently (keeps the current values) instead of flashing the
-  // cold state. Both seed to the restored room when it is already cached.
+  const [switched, setSwitched] = useState(false); // brief "switched to membership" confirmation
+  // syncedRoom: the room whose `picked` has been synced to the chain model (so a post-change reconcile updates
+  // the markers but never yanks the owner's pick). shownRoom: the room currently displayed, so reconcileModel
+  // can tell the owner is still on this room before committing a read (and bails if they moved on). Both seed
+  // to the restored room when it is already cached.
   const syncedRoom = useRef<string | null>(cachedBond ? e.ownerRoom : null);
   const shownRoom = useRef<string | null>(cachedBond ? e.ownerRoom : null);
 
@@ -138,14 +138,17 @@ export default function RoomManagement() {
       setFound(null);
       setBondOpen(null);
       setBondRefreshing(false);
+      setSwitched(false);
       syncedRoom.current = null;
       shownRoom.current = null;
       return;
     }
     let live = true;
     // A different room: paint the cached value at once when we have one, else show the cold/null state
-    // (skeleton). A reqRefresh bump for the SAME room keeps the current values and refreshes silently.
+    // (skeleton). Post-change updates (set / clear) are reconciled by reconcileModel below, not here, so a
+    // momentarily stale read right after a write never flips the access model back.
     if (shownRoom.current !== e.ownerRoom) {
+      setSwitched(false);
       const cached = bondReqCache.get(e.ownerRoom);
       if (cached) {
         setFound(cached.found);
@@ -192,7 +195,42 @@ export default function RoomManagement() {
     return () => {
       live = false;
     };
-  }, [e.ownerRoom, reqRefresh]);
+  }, [e.ownerRoom]);
+
+  // Reconcile the access-model markers with the chain AFTER a change (set or clear), tolerant of testnet RPC
+  // lag: a write's effect can take a few seconds to be visible to a read, and a stale read returning the OLD
+  // value would otherwise flip the model back (the bug where "Switch to membership" reappeared after a
+  // successful switch). Poll a few times and only commit a value once it matches what we expect, or on the
+  // final attempt. Bails if the owner has moved to another room.
+  const reconcileModel = useCallback((roomId: string, expectedFound: boolean) => {
+    let tries = 0;
+    const tick = async () => {
+      if (shownRoom.current !== roomId) return; // owner moved on
+      setBondRefreshing(true);
+      try {
+        const r = await getBondRequirementApi(roomId);
+        const f = Boolean(r.found);
+        if (f === expectedFound || tries >= 4) {
+          const bo = Boolean(r.bondOpen);
+          bondReqCache.set(roomId, { found: f, bondOpen: bo });
+          if (shownRoom.current === roomId) {
+            setFound(f);
+            setBondOpen(bo);
+          }
+          setBondRefreshing(false);
+          return;
+        }
+      } catch {
+        if (tries >= 4) {
+          setBondRefreshing(false);
+          return;
+        }
+      }
+      tries++;
+      setTimeout(() => void tick(), 2000);
+    };
+    void tick();
+  }, []);
 
   const switchToMembership = useCallback(async () => {
     if (!e.ownerRoom || !signer) {
@@ -200,25 +238,29 @@ export default function RoomManagement() {
       return;
     }
     setClearErr(null);
+    setSwitched(false);
     setClearing(true);
+    const roomId = e.ownerRoom.trim();
     try {
-      const r = await clearBondRequirement(e.ownerRoom.trim(), signer);
+      const r = await clearBondRequirement(roomId, signer);
       if (!r.ok) {
         setClearErr(r.error ?? "Could not switch to membership.");
         return;
       }
-      // Optimistically reflect the cleared requirement (membership) so the markers flip at once, then confirm
-      // it with a background refresh.
-      bondReqCache.set(e.ownerRoom, { found: false, bondOpen: false });
+      // The clear succeeded on-chain, so reflect membership at once (the button is replaced by the membership
+      // note). Then reconcile with the chain, tolerant of RPC lag, so a momentarily stale read cannot flip it
+      // back to "Switch to membership".
+      bondReqCache.set(roomId, { found: false, bondOpen: false });
       setFound(false);
       setBondOpen(false);
-      setReqRefresh((x) => x + 1);
+      setSwitched(true);
+      reconcileModel(roomId, false);
     } catch (err) {
       setClearErr(String((err as Error).message ?? err));
     } finally {
       setClearing(false);
     }
-  }, [e.ownerRoom, signer]);
+  }, [e.ownerRoom, signer, reconcileModel]);
 
   if (!e.connected) {
     return (
@@ -387,10 +429,17 @@ export default function RoomManagement() {
                     {clearErr && <p className="text-sm text-destructive" data-testid="manage-clear-error">{clearErr}</p>}
                   </div>
                 ) : (
-                  <Callout icon={Users}>
-                    This room uses approved membership. Approve people who ask to join in the Membership tab.
-                    Approving a member lets them prove their way in anonymously.
-                  </Callout>
+                  <div className="space-y-3">
+                    {switched && (
+                      <p className="text-sm text-emerald-600 dark:text-emerald-500" data-testid="manage-switched">
+                        Switched to membership.
+                      </p>
+                    )}
+                    <Callout icon={Users}>
+                      This room uses approved membership. Approve people who ask to join in the Membership tab.
+                      Approving a member lets them prove their way in anonymously.
+                    </Callout>
+                  </div>
                 )}
               </div>
             )}
@@ -403,8 +452,12 @@ export default function RoomManagement() {
                 <OwnerBondSection
                   key={e.ownerRoom}
                   roomId={e.ownerRoom}
-                  onChanged={() => setReqRefresh((x) => x + 1)}
-                  onCleared={() => setPicked("membership")}
+                  onChanged={() => reconcileModel(e.ownerRoom, true)}
+                  onCleared={() => {
+                    setPicked("membership");
+                    setSwitched(true);
+                    reconcileModel(e.ownerRoom, false);
+                  }}
                 />
               </div>
             )}
