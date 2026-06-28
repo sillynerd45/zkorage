@@ -4,12 +4,15 @@ import { AppTopbar } from "./app/AppTopbar";
 import { BottomNav } from "./app/BottomNav";
 import VersionBadge from "@/components/VersionBadge";
 import { SyncConsentDialog } from "@/components/app/SyncConsentDialog";
+import { AuroraBackground } from "@/components/AuroraBackground";
 
 // App shell (grouped left sidebar, Blank/BlockWallet pattern) wraps the ZK operations under /app/*.
 // Layout route: renders <Outlet/> for the matched child page. The Freighter wallet control lives in AppTopbar.
+// `relative isolate` lets the fixed AuroraBackground sit behind the content (the shared scroll-persistent backdrop).
 export default function AppShell() {
   return (
-    <div className="min-h-dvh bg-background text-foreground">
+    <div className="relative isolate min-h-dvh bg-background text-foreground">
+      <AuroraBackground />
       <a
         href="#main"
         className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[100] focus:rounded-md focus:border focus:bg-card focus:px-4 focus:py-2 focus:shadow-lg"
