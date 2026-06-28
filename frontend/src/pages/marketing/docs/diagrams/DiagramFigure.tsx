@@ -15,11 +15,14 @@ export function DiagramFigure({
   caption,
   steps,
   render,
+  legend,
 }: {
   title: string;
   caption: string;
   steps: string[];
   render: DiagramRender;
+  // Defaults to the two-state node legend; the sequence diagram passes a richer legend (return + sign cues).
+  legend?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const close = useCallback(() => setOpen(false), []);
@@ -42,7 +45,7 @@ export function DiagramFigure({
       <figcaption className="mt-2 max-w-[68ch] text-[13px] leading-relaxed text-muted-foreground">
         {caption}
       </figcaption>
-      <NodeLegend />
+      {legend ?? <NodeLegend />}
 
       <ol className="sr-only">
         {steps.map((s, i) => (
@@ -50,7 +53,7 @@ export function DiagramFigure({
         ))}
       </ol>
 
-      <Lightbox open={open} title={title} caption={caption} onClose={close}>
+      <Lightbox open={open} title={title} caption={caption} onClose={close} legend={legend}>
         {render({ decorative: false, idPrefix: `${baseId}-zoom` })}
       </Lightbox>
     </figure>
@@ -64,12 +67,14 @@ function Lightbox({
   caption,
   onClose,
   children,
+  legend,
 }: {
   open: boolean;
   title: string;
   caption?: string;
   onClose: () => void;
   children: ReactNode;
+  legend?: ReactNode;
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
@@ -138,13 +143,13 @@ function Lightbox({
             <X className="size-4" aria-hidden="true" />
           </button>
         </div>
-        <div className="overflow-auto">
-          <div className="mx-auto w-full" style={{ maxHeight: "78vh" }}>
-            {children}
-          </div>
+        {/* Cap + scroll on the SAME element: a tall sequence SVG scrolls within the dialog instead of
+            painting over the caption (a no-op for the short flows, which never exceed 78vh). */}
+        <div className="mx-auto w-full overflow-auto" style={{ maxHeight: "78vh" }}>
+          {children}
         </div>
         {caption && <p className="mt-3 text-[13px] leading-relaxed text-muted-foreground">{caption}</p>}
-        <NodeLegend />
+        {legend ?? <NodeLegend />}
       </div>
     </div>,
     document.body,

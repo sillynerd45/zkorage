@@ -7,8 +7,10 @@ import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { SectionCard } from "@/components/marketing/blocks";
 import { DiagramFigure, UnderTheHood } from "./diagrams/DiagramFigure";
+import { SeqLegend } from "./diagrams/kit";
 import {
   StoreDiagram,
+  STORE_STEPS,
   JoinApproveDiagram,
   OpenDiagram,
   BondCreateDiagram,
@@ -206,13 +208,9 @@ export function DocsDataRoom() {
         </P>
         <DiagramFigure
           title="Storing a document"
-          caption="The file is encrypted and its key split before anything leaves your browser. Only a fingerprint is public."
-          steps={[
-            "Your browser encrypts the file.",
-            "The key is split into three pieces, one for each keeper.",
-            "The encrypted file is stored off the chain.",
-            "A short fingerprint is written to the public chain.",
-          ]}
+          caption="The full path of a stored document across your browser, the backend, Cloudflare R2, the three keepers, and the chain. The file is encrypted and its key split before anything leaves your browser; the backend keeps the encrypted file off the chain and hands the sealed key shares to the keepers; only a short record is public. Click to enlarge."
+          steps={STORE_STEPS}
+          legend={<SeqLegend />}
           render={(p) => <StoreDiagram {...p} />}
         />
         <UnderTheHood>

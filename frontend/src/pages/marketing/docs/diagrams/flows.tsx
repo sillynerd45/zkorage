@@ -1,27 +1,127 @@
-import { DiagramSvg, Node, Edge, colsLeft, type DiagramProps } from "./kit";
+import {
+  DiagramSvg,
+  Node,
+  Edge,
+  colsLeft,
+  lifelineCols,
+  Lifeline,
+  SeqMsg,
+  SeqBox,
+  PhaseBand,
+  type DiagramProps,
+} from "./kit";
 
-// The five documentation flowcharts. Each is a single left-to-right row so it stays scannable. The branch
-// detail (membership vs bonded, plain bond vs qualifying bond) lives in the prose and the "Under the hood"
-// expander, not in the drawing. Every node is private (dashed brand) or public (solid neutral). See ./kit
-// for the shared primitives.
+// The documentation flowcharts. The store flow is a full sequence diagram (six actor lifelines + numbered
+// messages) because storing is genuinely a multi-party round-trip between your browser, the backend, Cloudflare
+// R2, the keepers, and the chain. The other four flows stay single left-to-right rows (the branch detail lives
+// in the prose + the "Under the hood" expander). Every actor/node is private (dashed brand) or public (solid
+// neutral); a returned value is a dashed arrow; a wallet-signed step carries a key glyph. See ./kit.
 
-// Storing a document: encrypt, split the key, store off-chain, anchor a fingerprint. No proof.
+// The 12 store steps, defined once so the in-diagram badge numbers and the screen-reader <ol> never drift.
+export const STORE_STEPS = [
+  "Your browser resolves the room's id from the room name.",
+  "Your browser fetches the keeper committee and their three seal keys.",
+  "You sign in your wallet to create the room; create_room writes you in as the owner on Soroban.",
+  "You sign once more to derive your private room key (an off-chain signature, not a transaction).",
+  "The dealer runs entirely in your browser: encrypt the file with AES-256-GCM, split the key two-of-three with Shamir, seal each share to a keeper, and seal an escrow copy of the key for you.",
+  "Your browser sends the encrypted file, the three sealed shares, and the escrow copy to the backend.",
+  "The backend stores the encrypted file in Cloudflare R2 and gets back a storage pointer.",
+  "The backend fans the three sealed shares out to the three keepers, one each.",
+  "The backend returns the content hash and the storage pointer to your browser.",
+  "You sign in your wallet to anchor the document.",
+  "put_committee_document writes the record on Soroban (content hash, key commitment, storage pointer, room id, doc id); no key and no contents go on-chain.",
+  "Soroban returns the transaction hash, and the document is stored.",
+];
+
+// Storing a document: a sequence diagram. Encrypt + split the key locally, store the locked file off-chain via
+// the backend, hand the sealed key shares to the keepers, anchor a short record on-chain. No zero-knowledge
+// proof is used to store (the proof is at open time).
 export function StoreDiagram({ idPrefix, decorative }: DiagramProps) {
-  const c = colsLeft(4);
+  const x = lifelineCols(6);
+  const [BROWSER, WALLET, BACKEND, R2, KEEPERS, SOROBAN] = x;
+  const VB_H = 868;
+  const bottomY = 860;
   return (
     <DiagramSvg
       idPrefix={idPrefix}
       decorative={decorative}
+      height={VB_H}
+      minWidth={decorative ? undefined : 700}
       title="Storing a document"
-      desc="Your browser encrypts the file, splits its key across three keepers, stores the locked file off the chain, and writes only a short fingerprint to the public chain. No proof is used to store."
+      desc="A sequence diagram of storing a document across six actors: your browser, your wallet, the backend, Cloudflare R2, the three keepers, and the Soroban DataRoom contract. Your browser encrypts the file and splits its key locally, the backend stores the encrypted file off the chain and hands the sealed key shares to the keepers, and a short record is anchored on the public chain. Your wallet signs each on-chain write while the backend builds and submits the transaction. No key and no contents ever go on-chain, and no zero-knowledge proof is used to store."
     >
-      <Node left={c[0]} kind="private" title={["Encrypt", "the file"]} sub="in your browser" />
-      <Node left={c[1]} kind="private" title={["Split the", "key"]} sub="across 3 keepers" />
-      <Node left={c[2]} kind="private" title={["Store the", "locked file"]} sub="off the chain" />
-      <Node left={c[3]} kind="public" title={["Anchor a", "fingerprint"]} sub="on the chain" />
-      <Edge idPrefix={idPrefix} from={c[0]} to={c[1]} />
-      <Edge idPrefix={idPrefix} from={c[1]} to={c[2]} />
-      <Edge idPrefix={idPrefix} from={c[2]} to={c[3]} />
+      {/* Phase bands first, behind the lifelines. */}
+      <PhaseBand y={60} h={126} label="PREPARE" tint />
+      <PhaseBand y={186} h={114} label="CREATE ROOM" tint={false} />
+      <PhaseBand y={300} h={60} label="SIGN KEY" tint />
+      <PhaseBand y={360} h={140} label="SEAL LOCALLY" tint={false} />
+      <PhaseBand y={500} h={132} label="DISTRIBUTE" tint />
+      <PhaseBand y={632} h={236} label="ANCHOR" tint={false} />
+
+      {/* The six actor lifelines. Five are off-chain (dashed brand); Soroban is the public chain (solid neutral). */}
+      <Lifeline x={BROWSER} kind="private" title="Browser" sub="you" bottomY={bottomY} />
+      <Lifeline x={WALLET} kind="private" title="Wallet" sub="Freighter" bottomY={bottomY} />
+      <Lifeline x={BACKEND} kind="private" title="Backend" sub="zkorage API" bottomY={bottomY} />
+      <Lifeline x={R2} kind="private" title="Storage" sub="Cloudflare R2" bottomY={bottomY} />
+      <Lifeline x={KEEPERS} kind="private" title="Keepers" sub="3 of them" bottomY={bottomY} />
+      <Lifeline x={SOROBAN} kind="public" title="Soroban" sub="DataRoom" bottomY={bottomY} />
+
+      {/* PREPARE */}
+      <SeqMsg idPrefix={idPrefix} n={1} fromX={BROWSER} toX={BACKEND} y={102} label="resolve room id (GET)" />
+      <SeqMsg idPrefix={idPrefix} fromX={BACKEND} toX={BROWSER} y={126} label="room id" variant="return" />
+      <SeqMsg idPrefix={idPrefix} n={2} fromX={BROWSER} toX={BACKEND} y={154} label="committee + 3 seal keys (GET)" />
+      <SeqMsg idPrefix={idPrefix} fromX={BACKEND} toX={BROWSER} y={178} label="keepers online" variant="return" />
+
+      {/* CREATE ROOM (only when the room is new) */}
+      <SeqMsg idPrefix={idPrefix} n={3} fromX={BROWSER} toX={WALLET} y={224} label="sign: create room" tone="brand" sign />
+      <SeqMsg idPrefix={idPrefix} fromX={BROWSER} toX={SOROBAN} y={258} label="create_room, you become owner" tone="brand" />
+      <SeqMsg idPrefix={idPrefix} fromX={SOROBAN} toX={BROWSER} y={282} label="owner set" variant="return" />
+
+      {/* SIGN KEY */}
+      <SeqMsg idPrefix={idPrefix} n={4} fromX={BROWSER} toX={WALLET} y={336} label="sign: derive room key (off-chain)" tone="brand" sign />
+
+      {/* SEAL LOCALLY: the in-browser dealer */}
+      <SeqBox
+        n={5}
+        x={66}
+        y={384}
+        w={392}
+        h={104}
+        kind="private"
+        title="Seal locally, all in your browser"
+        lines={[
+          "Encrypt the file (AES-256-GCM)",
+          "Split the key 2 of 3 (Shamir)",
+          "Seal each share to a keeper",
+          "Seal an escrow copy of the key for you",
+        ]}
+      />
+
+      {/* DISTRIBUTE */}
+      <SeqMsg idPrefix={idPrefix} n={6} fromX={BROWSER} toX={BACKEND} y={540} label="deal-sealed: ciphertext + 3 sealed shares + escrow" tone="brand" />
+      <SeqMsg idPrefix={idPrefix} n={7} fromX={BACKEND} toX={R2} y={576} label="store the ciphertext" tone="brand" />
+      <SeqMsg idPrefix={idPrefix} fromX={R2} toX={BACKEND} y={600} label="r2:// pointer" variant="return" />
+      <SeqMsg idPrefix={idPrefix} n={8} fromX={BACKEND} toX={KEEPERS} y={624} label="fan out 3 sealed shares, one each" tone="brand" />
+
+      {/* ANCHOR */}
+      <SeqMsg idPrefix={idPrefix} n={9} fromX={BACKEND} toX={BROWSER} y={664} label="content hash + r2 pointer" variant="return" />
+      <SeqMsg idPrefix={idPrefix} n={10} fromX={BROWSER} toX={WALLET} y={698} label="sign: anchor" tone="brand" sign />
+      <SeqMsg idPrefix={idPrefix} n={11} fromX={BROWSER} toX={SOROBAN} y={730} label="put_committee_document" tone="brand" />
+      <SeqBox
+        x={512}
+        y={744}
+        w={280}
+        h={86}
+        kind="public"
+        title="DataRoom records the entry"
+        lines={[
+          "content hash, key commitment",
+          "r2 pointer, room id, doc id",
+          "No key, no contents on-chain",
+        ]}
+        emphasizeLast
+      />
+      <SeqMsg idPrefix={idPrefix} n={12} fromX={SOROBAN} toX={BROWSER} y={850} label="transaction hash, done" variant="return" />
     </DiagramSvg>
   );
 }

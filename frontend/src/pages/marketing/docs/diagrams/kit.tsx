@@ -158,6 +158,7 @@ export function DiagramSvg({
   title,
   desc,
   height = VB_H,
+  minWidth,
   children,
 }: {
   idPrefix: string;
@@ -165,6 +166,9 @@ export function DiagramSvg({
   title: string;
   desc: string;
   height?: number;
+  // Only the tall sequence diagram passes this, and only on the described (zoom) copy, so the labels never
+  // shrink below readable in a narrow dialog (the dialog scrolls instead). The four linear flows never set it.
+  minWidth?: number;
   children: ReactNode;
 }) {
   return (
@@ -173,6 +177,7 @@ export function DiagramSvg({
       width="100%"
       preserveAspectRatio="xMidYMid meet"
       className="h-auto"
+      style={minWidth ? { minWidth } : undefined}
       {...(decorative
         ? { "aria-hidden": true }
         : { role: "img", "aria-labelledby": `${idPrefix}-t ${idPrefix}-d` })}
@@ -215,6 +220,260 @@ export function NodeLegend({ className }: { className?: string }) {
       </li>
       <li className="inline-flex items-center gap-1.5">
         <Swatch kind="public" /> On the public chain
+      </li>
+    </ul>
+  );
+}
+
+// ─────────────────────────────── Sequence-diagram primitives ───────────────────────────────
+// The store flow is the one diagram rich enough to need actor lifelines + numbered messages instead of a
+// single row, so these primitives live alongside (never replace) Node/Edge/colsLeft. They reuse DiagramSvg,
+// the idPrefix-scoped arrow markers, and NODE_RECT, so the same meaning-not-color convention holds: an actor
+// that keeps data OFF the chain is a dashed-brand box + dashed lifeline; the one ON-chain actor (Soroban) is a
+// solid-neutral box + solid lifeline; a return value is a dashed arrow; a wallet-signed step carries a key
+// glyph plus the word "sign" in its label (so the cue is never color alone, WCAG 1.4.1).
+
+const LL_W = 96; // actor header width
+const LL_H = 42; // actor header height (title + sublabel)
+const LL_TOP = 14; // header top y
+const LL_HEAD_BOTTOM = LL_TOP + LL_H; // 56, where lifelines start
+const SEQ_FIRST_X = 104; // centre-x of the leftmost lifeline (leaves a left rail for phase labels)
+const SEQ_LAST_X = 752; //  centre-x of the rightmost lifeline (header right edge lands on 800)
+
+// Centre-x of each of n evenly-spread lifelines across the standard 800-wide viewBox.
+export function lifelineCols(n: number): number[] {
+  const pitch = n > 1 ? (SEQ_LAST_X - SEQ_FIRST_X) / (n - 1) : 0;
+  return Array.from({ length: n }, (_, i) => SEQ_FIRST_X + i * pitch);
+}
+
+// One actor: a header box (dashed brand if off-chain, solid neutral if on-chain) over a full-height lifeline.
+export function Lifeline({
+  x,
+  kind,
+  title,
+  sub,
+  bottomY,
+}: {
+  x: number;
+  kind: NodeKind;
+  title: string;
+  sub?: string;
+  bottomY: number;
+}) {
+  const left = x - LL_W / 2;
+  return (
+    <g>
+      {/* The vertical lifeline carries the off-chain (dashed) vs on-chain (solid) meaning down its full run. */}
+      <line
+        x1={x}
+        y1={LL_HEAD_BOTTOM}
+        x2={x}
+        y2={bottomY}
+        strokeWidth={1.25}
+        strokeDasharray={kind === "private" ? "4 6" : undefined}
+        className="stroke-muted-foreground/45"
+      />
+      <rect
+        x={left}
+        y={LL_TOP}
+        width={LL_W}
+        height={LL_H}
+        rx={10}
+        strokeWidth={1.5}
+        strokeDasharray={kind === "private" ? "5 4" : undefined}
+        className={NODE_RECT[kind]}
+      />
+      <text x={x} y={LL_TOP + (sub ? 19 : 26)} textAnchor="middle" fontSize={12.5} fontWeight={600} className="fill-foreground">
+        {title}
+      </text>
+      {sub && (
+        <text x={x} y={LL_TOP + 33} textAnchor="middle" fontSize={9.5} className="fill-muted-foreground">
+          {sub}
+        </text>
+      )}
+    </g>
+  );
+}
+
+// Numbered order chip, sits on a message near its source. Decorative; the sr-only <ol> is the real ordering.
+function StepBadge({ x, y, n }: { x: number; y: number; n: number }) {
+  return (
+    <g aria-hidden="true">
+      <circle cx={x} cy={y} r={8.5} strokeWidth={1.25} className="fill-card stroke-brand" />
+      <text x={x} y={y + 3.5} textAnchor="middle" fontSize={11} fontWeight={700} className="fill-brand">
+        {n}
+      </text>
+    </g>
+  );
+}
+
+// A tiny key glyph = "this message is wallet-signed". Shape-based (the label also says "sign"), so 1.4.1 holds.
+function SignKey({ x, y }: { x: number; y: number }) {
+  return (
+    <g transform={`translate(${x} ${y})`} aria-hidden="true">
+      <circle cx={-3.2} cy={0} r={3.2} className="fill-brand" />
+      <circle cx={-3.2} cy={0} r={1.2} className="fill-card" />
+      <rect x={-0.4} y={-1} width={6.5} height={2} rx={0.6} className="fill-brand" />
+      <rect x={4.7} y={-1} width={1.6} height={3.4} rx={0.4} className="fill-brand" />
+    </g>
+  );
+}
+
+// A numbered message arrow between two lifelines. `variant="return"` draws it dashed (a value coming back);
+// `tone="brand"` marks a write to the public chain (or a private signing step). `sign` adds the key glyph.
+export function SeqMsg({
+  idPrefix,
+  n,
+  fromX,
+  toX,
+  y,
+  label,
+  variant = "call",
+  tone = "muted",
+  sign = false,
+}: {
+  idPrefix: string;
+  n?: number;
+  fromX: number;
+  toX: number;
+  y: number;
+  label: string;
+  variant?: "call" | "return";
+  tone?: "muted" | "brand";
+  sign?: boolean;
+}) {
+  const dir = Math.sign(toX - fromX) || 1;
+  const x1 = fromX + dir * 6;
+  const x2 = toX - dir * 2;
+  const midX = (x1 + x2) / 2;
+  return (
+    <g>
+      <line
+        x1={x1}
+        y1={y}
+        x2={x2}
+        y2={y}
+        strokeWidth={tone === "brand" ? 2 : 1.75}
+        strokeLinecap="round"
+        strokeDasharray={variant === "return" ? "5 4" : undefined}
+        className={tone === "brand" ? "stroke-brand" : "stroke-muted-foreground"}
+        markerEnd={`url(#${idPrefix}-arrow-${tone})`}
+      />
+      <text
+        x={midX}
+        y={y - 8}
+        textAnchor="middle"
+        fontSize={variant === "return" ? 11 : 12}
+        fontStyle={variant === "return" ? "italic" : undefined}
+        fontWeight={variant === "return" ? 400 : 500}
+        className={variant === "return" ? "fill-muted-foreground" : "fill-foreground"}
+      >
+        {label}
+      </text>
+      {typeof n === "number" && <StepBadge x={x1 + dir * 11} y={y} n={n} />}
+      {sign && <SignKey x={toX - dir * 13} y={y + 10} />}
+    </g>
+  );
+}
+
+// A multi-line boxed step anchored over a lifeline: the in-browser dealer (private, dashed brand) or the
+// on-chain record (public, solid neutral). `fill-card` masks the lifelines it overlaps so no line strikes
+// through the text; the stroke carries the private/public meaning.
+export function SeqBox({
+  n,
+  x,
+  y,
+  w,
+  h,
+  kind,
+  title,
+  lines,
+  emphasizeLast = false,
+}: {
+  n?: number;
+  x: number; // left
+  y: number; // top
+  w: number;
+  h: number;
+  kind: NodeKind;
+  title: string;
+  lines: string[];
+  emphasizeLast?: boolean;
+}) {
+  const titleClass = kind === "private" ? "fill-brand" : "fill-muted-foreground";
+  return (
+    <g>
+      <rect
+        x={x}
+        y={y}
+        width={w}
+        height={h}
+        rx={10}
+        strokeWidth={1.5}
+        strokeDasharray={kind === "private" ? "5 4" : undefined}
+        className={kind === "private" ? "fill-card stroke-brand" : "fill-card stroke-muted-foreground"}
+      />
+      {typeof n === "number" && <StepBadge x={x + 1} y={y + 15} n={n} />}
+      <text x={x + 16} y={y + 19} fontSize={11} fontWeight={600} className={titleClass}>
+        {title}
+      </text>
+      {lines.map((ln, i) => {
+        const last = i === lines.length - 1;
+        return (
+          <text
+            key={i}
+            x={x + 16}
+            y={y + 39 + i * 18}
+            fontSize={11}
+            fontWeight={emphasizeLast && last ? 700 : 400}
+            className="fill-foreground"
+          >
+            {ln}
+          </text>
+        );
+      })}
+    </g>
+  );
+}
+
+// A subtle phase band (alternating tint) with a short uppercase label in the left rail. Drawn behind the
+// lifelines to group the flow in time without crowding the actors.
+export function PhaseBand({ y, h, label, tint }: { y: number; h: number; label: string; tint: boolean }) {
+  return (
+    <g aria-hidden="true">
+      {tint && <rect x={8} y={y} width={784} height={h} className="fill-muted" opacity={0.45} />}
+      <line x1={8} y1={y} x2={792} y2={y} strokeWidth={1} className="stroke-muted-foreground/20" />
+      <text x={14} y={y + 15} fontSize={9.5} fontWeight={600} letterSpacing="0.04em" className="fill-muted-foreground">
+        {label}
+      </text>
+    </g>
+  );
+}
+
+// Sequence-flow legend: the two-state node legend plus the return-arrow + wallet-sign cues, in selectable text.
+export function SeqLegend({ className }: { className?: string }) {
+  return (
+    <ul className={cn("mt-2 flex flex-wrap gap-x-5 gap-y-1.5 text-[11px] text-muted-foreground", className)}>
+      <li className="inline-flex items-center gap-1.5">
+        <Swatch kind="private" /> Off the chain, stays private
+      </li>
+      <li className="inline-flex items-center gap-1.5">
+        <Swatch kind="public" /> On the public chain
+      </li>
+      <li className="inline-flex items-center gap-1.5">
+        <svg width="26" height="10" aria-hidden="true" className="shrink-0">
+          <line x1="1" y1="5" x2="22" y2="5" strokeWidth="1.5" strokeDasharray="4 3" className="stroke-muted-foreground" />
+          <path d="M19 1 L25 5 L19 9 z" className="fill-muted-foreground" />
+        </svg>
+        Dashed arrow: a value returns
+      </li>
+      <li className="inline-flex items-center gap-1.5">
+        <svg width="14" height="12" aria-hidden="true" className="shrink-0">
+          <circle cx="5" cy="5" r="3.2" className="fill-brand" />
+          <circle cx="5" cy="5" r="1.2" className="fill-card" />
+          <rect x="7.6" y="4" width="5.5" height="2" rx="0.6" className="fill-brand" />
+        </svg>
+        You sign in your wallet
       </li>
     </ul>
   );
