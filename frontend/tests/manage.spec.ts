@@ -13,6 +13,7 @@ const DEADLINE = 9999999999;
 
 const mock = `
   localStorage.setItem("zkorage.wallet.connected", "1");
+  localStorage.setItem("zkorage.sync.dontAsk", "1");
   window.__freighterMock = {
     isConnected: async () => ({ isConnected: true }),
     isAllowed: async () => ({ isAllowed: true }),

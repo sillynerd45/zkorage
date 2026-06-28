@@ -3,6 +3,7 @@ import { Sidebar } from "./app/Sidebar";
 import { AppTopbar } from "./app/AppTopbar";
 import { BottomNav } from "./app/BottomNav";
 import VersionBadge from "@/components/VersionBadge";
+import { SyncConsentDialog } from "@/components/app/SyncConsentDialog";
 
 // App shell (grouped left sidebar, Blank/BlockWallet pattern) wraps the ZK operations under /app/*.
 // Layout route: renders <Outlet/> for the matched child page. The Freighter wallet control lives in AppTopbar.
@@ -27,6 +28,8 @@ export default function AppShell() {
         </main>
       </div>
       <BottomNav />
+      {/* connect-time cross-device sync consent (one signature restores rooms + Bonded Access) */}
+      <SyncConsentDialog />
       {/* lift above the mobile bottom-nav (~3.5rem tall); back to the corner on lg+ where there's no bottom-nav */}
       <VersionBadge className="max-lg:!bottom-[4.25rem]" />
     </div>

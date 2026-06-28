@@ -16,6 +16,7 @@ const DOC = "dc4a61c504f4f528a1bb7fed7f0bfb613e1b85f1053afc32d308f20903e4ac0d";
 
 const mock = `
   localStorage.setItem("zkorage.wallet.connected", "1");
+  localStorage.setItem("zkorage.sync.dontAsk", "1");
   window.__freighterMock = {
     isConnected: async () => ({ isConnected: true }),
     isAllowed: async () => ({ isAllowed: true }),
@@ -256,14 +257,17 @@ test("Open: turning on cross-device sync signs once and pulls your rooms from th
   await expect(page.getByTestId("access-sync-toggle")).toHaveAttribute("aria-checked", "true");
 });
 
-test("Open: a returning device with sync already on shows a prominent sign-in, then syncs", async ({ page }) => {
+test("Open: a returning device that dismissed the connect dialog shows a prominent in-page sign-in, then syncs", async ({ page }) => {
   await page.addInitScript(mock);
-  // returning device: sync was enabled before (persisted), but the wallet has not signed this session
-  await page.addInitScript(`localStorage.setItem("zkorage.dr.vaultSync.${ADDR}", "1");`);
+  // returning device: sync was enabled before (persisted, legacy key), but the wallet has not signed this
+  // session. Clear the spec-wide don't-ask seed so the connect dialog appears (the don't-ask path auto-restores
+  // instead, covered by the next test); dismissing it leaves sync on and reveals the in-page locked affordance.
+  await page.addInitScript(`localStorage.removeItem("zkorage.sync.dontAsk"); localStorage.setItem("zkorage.dr.vaultSync.${ADDR}", "1");`);
   await stubReads(page, "eligible", 8);
   await stubVault(page);
 
   await page.goto("/app/dataroom/documents#open");
+  await page.getByTestId("sync-consent-dismiss").click();
   await expect(page.getByTestId("access-rooms-empty")).toBeVisible({ timeout: 30_000 });
   // sync is on but locked (no signature yet): the prominent "Sign in to turn on sync" action is shown
   await expect(page.getByTestId("access-sync-toggle")).toHaveAttribute("aria-checked", "true");
@@ -274,4 +278,17 @@ test("Open: a returning device with sync already on shows a prominent sign-in, t
   await unlock.click();
   await expect(page.getByTestId("access-room-row").first()).toContainText("Synced room", { timeout: 30_000 });
   await expect(page.getByTestId("access-sync-state")).toContainText("Synced");
+});
+
+test("Open: a returning device with sync on + don't-ask auto-restores on connect, with no dialog", async ({ page }) => {
+  await page.addInitScript(mock); // seeds zkorage.sync.dontAsk = 1
+  // sync on for this wallet (new key): the familiar-user path signs once on connect and pulls, no dialog.
+  await page.addInitScript(`localStorage.setItem("zkorage.sync.pref.${ADDR}", "1");`);
+  await stubReads(page, "eligible", 8);
+  await stubVault(page);
+
+  await page.goto("/app/dataroom/documents#open");
+  await expect(page.getByTestId("sync-consent-dialog")).toHaveCount(0);
+  // the room was pulled automatically (the master signature was taken on connect, no manual unlock)
+  await expect(page.getByTestId("access-room-row").first()).toContainText("Synced room", { timeout: 30_000 });
 });

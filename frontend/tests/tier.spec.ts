@@ -10,6 +10,7 @@ const TUSD_ISSUER = "GDFEJBM6RGK2IL2PIMGVNTGSO7O2NOVILFQUMIC55YMFKSGACA5IO2PM";
 const SIG_B64 = Buffer.from(new Uint8Array(64).fill(0x07)).toString("base64");
 const mock = (addr: string) => `
   localStorage.setItem("zkorage.wallet.connected", "1");
+  localStorage.setItem("zkorage.sync.dontAsk", "1");
   window.__freighterMock = {
     isConnected: async () => ({ isConnected: true }),
     isAllowed: async () => ({ isAllowed: true }),

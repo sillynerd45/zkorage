@@ -82,6 +82,7 @@ test("discover: reflects your local request status on the directory buttons", as
   const ADDR = "GDLECNXD76OZQROASQGWEP4KAMJWTJXZW2LN7OJGYPXIJDRXACWGXZY6";
   await page.addInitScript(`
     localStorage.setItem("zkorage.wallet.connected", "1");
+  localStorage.setItem("zkorage.sync.dontAsk", "1");
     window.__freighterMock = {
       isConnected: async () => ({ isConnected: true }),
       isAllowed: async () => ({ isAllowed: true }),
@@ -110,6 +111,7 @@ test("discover: your own listed room is marked, not joinable", async ({ page }) 
   const ADDR = "GDLECNXD76OZQROASQGWEP4KAMJWTJXZW2LN7OJGYPXIJDRXACWGXZY6";
   await page.addInitScript(`
     localStorage.setItem("zkorage.wallet.connected", "1");
+  localStorage.setItem("zkorage.sync.dontAsk", "1");
     window.__freighterMock = {
       isConnected: async () => ({ isConnected: true }),
       isAllowed: async () => ({ isAllowed: true }),
@@ -240,6 +242,7 @@ const CHK_REQ = { bondOpen: true, token: CHK_TOKEN, symbol: "TUSD", decimals: 7,
 async function connectedWithHandle(page: import("@playwright/test").Page) {
   await page.addInitScript(`
     localStorage.setItem("zkorage.wallet.connected", "1");
+  localStorage.setItem("zkorage.sync.dontAsk", "1");
     window.__freighterMock = {
       isConnected: async () => ({ isConnected: true }),
       isAllowed: async () => ({ isAllowed: true }),
@@ -297,6 +300,7 @@ test("discover: looking up your own private room by id offers 'Your room', not r
   const MINE = "7".repeat(64);
   await page.addInitScript(`
     localStorage.setItem("zkorage.wallet.connected", "1");
+  localStorage.setItem("zkorage.sync.dontAsk", "1");
     window.__freighterMock = {
       isConnected: async () => ({ isConnected: true }),
       isAllowed: async () => ({ isAllowed: true }),

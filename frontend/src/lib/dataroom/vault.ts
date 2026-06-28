@@ -8,20 +8,15 @@
 import { exportRoomsBackup, importRoomsBackup, mergeJoinRequests, deriveVaultHandle } from "./roomsBackup";
 import { readJoinRequests, writeJoinRequests, type JoinRequest } from "./requests";
 import { getRoomsVault, putRoomsVault, deleteRoomsVault } from "@/lib/api";
+import { getSyncPref, setSyncPref } from "@/lib/sync/prefs";
 
-// Per-wallet sync preference (this browser). Default OFF; only an explicit "1" (the user turned it on) enables
-// it, so cross-device sync is opt-in and we never sign on page load unless the user asked for sync before.
-export const vaultSyncKey = (addr: string) => `zkorage.dr.vaultSync.${addr}`;
+// Sync preference. This now delegates to the app-wide preference (lib/sync/prefs), since one signature syncs
+// both the Data Room rooms list AND the Bonded Access handle. The old Data-Room-only flag is migrated there.
 export function isVaultSyncOn(addr: string | null | undefined): boolean {
-  if (!addr || typeof localStorage === "undefined") return false;
-  return localStorage.getItem(vaultSyncKey(addr)) === "1";
+  return getSyncPref(addr);
 }
 export function setVaultSyncOn(addr: string, on: boolean): void {
-  try {
-    localStorage.setItem(vaultSyncKey(addr), on ? "1" : "0");
-  } catch {
-    /* ignore quota */
-  }
+  if (addr) setSyncPref(addr, on);
 }
 
 /** Pull the remote vault (if any), merge into the local list, persist, and return the merged list. A foreign

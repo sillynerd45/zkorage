@@ -28,6 +28,7 @@ import { recordBondGrant, readBondGrants } from "@/lib/bonded/grants";
 import { readPending, addPending, removePending, type BondPending } from "@/lib/bonded/pending";
 import { pushGrantsVault, pullGrantsVault } from "@/lib/bonded/grantsSync";
 import { idKey, loadIdentityAt, getBondSig, hasBondSig } from "@/lib/bonded/handle";
+import { SYNC_EVENT } from "@/lib/sync/prefs";
 import { encryptBondHandle, decryptBondHandle, deriveBondHandleVaultId, type BondHandle } from "@/lib/bonded/handleVault";
 import { short } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -500,6 +501,17 @@ export default function BondedTier() {
     void restoreHandle(false);
   }, [b.connected, b.address, identity, restoreHandle]);
 
+  // If the connect dialog (or the wallet menu) restored a handle for this wallet, pick it up live.
+  useEffect(() => {
+    const onSync = () => {
+      if (!b.address) return;
+      const h = loadIdentityAt(b.address);
+      if (h) setIdentity(h);
+    };
+    window.addEventListener(SYNC_EVENT, onSync);
+    return () => window.removeEventListener(SYNC_EVENT, onSync);
+  }, [b.address]);
+
   const createIdentity = async () => {
     setPhase("idle");
     setMsg("");
@@ -652,6 +664,9 @@ export default function BondedTier() {
               </Button>
             )}
           </div>
+          {b.connected && (
+            <p className="text-[11px] text-muted-foreground">Restore uses the same sync signature, so it will not ask you to sign twice.</p>
+          )}
           {syncMsg && <p className={cn("text-[12px]", sync === "error" ? "text-destructive" : "text-muted-foreground")} data-testid="tier-sync-msg">{syncMsg}</p>}
         </div>
       )}

@@ -3,6 +3,7 @@ import { Networks } from "@stellar/stellar-sdk";
 import { freighter } from "./client";
 import { short as shortHex } from "@/lib/format";
 import { toSignatureBytes } from "@/lib/dataroom/identity";
+import { clearMasterSignature } from "@/lib/wallet/masterSig";
 import type { TxSigner } from "@/lib/api";
 
 // zkorage runs on Stellar testnet, where every contract is deployed. A wallet pointed elsewhere can
@@ -132,6 +133,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const disconnect = useCallback(() => {
     // Freighter has no programmatic revoke; this is an app-level disconnect (stop using the grant).
     if (typeof localStorage !== "undefined") localStorage.removeItem(LS_KEY);
+    // Drop the in-memory master signature (the HKDF input keying material for both pillars), so a later
+    // connect re-derives only after a fresh prompt.
+    clearMasterSignature();
     setAddress(null);
     setNetwork(null);
     setError(null);

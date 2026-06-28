@@ -31,6 +31,7 @@ test("PoR via wallet: a connected wallet signs + submits the verify tx on-chain"
 
   await page.addInitScript((G) => {
     localStorage.setItem("zkorage.wallet.connected", "1");
+  localStorage.setItem("zkorage.sync.dontAsk", "1");
     (window as unknown as { __freighterMock: unknown }).__freighterMock = {
       isConnected: async () => ({ isConnected: true }),
       isAllowed: async () => ({ isAllowed: true }),

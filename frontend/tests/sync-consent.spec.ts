@@ -1,0 +1,92 @@
+import { test, expect, type Page } from "@playwright/test";
+
+// The connect-time cross-device sync consent dialog. Unlike the other specs (which seed
+// zkorage.sync.dontAsk to skip the dialog), these DO NOT seed it, so the dialog appears, and the mock
+// provides signMessage + the vault endpoints are stubbed so the one-signature restore runs offline.
+
+const G = "GABF456WZDNHKUVWA6BBAYLACD3QTMZA745AVRSBK7IYOBQ5NQJ3HGRC";
+
+// A connected testnet mock WITH signMessage. signMessage returns a 64-byte base64 signature (the HKDF input
+// keying material). No dontAsk seed, so the dialog shows on connect.
+function mock() {
+  return `
+    localStorage.setItem("zkorage.wallet.connected", "1");
+    window.__freighterMock = {
+      isConnected: async () => ({ isConnected: true }),
+      isAllowed: async () => ({ isAllowed: true }),
+      requestAccess: async () => ({ address: "${G}" }),
+      getAddress: async () => ({ address: "${G}" }),
+      getNetwork: async () => ({ network: "TESTNET", networkPassphrase: "Test SDF Network ; September 2015" }),
+      signTransaction: async (xdr) => ({ signedTxXdr: xdr, signerAddress: "${G}" }),
+      signMessage: async () => ({ signedMessage: btoa(String.fromCharCode.apply(null, new Array(64).fill(7))), signerAddress: "${G}" }),
+    };
+  `;
+}
+
+// Stub the three encrypted vault endpoints so the restore's network calls succeed with empty vaults.
+async function stubVaults(page: Page) {
+  for (const p of [
+    "**/dataroom/rooms-vault/**",
+    "**/bonded/bond/handle-vault/**",
+    "**/bonded/bond/grants-vault/**",
+  ]) {
+    await page.route(p, (route) => {
+      const m = route.request().method();
+      if (m === "GET")
+        return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ found: false, blob: null }) });
+      if (m === "DELETE")
+        return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, removed: true }) });
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true }) });
+    });
+  }
+}
+
+test("the consent dialog appears on connect and can be dismissed", async ({ page }) => {
+  await page.addInitScript(mock());
+  await stubVaults(page);
+  await page.goto("/app");
+  await expect(page.getByTestId("sync-consent-dialog")).toBeVisible();
+  await expect(page.getByTestId("sync-consent-title")).toContainText("Sync your rooms and access");
+  // initial focus is the non-signing action, so Enter never starts a signature
+  await expect(page.getByTestId("sync-consent-dismiss")).toBeFocused();
+  await page.getByTestId("sync-consent-dismiss").click();
+  await expect(page.getByTestId("sync-consent-dialog")).toHaveCount(0);
+  // the app is fully usable after dismiss
+  await expect(page.getByTestId("dashboard")).toBeVisible();
+});
+
+test("Turn on sync signs once and reads On in the wallet menu", async ({ page }) => {
+  await page.addInitScript(mock());
+  await stubVaults(page);
+  await page.goto("/app");
+  await page.getByTestId("sync-consent-enable").click();
+  await expect(page.getByTestId("sync-consent-dialog")).toHaveCount(0);
+  await page.getByTestId("freighter-connect").click();
+  await expect(page.getByTestId("wallet-sync-state")).toHaveText("On");
+});
+
+test("Don't ask again suppresses the dialog on the next connect", async ({ page }) => {
+  await page.addInitScript(mock());
+  await stubVaults(page);
+  await page.goto("/app");
+  await page.getByTestId("sync-consent-dontask").check();
+  await page.getByTestId("sync-consent-dismiss").click();
+  await expect(page.getByTestId("sync-consent-dialog")).toHaveCount(0);
+  // a fresh load (new session) must NOT re-show the dialog, and sync stays off (we only dismissed)
+  await page.reload();
+  await expect(page.getByTestId("dashboard")).toBeVisible();
+  await expect(page.getByTestId("sync-consent-dialog")).toHaveCount(0);
+  await page.getByTestId("freighter-connect").click();
+  await expect(page.getByTestId("wallet-sync-state")).toHaveText("Off");
+});
+
+test("the wallet menu can turn sync on for a user who dismissed the dialog", async ({ page }) => {
+  await page.addInitScript(mock());
+  await stubVaults(page);
+  await page.goto("/app");
+  await page.getByTestId("sync-consent-dismiss").click();
+  await page.getByTestId("freighter-connect").click();
+  await expect(page.getByTestId("wallet-sync-state")).toHaveText("Off");
+  await page.getByTestId("wallet-sync").click();
+  await expect(page.getByTestId("wallet-sync-state")).toHaveText("On");
+});

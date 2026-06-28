@@ -10,8 +10,10 @@
 // Dependency-light by design (Web Crypto only, no React / no @/ alias / no SDK), so it round-trips in the
 // browser AND under tsx in Node 22 (globalThis.crypto.subtle), which keeps the selftest runnable offline.
 
-// The SEP-53 message a wallet signs to derive the bond-handle vault key + id. Distinct from the Data Room's
-// identity message, so this is its own domain (a separate, self-contained signature).
+// LEGACY: the message a wallet used to sign for the bond-handle vault. The app now derives this vault from the
+// single MASTER signature (lib/wallet/masterSig), so this message is no longer signed. Kept only to document
+// the old domain; backups made under it are not migrated (clean break). The HKDF salt/info below are unchanged
+// and still domain-separate the bond keys from the Data Room keys when derived from the shared signature.
 export const BOND_HANDLE_VAULT_MESSAGE = "zkorage Bonded Access handle backup v1";
 
 const MAGIC = "zkorage-bond-handle";
