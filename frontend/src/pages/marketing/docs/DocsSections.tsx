@@ -12,9 +12,13 @@ import {
   StoreDiagram,
   STORE_STEPS,
   JoinApproveDiagram,
+  JOIN_STEPS,
   OpenDiagram,
+  OPEN_STEPS,
   BondCreateDiagram,
+  BOND_CREATE_STEPS,
   BondAccessDiagram,
+  BOND_ACCESS_STEPS,
 } from "./diagrams/flows";
 
 // ── Overview / concepts ───────────────────────────────────────────────────────
@@ -263,12 +267,9 @@ export function DocsDataRoom() {
         </P>
         <DiagramFigure
           title="Joining a room"
-          caption="You send only a membership ID, never your wallet address. A fingerprint of the approved list is public."
-          steps={[
-            "You send a membership ID and an optional nickname, not your wallet address.",
-            "The owner approves you and signs one transaction.",
-            "A fingerprint of the approved list is written to the public chain.",
-          ]}
+          caption="One wallet signature derives a per-room ID (never your wallet address); the owner approves you later and pins a fingerprint of the approved list on-chain. No proof is used to join. Click to enlarge."
+          steps={JOIN_STEPS}
+          legend={<SeqLegend />}
           render={(p) => <JoinApproveDiagram {...p} />}
         />
         <UnderTheHood>
@@ -299,13 +300,9 @@ export function DocsDataRoom() {
         </P>
         <DiagramFigure
           title="Opening a document"
-          caption="You prove you qualify and nothing else. The keepers release the key, and the file decrypts in your browser."
-          steps={[
-            "You make a proof that you qualify, which shows nothing else about you.",
-            "The grant is recorded on the public chain.",
-            "The three keepers each release their key share to you.",
-            "Your browser rebuilds the key and the file opens, only for you.",
-          ]}
+          caption="The full open path across your browser, the backend, the self-hosted prover, the three keepers, and the chain. You prove you qualify and nothing else; a grant lands on the public chain; the keepers release the key; and the file decrypts in your browser. Click to enlarge."
+          steps={OPEN_STEPS}
+          legend={<SeqLegend />}
           render={(p) => <OpenDiagram {...p} />}
         />
         <UnderTheHood>
@@ -392,12 +389,9 @@ export function DocsBondedProofs() {
         </P>
         <DiagramFigure
           title="Creating a bond for access"
-          caption="You lock tokens in the open. The lock carries a private tag that lets you prove it is yours later."
-          steps={[
-            "You choose a token, an amount, and an unlock time.",
-            "You lock the tokens in the escrow, in full public view.",
-            "The lock carries a private tag that you can prove later without naming the lock.",
-          ]}
+          caption="You set the terms and derive a private tag, the backend builds the lock transaction, you sign it, and the escrow records the lock in full public view. The lock is public; only the tag is opaque. Click to enlarge."
+          steps={BOND_CREATE_STEPS}
+          legend={<SeqLegend />}
           render={(p) => <BondCreateDiagram {...p} />}
         />
         <UnderTheHood>
@@ -432,13 +426,9 @@ export function DocsBondedProofs() {
         </P>
         <DiagramFigure
           title="Opening a room with a bond"
-          caption="You prove you hold a qualifying bond, hiding your wallet and amount, and the room opens with no approval."
-          steps={[
-            "You prove you hold a qualifying bond, hiding your wallet, your lock, and the amount.",
-            "A grant is recorded on the public chain under your anonymous handle.",
-            "The keepers release the key to you.",
-            "The room opens, with no owner approval.",
-          ]}
+          caption="With no wallet signature, you prove you hold a qualifying bond (hiding your wallet, your lock, and the amount); a grant lands under an anonymous handle; the keepers release the key; and the room opens with no owner approval. Click to enlarge."
+          steps={BOND_ACCESS_STEPS}
+          legend={<SeqLegend />}
           render={(p) => <BondAccessDiagram {...p} />}
         />
         <UnderTheHood>
