@@ -124,6 +124,9 @@ export default function RoomManagement() {
   // to the restored room when it is already cached.
   const syncedRoom = useRef<string | null>(cachedBond ? e.ownerRoom : null);
   const shownRoom = useRef<string | null>(cachedBond ? e.ownerRoom : null);
+  // Generation token for reconcileModel: a newer reconcile supersedes any in-flight one, so a set immediately
+  // followed by a clear (which fires reconcile(true) then reconcile(false)) never lets the older poll win.
+  const reconcileGen = useRef(0);
 
   // The current on-chain model: any bond requirement (bond-only OR a legacy bond-implies-membership one) reads
   // as the "bond" model; no bond requirement reads as "membership"; null only while the first read is in flight.
@@ -197,20 +200,26 @@ export default function RoomManagement() {
     };
   }, [e.ownerRoom]);
 
-  // Reconcile the access-model markers with the chain AFTER a change (set or clear), tolerant of testnet RPC
-  // lag: a write's effect can take a few seconds to be visible to a read, and a stale read returning the OLD
-  // value would otherwise flip the model back (the bug where "Switch to membership" reappeared after a
-  // successful switch). Poll a few times and only commit a value once it matches what we expect, or on the
-  // final attempt. Bails if the owner has moved to another room.
+  // Reconcile the access-model markers with the chain AFTER a CONFIRMED change (set or clear), tolerant of
+  // testnet RPC lag: a write's effect can take a few seconds to be visible to a read. The write already landed
+  // on-chain (the tx returned ok), so `expectedFound` IS the truth; the poll only confirms propagation and picks
+  // up the accurate `bondOpen`. Key rule: never let a stale read OVERRIDE the confirmed write. When the read
+  // agrees, commit the real values; when it keeps disagreeing, give up on the final attempt by committing the
+  // confirmed value, NOT the stale read (the bug where switching to membership reverted to Bonded Access when a
+  // late poll read the pre-clear value). A room set via Room Management is always bond-only, so bondOpen tracks
+  // found. Bails if the owner moved to another room, or a newer reconcile superseded this one.
   const reconcileModel = useCallback((roomId: string, expectedFound: boolean) => {
+    const myGen = ++reconcileGen.current;
     let tries = 0;
     const tick = async () => {
+      if (reconcileGen.current !== myGen) return; // superseded by a newer reconcile (e.g. set then clear)
       if (shownRoom.current !== roomId) return; // owner moved on
       setBondRefreshing(true);
       try {
         const r = await getBondRequirementApi(roomId);
+        if (reconcileGen.current !== myGen) return; // superseded while the read was in flight
         const f = Boolean(r.found);
-        if (f === expectedFound || tries >= 4) {
+        if (f === expectedFound) {
           const bo = Boolean(r.bondOpen);
           bondReqCache.set(roomId, { found: f, bondOpen: bo });
           if (shownRoom.current === roomId) {
@@ -220,7 +229,19 @@ export default function RoomManagement() {
           setBondRefreshing(false);
           return;
         }
+        if (tries >= 4) {
+          // The read still disagrees with the confirmed write (RPC lag). Commit the confirmed value, never the
+          // stale read, so the owner's change holds without a reload.
+          bondReqCache.set(roomId, { found: expectedFound, bondOpen: expectedFound });
+          if (shownRoom.current === roomId) {
+            setFound(expectedFound);
+            setBondOpen(expectedFound);
+          }
+          setBondRefreshing(false);
+          return;
+        }
       } catch {
+        if (reconcileGen.current !== myGen) return;
         if (tries >= 4) {
           setBondRefreshing(false);
           return;
