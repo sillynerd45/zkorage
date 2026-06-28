@@ -7,7 +7,7 @@ import VersionBadge from "@/components/VersionBadge";
 // explorer routes. Layout route: renders <Outlet/> for the matched child page.
 export default function MarketingShell() {
   return (
-    <div className="flex min-h-dvh flex-col bg-background text-foreground">
+    <div className="flex min-h-dvh flex-col overflow-x-clip bg-background text-foreground">
       <a
         href="#main"
         className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[100] focus:rounded-md focus:border focus:bg-card focus:px-4 focus:py-2 focus:shadow-lg"

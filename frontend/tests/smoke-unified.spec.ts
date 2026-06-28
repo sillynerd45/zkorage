@@ -38,12 +38,8 @@ test("public marketing routes render", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "What zkorage is", exact: true })).toBeVisible();
 });
 
-test("docs side-rail navigates to developers + glossary", async ({ page }) => {
+test("docs side-rail navigates to glossary", async ({ page }) => {
   await page.goto("/docs");
-  await page.getByRole("link", { name: "Developers" }).click();
-  await expect(page).toHaveURL(/\/docs\/developers$/);
-  await expect(page.getByTestId("dev-demo")).toBeVisible();
-  await expect(page.getByTestId("dev-run")).toBeVisible();
   await page.getByRole("link", { name: "Glossary" }).click();
   await expect(page).toHaveURL(/\/docs\/glossary$/);
   await expect(page.getByText("Plain-language glossary")).toBeVisible();

@@ -1,15 +1,11 @@
 import { type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { Check, X, Anchor, Cpu, BadgeCheck, ArrowRight } from "lucide-react";
+import { Anchor, Cpu, BadgeCheck, ArrowRight } from "lucide-react";
 import { DATAROOM_TABS, BONDED_TABS, type DataroomTab, type BondedTab } from "@/lib/content";
-import { M7ShowcasePanel } from "@/components/app/dataroom/M7ShowcasePanel";
 import { GLOSSARY } from "@/lib/glossary";
-import { useDeveloperDemo, DEV_CHECKS } from "@/lib/hooks/useDeveloperDemo";
-import { CopyButton } from "@/components/Disclosure";
-import { VerdictMark } from "@/components/StatusBadge";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { SectionCard, DataRow } from "@/components/marketing/blocks";
+import { SectionCard } from "@/components/marketing/blocks";
 import { DiagramFigure, UnderTheHood } from "./diagrams/DiagramFigure";
 import {
   StoreDiagram,
@@ -70,10 +66,6 @@ export function DocsOverview() {
           the data or trusting our server. If an access list plus encryption (or just reading the public
           chain) would do the same job, ZK would be theatre. Here it isn't: the verifier learns one fact and
           nothing else, and re-checks it independently.
-        </p>
-        <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-          This is a hackathon demo on Stellar testnet. The verifier is the bare Groth16 verifier (no
-          governance stack) and is <b className="text-foreground">unaudited</b>, so it is not for production funds.
         </p>
       </SectionCard>
     </div>
@@ -263,8 +255,8 @@ export function DocsDataRoom() {
         <DocHeading id="dr-join">Joining and approving</DocHeading>
         <P>
           To ask to join a Membership room, you send a membership ID. It is a code derived from your wallet,
-          not your wallet address. You can add a nickname so the owner knows who you are, or stay fully
-          anonymous. Your wallet address never leaves your browser.
+          not your wallet address. You can add a nickname so the owner can recognize your request, or leave it
+          off and the owner just sees an opaque ID. Your wallet address never leaves your browser.
         </P>
         <P>
           The owner reviews requests and approves the ones they recognize. Approving adds your membership ID to
@@ -348,10 +340,6 @@ export function DocsDataRoom() {
         </P>
       </section>
 
-      {/* A live, wallet-free demo of the timing defense. It carries its own heading and self-hides if the
-          showcase room is not provisioned, so it is rendered bare (no surrounding heading to dangle). */}
-      <M7ShowcasePanel />
-
       <section aria-labelledby="dr-verify" className="space-y-4">
         <DocHeading id="dr-verify">Checking a Data Room</DocHeading>
         <P>
@@ -433,9 +421,7 @@ export function DocsBondedProofs() {
         </P>
         <P>
           Your bond ties to a per-wallet handle, so one qualifying bond opens every room that shares the same
-          requirement, with no re-locking. One honest tradeoff: that handle is a single steady alias for your
-          wallet, so our keepers could tell that one alias opened several rooms. Your wallet itself still stays
-          hidden.
+          requirement, with no re-locking.
         </P>
       </section>
 
@@ -517,149 +503,6 @@ export function DocsVerify() {
             to confirm a bond grant is live. The wallet behind it is never shown.
           </li>
         </ul>
-      </SectionCard>
-
-      <SectionCard label="From the command line">
-        <p className="text-sm leading-relaxed text-muted-foreground">
-          Each verify page also prints the exact command to run yourself. You can read the on-chain result,
-          list the history, and re-check the proof against the public network, with no zkorage server in the
-          trust path.
-        </p>
-      </SectionCard>
-    </div>
-  );
-}
-
-// ── Developers (live SDK demo + snippets) ─────────────────────────────────────
-const SDK_SNIPPET = `import { ZkorageClient } from "zkorage-sdk";
-
-const z = new ZkorageClient();                       // testnet defaults baked in, no keys
-const a = await z.isReservesGteSupply();             // on-chain-verified answer + freshness
-// { answer: true, boundSupply, liveSupply, fresh, result }
-
-const audit = await z.getAuditBundle();              // proof bundle (via REST)
-const v = await z.verifyBundle(audit.proof!);        // full Groth16 re-verify vs the public chain
-// v.verdict === true, v.checklist = { ...9 checks }`;
-
-const MCP_SNIPPET = `{
-  "mcpServers": {
-    "zkorage": {
-      "command": "node",
-      "args": ["<repo>/mcp/dist/server.js"],
-      "env": { "ZKORAGE_API_BASE": "http://localhost:8787" }
-    }
-  }
-}
-// then ask: "Using zkorage, is the latest issuer's reserves >= supply?"`;
-
-function Snippet({ title, note, code }: { title: string; note?: string; code: string }) {
-  return (
-    <SectionCard label={title}>
-      {note && <p className="mb-2 text-sm text-muted-foreground">{note}</p>}
-      <div className="mb-1.5 flex items-center gap-2 text-xs text-muted-foreground">
-        usage <CopyButton text={code} label="copy" />
-      </div>
-      <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded-lg border bg-muted/40 px-3.5 py-3 font-mono text-[11px] leading-relaxed text-foreground">
-        {code}
-      </pre>
-    </SectionCard>
-  );
-}
-
-export function DocsDevelopers() {
-  const d = useDeveloperDemo();
-  return (
-    <div className="space-y-5">
-      <SectionCard label="Build on zkorage">
-        <p className="text-[15px] leading-relaxed text-muted-foreground">
-          A read-only TypeScript SDK and an MCP server let any developer (or any AI agent) query and{" "}
-          <b className="text-foreground">re-verify</b> a claim straight against the public chain, with no keys
-          and no need to trust our server. The demo below runs the SDK <b className="text-foreground">in this
-          browser</b>.
-        </p>
-      </SectionCard>
-
-      <SectionCard
-        label="Live SDK demo"
-        aside={<span className="text-[11px] uppercase tracking-wide text-muted-foreground">in-browser · public RPC</span>}
-      >
-        <div data-testid="dev-demo">
-          <Button onClick={d.run} disabled={d.state === "running"} data-testid="dev-run">
-            {d.state === "running" ? "Running…" : "Run isReservesGteSupply() + verifyBundle()"}
-          </Button>
-          {d.state === "error" && <p className="mt-3 text-sm text-destructive">{d.err}</p>}
-          {d.answer && (
-            <div
-              data-testid="dev-answer"
-              data-answer={d.answer.answer}
-              className={cn(
-                "mt-4 flex items-center gap-3 rounded-xl border p-3 text-sm font-semibold",
-                d.answer.answer ? "border-success/40 bg-success/5 text-success" : "border-destructive/40 bg-destructive/5 text-destructive",
-              )}
-            >
-              <span
-                className={cn(
-                  "grid size-8 shrink-0 place-items-center rounded-full border",
-                  d.answer.answer ? "border-success/50 bg-success/10" : "border-destructive/50 bg-destructive/10",
-                )}
-              >
-                <VerdictMark ok={!!d.answer.answer} />
-              </span>
-              <span>
-                reserves ≥ supply: {String(d.answer.answer)}
-                {d.answer.fresh ? "" : " (supply stale)"}
-              </span>
-            </div>
-          )}
-          {d.answer && (
-            <div className="mt-3">
-              <DataRow k="bound supply">{d.answer.boundSupply}</DataRow>
-              <DataRow k="live supply">{d.answer.liveSupply}</DataRow>
-            </div>
-          )}
-          {d.checklist && (
-            <ul className="mt-4 grid gap-1.5 sm:grid-cols-2" data-testid="dev-checklist">
-              {DEV_CHECKS.map((c) => {
-                const ok = d.checklist![c.key];
-                return (
-                  <li
-                    key={c.key}
-                    data-testid={`dev-check-${c.key}`}
-                    data-ok={ok}
-                    className="flex items-center gap-2 text-sm"
-                  >
-                    <span className={ok ? "text-success" : "text-destructive"}>
-                      {ok ? <Check className="size-4" /> : <X className="size-4" />}
-                    </span>
-                    <span className={ok ? "" : "text-muted-foreground"}>{c.label}</span>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
-      </SectionCard>
-
-      <Snippet
-        title="TypeScript SDK · zkorage-sdk"
-        note="Trust-minimized reads + full Groth16 re-verify. Node + browser. No keys."
-        code={SDK_SNIPPET}
-      />
-      <Snippet
-        title="MCP server · read-only, no key custody"
-        note="Wire the read-only MCP server into Claude Desktop / Claude Code (stdio) and ask it to verify a claim."
-        code={MCP_SNIPPET}
-      />
-
-      <SectionCard label="REST API">
-        <DataRow k="OpenAPI spec" mono={false}>
-          <a href="/api/openapi.yaml" target="_blank" rel="noreferrer" className="text-brand hover:underline">
-            /api/openapi.yaml ↗
-          </a>
-        </DataRow>
-        <DataRow k="Swagger UI" mono={false}>
-          served by the backend at <code className="font-mono text-xs">/docs</code>
-        </DataRow>
       </SectionCard>
     </div>
   );

@@ -8,7 +8,6 @@ import {
   DocsDataRoom,
   DocsBondedProofs,
   DocsVerify,
-  DocsDevelopers,
   DocsGlossary,
 } from "./docs/DocsSections";
 
@@ -17,14 +16,14 @@ const CONTENT: Record<string, ComponentType> = {
   "data-room": DocsDataRoom,
   "bonded-proofs": DocsBondedProofs,
   verify: DocsVerify,
-  developers: DocsDevelopers,
   glossary: DocsGlossary,
 };
 
 export default function Docs() {
   const { section } = useParams();
-  // The former "Capabilities" section folded into the two pillar sections; keep old links working.
+  // Folded/retired sections: keep old links working.
   if (section === "capabilities") return <Navigate to="/docs/data-room" replace />;
+  if (section === "developers") return <Navigate to="/docs" replace />;
   const active = docsSection(section) ?? DOCS_SECTIONS[0];
   const Body = CONTENT[active.slug] ?? DocsOverview;
 
