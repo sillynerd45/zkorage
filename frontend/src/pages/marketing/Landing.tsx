@@ -46,6 +46,7 @@ const PILLARS = [
       "The access decision is recorded on the public ledger, so it can be re-checked later.",
     ],
     appTo: "/app/dataroom",
+    docsTo: "/docs/data-room",
     cta: "Open the Data Room",
   },
   {
@@ -61,6 +62,7 @@ const PILLARS = [
       "Use a bond to enter a gated room, or to back a claim that anyone can re-check.",
     ],
     appTo: "/app/bonded",
+    docsTo: "/docs/bonded-proofs",
     cta: "Open Bonded Proofs",
   },
 ];
@@ -116,6 +118,7 @@ function PillarCard({
   problem,
   bullets,
   appTo,
+  docsTo,
   cta,
   testid,
   icon: Icon,
@@ -127,6 +130,7 @@ function PillarCard({
   problem: string;
   bullets: string[];
   appTo: string;
+  docsTo: string;
   cta: string;
   testid: string;
   icon: LucideIcon;
@@ -158,7 +162,7 @@ function PillarCard({
         <Link to={appTo} className={cn(buttonVariants(), "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card")}>
           {cta} <ArrowRight className="size-4" />
         </Link>
-        <Link to="/docs/capabilities" className={cn(buttonVariants({ variant: "ghost" }), "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card")}>
+        <Link to={docsTo} className={cn(buttonVariants({ variant: "ghost" }), "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card")}>
           Learn more
         </Link>
       </div>

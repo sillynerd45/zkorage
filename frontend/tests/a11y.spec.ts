@@ -17,7 +17,7 @@ test("a11y: skip-to-content link + <main> landmark are present and wired (WCAG 2
 
 // Routes with no wide inputs/tables must not scroll horizontally at any breakpoint, incl. 375px mobile.
 test("a11y: no horizontal scroll on lean routes across 375/768/1024/1440 (WCAG 1.4.4 / 1.4.10)", async ({ page }) => {
-  for (const route of ["/", "/app/dataroom", "/app/dataroom/demo", "/app/dataroom/discover", "/app/dataroom/membership", "/app/contracts"]) {
+  for (const route of ["/", "/docs/data-room", "/docs/bonded-proofs", "/app/dataroom", "/app/dataroom/demo", "/app/dataroom/discover", "/app/dataroom/membership", "/app/contracts"]) {
     for (const width of [375, 768, 1024, 1440]) {
       await page.setViewportSize({ width, height: 1000 });
       await page.goto(route);

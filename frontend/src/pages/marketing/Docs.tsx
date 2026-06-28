@@ -1,11 +1,12 @@
 import { type ComponentType } from "react";
-import { NavLink, useParams } from "react-router-dom";
+import { NavLink, Navigate, useParams } from "react-router-dom";
 import { DOCS_SECTIONS, docsSection } from "@/lib/content";
 import { PageHeader } from "@/components/marketing/blocks";
 import { cn } from "@/lib/utils";
 import {
   DocsOverview,
-  DocsCapabilities,
+  DocsDataRoom,
+  DocsBondedProofs,
   DocsVerify,
   DocsDevelopers,
   DocsGlossary,
@@ -13,7 +14,8 @@ import {
 
 const CONTENT: Record<string, ComponentType> = {
   "": DocsOverview,
-  capabilities: DocsCapabilities,
+  "data-room": DocsDataRoom,
+  "bonded-proofs": DocsBondedProofs,
   verify: DocsVerify,
   developers: DocsDevelopers,
   glossary: DocsGlossary,
@@ -21,6 +23,8 @@ const CONTENT: Record<string, ComponentType> = {
 
 export default function Docs() {
   const { section } = useParams();
+  // The former "Capabilities" section folded into the two pillar sections; keep old links working.
+  if (section === "capabilities") return <Navigate to="/docs/data-room" replace />;
   const active = docsSection(section) ?? DOCS_SECTIONS[0];
   const Body = CONTENT[active.slug] ?? DocsOverview;
 
@@ -32,7 +36,7 @@ export default function Docs() {
         lead={active.blurb}
       />
 
-      <div className="grid gap-8 lg:grid-cols-[200px_1fr]">
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-[200px_1fr]">
         {/* content side-rail (distinct from the app sidebar; it navigates docs content) */}
         <nav aria-label="Documentation sections" className="lg:sticky lg:top-24 lg:self-start">
           <ul className="flex gap-1 overflow-x-auto lg:flex-col lg:gap-0.5">

@@ -276,7 +276,7 @@ test("dataroom overview: task-oriented cards route to the right place; guided-de
   await expect(page.getByRole("link", { name: "Guided demo" })).toHaveCount(0);
 
   // the concept explainer, the timing demo, and the on-chain contract list all moved OFF the Overview
-  // (to Documentation + the Contracts reference page), so the Overview stays task-focused
+  // (to the Documentation pillar sections + the Contracts reference page), so the Overview stays task-focused
   await expect(page.getByTestId("overview-what-is")).toHaveCount(0);
   await expect(page.getByTestId("overview-onchain")).toHaveCount(0);
   await expect(page.getByTestId("m7-showcase")).toHaveCount(0);
@@ -297,7 +297,7 @@ test("dataroom overview: task-oriented cards route to the right place; guided-de
 // of the timing defense (a green anonymity meter for a real testnet room + its on-chain grant log showing a
 // clustered, shuffled batch of accesses). Mocks the two chain-reads the panel makes; no wallet, so it proves
 // the panel is public.
-test("M7 showcase: Docs Capabilities shows a green meter + a batched on-chain access record (no wallet)", async ({ page }) => {
+test("M7 showcase: Docs Data Room shows a green meter + a batched on-chain access record (no wallet)", async ({ page }) => {
   const now = Math.floor(Date.now() / 1000);
   const grant = (index: number, acc: string, dt: number) => ({
     index, accessor: acc.repeat(32), nullifier: "00".repeat(32), eligibleRoot: "00".repeat(32), ledger: 1, timestamp: now + dt,
@@ -311,7 +311,7 @@ test("M7 showcase: Docs Capabilities shows a green meter + a batched on-chain ac
     body: JSON.stringify({ roomId: "cba6", count: 4, dataroomId: "CID", grants: [grant(0, "ab", 0), grant(1, "cd", 5), grant(2, "ef", 10), grant(3, "12", 15)] }),
   }));
 
-  await page.goto("/docs/capabilities");
+  await page.goto("/docs/data-room");
   const panel = page.getByTestId("m7-showcase");
   await expect(panel).toBeVisible({ timeout: 30_000 });
   await expect(panel.getByTestId("anon-meter")).toHaveAttribute("data-tier", "green");
@@ -335,7 +335,7 @@ test("M7 showcase: hides cleanly when the meter source is reset (no red showcase
       { index: 1, accessor: "cd".repeat(32), nullifier: "00".repeat(32), eligibleRoot: "00".repeat(32), ledger: 1, timestamp: 1782061795 },
     ] }),
   }));
-  await page.goto("/docs/capabilities");
-  await expect(page.getByText("A sealed room for sensitive documents.")).toBeVisible({ timeout: 30_000 });
+  await page.goto("/docs/data-room");
+  await expect(page.getByText("A Data Room is a sealed place for sensitive files")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("m7-showcase")).toHaveCount(0); // hidden, not a red meter
 });
