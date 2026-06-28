@@ -92,7 +92,11 @@ export function SyncConsentDialog() {
   }, [address]);
 
   const dismiss = useCallback(() => {
-    setDontAsk(dontAskRef.current); // honor "don't ask again" even on a dismiss; leave the sync preference unchanged
+    // "Don't ask again on this device" means the standing answer is always "Turn on sync", so a dismiss is not
+    // available while it is ticked (the button is disabled, and a backdrop click / Escape are no-ops). The user
+    // unticks to get "Not now" back. An unticked dismiss is a one-time skip, so we keep asking on the next connect.
+    if (dontAskRef.current) return;
+    setDontAsk(false);
     close();
   }, [close]);
 
@@ -185,6 +189,11 @@ export function SyncConsentDialog() {
           />
           Don't ask again on this device
         </label>
+        {dontAsk && (
+          <p className="mt-1.5 text-xs text-muted-foreground" data-testid="sync-consent-dontask-note">
+            With this ticked, sync stays on, so "Not now" is unavailable.
+          </p>
+        )}
 
         {sync.busy && (
           <p
@@ -207,7 +216,7 @@ export function SyncConsentDialog() {
             variant="outline"
             size="sm"
             onClick={dismiss}
-            disabled={sync.busy}
+            disabled={sync.busy || dontAsk}
             data-testid="sync-consent-dismiss"
           >
             Not now

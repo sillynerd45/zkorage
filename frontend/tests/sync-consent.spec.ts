@@ -67,19 +67,22 @@ test("Turn on sync signs once and reads On in the wallet menu", async ({ page })
   await expect(page.getByTestId("wallet-sync-state")).toHaveText("On");
 });
 
-test("Don't ask again suppresses the dialog on the next connect", async ({ page }) => {
+test("Don't ask again means the answer is always Turn on sync", async ({ page }) => {
   await page.addInitScript(mock());
   await stubVaults(page);
   await page.goto("/app");
+  // Ticking "don't ask again" disables "Not now": the standing answer becomes Turn on sync.
   await page.getByTestId("sync-consent-dontask").check();
-  await page.getByTestId("sync-consent-dismiss").click();
+  await expect(page.getByTestId("sync-consent-dismiss")).toBeDisabled();
+  await expect(page.getByTestId("sync-consent-dontask-note")).toBeVisible();
+  await page.getByTestId("sync-consent-enable").click();
   await expect(page.getByTestId("sync-consent-dialog")).toHaveCount(0);
-  // a fresh load (new session) must NOT re-show the dialog, and sync stays off (we only dismissed)
+  // a fresh load (new session) must NOT re-show the dialog, and sync is on (we committed to it)
   await page.reload();
   await expect(page.getByTestId("dashboard")).toBeVisible();
   await expect(page.getByTestId("sync-consent-dialog")).toHaveCount(0);
   await page.getByTestId("freighter-connect").click();
-  await expect(page.getByTestId("wallet-sync-state")).toHaveText("Off");
+  await expect(page.getByTestId("wallet-sync-state")).toHaveText("On");
 });
 
 test("the wallet menu can turn sync on for a user who dismissed the dialog", async ({ page }) => {
