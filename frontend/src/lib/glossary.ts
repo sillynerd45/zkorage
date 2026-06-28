@@ -21,6 +21,20 @@ export const GLOSSARY: Record<string, string> = {
   "masked copy": "A copy of a document with private fields blacked out. It is provably the genuine file.",
   "verified preview":
     "A small, publicly checkable claim about a sealed document (e.g. \"revenue ≥ $1M\"), vouched for by a reviewer (not independently audited).",
+  "bond":
+    "Tokens you lock in public until a time you choose. While they stay locked, you can prove a fact about them, like that you hold one that meets a requirement.",
+  "escrow":
+    "The contract that holds locked tokens until their unlock time. It can extend the time but never shorten it.",
+  "membership ID":
+    "A code derived from your wallet that stands in for you in one room. It is not your wallet address, and your IDs in different rooms cannot be linked.",
+  "anonymous handle":
+    "A steady stand-in name for your wallet when you open rooms with a bond. It hides your wallet, but actions under it can be linked together.",
+  "keeper":
+    "One of three independent services that each hold a piece of a document's key. No single keeper can open a file. Any two together release the key to a reader who has earned access.",
+  "anonymity set":
+    "The crowd you hide in. The larger the group who could have made the same proof, the less any one of them stands out. zkorage keeps a minimum crowd before it will help you prove.",
+  "qualifying bond":
+    "A locked bond that meets a room's requirement: the right token, at least the minimum amount, locked past the deadline, and not revocable.",
 };
 
 export type GlossaryTerm = keyof typeof GLOSSARY;

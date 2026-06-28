@@ -1,6 +1,6 @@
 import { type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { Check, X, FileSignature, Cpu, BadgeCheck, ArrowRight } from "lucide-react";
+import { Check, X, Anchor, Cpu, BadgeCheck, ArrowRight } from "lucide-react";
 import { DATAROOM_TABS, BONDED_TABS, type DataroomTab, type BondedTab } from "@/lib/content";
 import { M7ShowcasePanel } from "@/components/app/dataroom/M7ShowcasePanel";
 import { GLOSSARY } from "@/lib/glossary";
@@ -22,9 +22,9 @@ import {
 
 // ── Overview / concepts ───────────────────────────────────────────────────────
 const ENGINE = [
-  { icon: FileSignature, t: "Attest", d: "A trusted source signs the private data with an ed25519 claim envelope. That source is a custodian, KYC provider, or bank. The signature is the data-authenticity anchor; without it a proof would be hollow." },
-  { icon: Cpu, t: "Prove (self-hosted)", d: "A RISC Zero zkVM you run verifies the signed claim and asserts the predicate (e.g. reserves ≥ supply), then wraps the result to a Groth16 proof. The private data never leaves the prover you control, because ZK protects the verifier, not the prover." },
-  { icon: BadgeCheck, t: "Verify (on-chain)", d: "A bare Groth16 verifier on Soroban checks the proof via native BN254 host functions; a policy contract binds it to on-chain facts and records the result. Anyone re-checks it, with no account and no need to trust our server." },
+  { icon: Anchor, t: "Anchor", d: "Tie the fact to something real and public. A locked bond, the fingerprint of a room's approved list, or a stored file's fingerprint already lives on the public chain, so a proof has something solid to stand on." },
+  { icon: Cpu, t: "Prove (on a server you run)", d: "A zero-knowledge proof checks the fact and reveals only the answer. It runs on a prover you control, so your private data never leaves it. We never send private data to a shared proving market." },
+  { icon: BadgeCheck, t: "Verify (on the public chain)", d: "A small contract on Stellar checks the proof, and the result is public. Anyone can re-check it with no account and no need to trust our server." },
 ];
 
 export function DocsOverview() {
@@ -32,14 +32,22 @@ export function DocsOverview() {
     <div className="space-y-5">
       <SectionCard label="What zkorage is">
         <p className="text-[15px] leading-relaxed text-muted-foreground">
-          zkorage is a programmable-compliance engine on Stellar. A data owner proves a quantitative or
-          boolean fact about private, attested data (for example "reserves ≥ circulating supply", "KYC passed and not
-          sanctioned", or "income ≥ a threshold") <b className="text-foreground">without revealing the data</b>,
-          and a verifier trusts it via an on-chain Soroban verifier.
+          zkorage is a zero-knowledge toolkit on Stellar with two parts. A{" "}
+          <Link to="/docs/data-room" className="text-brand hover:underline">
+            Data Room
+          </Link>{" "}
+          keeps sensitive files sealed, lets the right people in without revealing who they are, and still lets
+          anyone confirm a file was not altered.{" "}
+          <Link to="/docs/bonded-proofs" className="text-brand hover:underline">
+            Bonded Proofs
+          </Link>{" "}
+          lets you lock tokens in public, then prove a fact about them, like that you hold a qualifying bond,{" "}
+          <b className="text-foreground">without revealing your wallet</b>. In both, a verifier learns one
+          fact and nothing else.
         </p>
       </SectionCard>
 
-      <SectionCard label="How the engine works">
+      <SectionCard label="How it works">
         <ol className="space-y-4">
           {ENGINE.map((s, i) => (
             <li key={s.t} className="flex gap-3.5">
@@ -531,22 +539,41 @@ export function DocsVerify() {
     <div className="space-y-5">
       <SectionCard label="Don't trust. Verify.">
         <p className="text-[15px] leading-relaxed text-muted-foreground">
-          Every claim zkorage publishes is checkable by anyone, directly on the public ledger. There is no
-          wallet, no account, and no need to trust our server. The verify page recomputes the journal hash, checks the proving
-          program is the pinned one, and asks the <b className="text-foreground">public</b> Soroban contracts
-          to confirm the Groth16 proof and the on-chain binding. Private inputs are never revealed in any of it.
+          Everything zkorage publishes is checkable by anyone, straight on the public ledger. There is no
+          wallet, no account, and no need to trust our server. A check recomputes the proof's fingerprint,
+          confirms the proving program is the pinned one, and asks the{" "}
+          <b className="text-foreground">public</b> Stellar contracts to confirm the proof and the on-chain
+          record. Private inputs are never revealed in any of it.
         </p>
         <Link to="/verify" className={cn(buttonVariants(), "mt-4")}>
           Open the verify page <ArrowRight className="size-4" />
         </Link>
       </SectionCard>
 
-      <SectionCard label="Reproduce it from the command line">
+      <SectionCard label="What you can check">
+        <ul className="divide-y divide-border/70 text-sm leading-relaxed text-muted-foreground">
+          <li className="py-2.5 first:pt-0">
+            <b className="text-foreground">A proof.</b> Paste a link or an id at{" "}
+            <code className="font-mono text-xs">/verify</code> and it routes to the right check. Browse them all
+            in the <Link to="/explorer" className="text-brand hover:underline">Explorer</Link>.
+          </li>
+          <li className="py-2.5">
+            <b className="text-foreground">A Data Room.</b> Open{" "}
+            <code className="font-mono text-xs">/verify/room/&lt;id&gt;</code> to confirm a room exists and
+            whether it uses Membership or Bonded Access. The reader's identity is never shown.
+          </li>
+          <li className="py-2.5 last:pb-0">
+            <b className="text-foreground">A bond.</b> Open <code className="font-mono text-xs">/verify/bond</code>{" "}
+            to confirm a bond grant is live. The wallet behind it is never shown.
+          </li>
+        </ul>
+      </SectionCard>
+
+      <SectionCard label="From the command line">
         <p className="text-sm leading-relaxed text-muted-foreground">
-          The verify page also prints the exact CLI recipe. You can read the persisted result on-chain, list the
-          verified-results history, and re-verify the Groth16 proof against the public RPC, with no zkorage
-          server in the trust path. Open a specific claim at <code className="font-mono text-xs">/verify/&lt;issuer&gt;</code>{" "}
-          or browse them all in the <Link to="/explorer" className="text-brand hover:underline">Explorer</Link>.
+          Each verify page also prints the exact command to run yourself. You can read the on-chain result,
+          list the history, and re-check the proof against the public network, with no zkorage server in the
+          trust path.
         </p>
       </SectionCard>
     </div>
