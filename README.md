@@ -24,7 +24,7 @@ approved membership or a bond anyone can lock. In bonded-access mode the owner s
 minimum amount, a deadline) and anyone who locks a qualifying non-revocable bond opens the room's documents
 **with no approval and no member list**. The reader proves the bond without revealing which wallet, which lock,
 or the exact amount; the proof carries its own key, so the 2-of-3 keeper committee seals the document key to it
-directly. Privacy needs at least three qualifying bonders for a requirement. Frontend is **v0.12.55**. A
+directly. Privacy needs at least three qualifying bonders for a requirement. Frontend is **v0.12.56**. A
 **Bonded Proofs** pillar (a Soroban-native time-locked escrow plus two
 live ZK products: a **solvency proof that dies when you pull your collateral** and a **standalone Bonded
 Access tier**) is also live; see below. The standalone Bonded Access tier now takes **any wallet token** for
