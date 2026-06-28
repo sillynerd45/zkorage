@@ -49,6 +49,31 @@ test("docs side-rail navigates to developers + glossary", async ({ page }) => {
   await expect(page.getByText("Plain-language glossary")).toBeVisible();
 });
 
+test("docs pillar sections render, a diagram zooms, and under-the-hood expands", async ({ page }) => {
+  await page.goto("/docs/data-room");
+  await expect(page.getByRole("heading", { name: "How a document is stored" })).toBeVisible();
+
+  // A flowchart opens a larger described copy in a dialog; Escape closes it.
+  await page.getByTestId("diagram-trigger").first().click();
+  const dialog = page.getByTestId("diagram-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("img")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+
+  // The layered "Under the hood" reveals the technical detail.
+  await page.getByTestId("under-the-hood").first().click();
+  await expect(page.getByText("AES-256-GCM").first()).toBeVisible();
+
+  // The Bonded Proofs section renders too.
+  await page.goto("/docs/bonded-proofs");
+  await expect(page.getByRole("heading", { name: "How a bond is created" })).toBeVisible();
+
+  // The retired Capabilities slug redirects into the Data Room section.
+  await page.goto("/docs/capabilities");
+  await expect(page).toHaveURL(/\/docs\/data-room$/);
+});
+
 test("landing → sections + verify CTAs work", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByTestId("hero-open-app")).toBeVisible();

@@ -311,15 +311,9 @@ export function DocsDataRoom() {
         </P>
       </section>
 
-      <section aria-labelledby="dr-live" className="space-y-3">
-        <DocH3 id="dr-live">Anonymous access in action</DocH3>
-        <P>
-          Here is the anonymity on a live testnet room. The meter shows the crowd a reader hides in, and the
-          log shows access grants landing on the chain in batches, so the timing does not point back to any one
-          reader. No wallet needed.
-        </P>
-        <M7ShowcasePanel />
-      </section>
+      {/* A live, wallet-free demo of the timing defense. It carries its own heading and self-hides if the
+          showcase room is not provisioned, so it is rendered bare (no surrounding heading to dangle). */}
+      <M7ShowcasePanel />
 
       <section aria-labelledby="dr-verify" className="space-y-4">
         <DocH3 id="dr-verify">Checking a Data Room</DocH3>
