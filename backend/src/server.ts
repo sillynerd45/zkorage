@@ -4941,7 +4941,37 @@ const BOND_BG_TIMEOUT_MS = (() => {
   const n = Number(process.env.BOND_BG_TIMEOUT_MS);
   return Number.isFinite(n) && n > 0 ? n : 20 * 60_000;
 })();
-async function pollAndSubmitBond(jobId: string): Promise<void> {
+// Submit a finished background proof, tolerating the transient QualRootUnknown (#8) a testnet RPC timing lag
+// can throw: a prior attempt's tx may even land LATE, so poll the on-chain grant between attempts before
+// re-submitting (a re-submit after it lands hits NullifierUsed, which the grant poll treats as success). Without
+// this, a momentary lag stranded a finished proof — the grant never landed and the reader's spinner hung.
+// Bounded; returns once the grant is on-chain or the attempts are exhausted.
+async function submitProofWithRetry(
+  label: string,
+  jobId: string,
+  submit: () => Promise<unknown>,
+  isGranted: () => Promise<boolean>,
+): Promise<boolean> {
+  try { if (await isGranted()) { console.log(`[${label}] ${jobId} already granted`); return true; } } catch { /* fall through to submit */ }
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      await submit();
+      console.log(`[${label}] submitted ${jobId}`);
+      return true;
+    } catch (e) {
+      console.error(`[${label}] submit ${jobId} attempt ${attempt + 1} failed: ${err(e)}`);
+    }
+    // The attempt's tx may have landed late, or the transient may clear — poll the grant before re-submitting.
+    for (let i = 0; i < 6; i++) {
+      await new Promise((r) => setTimeout(r, 5000));
+      try { if (await isGranted()) { console.log(`[${label}] grant landed for ${jobId}`); return true; } } catch { /* keep polling */ }
+    }
+  }
+  console.error(`[${label}] submit ${jobId} did not land after retries`);
+  return false;
+}
+
+async function pollAndSubmitBond(jobId: string, accessor: string, reqId: string): Promise<void> {
   if (!PROVER_URL || !BOND_GATE_ID || bondBgJobs.has(jobId)) return;
   bondBgJobs.add(jobId);
   const until = Date.now() + BOND_BG_TIMEOUT_MS;
@@ -4966,14 +4996,15 @@ async function pollAndSubmitBond(jobId: string): Promise<void> {
           return;
         }
         const { seal, image_id, journal } = b; // narrowed non-null above; capture for the nested closure
-        try {
-          // Serialize on the shared relay key (same chain as set_qual_root + the client submit), so concurrent
-          // background submits do not fetch the same sequence number and lose to txBadSeq.
-          await withTierAdminLock(() => invokeContract(BOND_GATE_ID, "submit_bond_proof", [scBytes(seal), scBytes(image_id), scBytes(journal)]));
-          console.log(`[bond-bg] submitted ${jobId}`);
-        } catch (e) {
-          console.error(`[bond-bg] submit ${jobId} failed: ${err(e)}`); // e.g. NullifierUsed if also client-submitted
-        }
+        // Serialize on the shared relay key (same chain as set_qual_root + the client submit), so concurrent
+        // background submits do not fetch the same sequence number and lose to txBadSeq. Retry the QualRootUnknown
+        // (#8) transient (a momentary RPC lag) so a finished proof is not stranded with the spinner hanging.
+        await submitProofWithRetry(
+          "bond-bg",
+          jobId,
+          () => withTierAdminLock(() => invokeContract(BOND_GATE_ID, "submit_bond_proof", [scBytes(seal), scBytes(image_id), scBytes(journal)])),
+          () => isBondGranted(accessor, reqId),
+        );
         return;
       }
     }
@@ -5028,7 +5059,7 @@ app.post("/bonded/bond/prove", async (req, res) => {
     const j = (await r.json()) as { job_id?: string; error?: string };
     if (!r.ok || !j.job_id) return res.status(502).json({ error: j.error || "prover submit failed" });
     const background = Boolean(req.body?.background);
-    if (background) void pollAndSubmitBond(j.job_id); // detached: finish + submit server-side
+    if (background) void pollAndSubmitBond(j.job_id, built.accessor, reqId); // detached: finish + submit server-side
     res.json({
       jobId: j.job_id, roomId: roomIdHex, reqId, memberRoot: built.memberRoot, qualRoot: built.qualRoot,
       nullifier: built.nullifier, accessor: built.accessor, token, minAmount: minAmount.toString(), deadline,
@@ -5110,7 +5141,7 @@ app.get("/bonded/bond/nullifier/:nullifier", async (req, res) => {
 
 // Background: poll the prover for a bond-open job and submit submit_bond_open_proof, serialized on the shared
 // relay key (so concurrent submits don't race the sequence number). Mirrors pollAndSubmitBond.
-async function pollAndSubmitBondOpen(jobId: string): Promise<void> {
+async function pollAndSubmitBondOpen(jobId: string, accessor: string, reqId: string): Promise<void> {
   if (!PROVER_URL || !BOND_GATE_ID || bondBgJobs.has(jobId)) return;
   bondBgJobs.add(jobId);
   const until = Date.now() + BOND_BG_TIMEOUT_MS;
@@ -5135,12 +5166,14 @@ async function pollAndSubmitBondOpen(jobId: string): Promise<void> {
           return;
         }
         const { seal, image_id, journal } = b;
-        try {
-          await withTierAdminLock(() => invokeContract(BOND_GATE_ID, "submit_bond_open_proof", [scBytes(seal), scBytes(image_id), scBytes(journal)]));
-          console.log(`[bond-open-bg] submitted ${jobId}`);
-        } catch (e) {
-          console.error(`[bond-open-bg] submit ${jobId} failed: ${err(e)}`);
-        }
+        // Retry the QualRootUnknown (#8) transient (a momentary RPC lag) so a finished bond-open proof is not
+        // stranded; serialized on the shared relay key like the bond path.
+        await submitProofWithRetry(
+          "bond-open-bg",
+          jobId,
+          () => withTierAdminLock(() => invokeContract(BOND_GATE_ID, "submit_bond_open_proof", [scBytes(seal), scBytes(image_id), scBytes(journal)])),
+          () => isBondOpenGranted(accessor, reqId),
+        );
         return;
       }
     }
@@ -5185,7 +5218,7 @@ app.post("/bonded/bond-open/prove", async (req, res) => {
     const j = (await r.json()) as { job_id?: string; error?: string };
     if (!r.ok || !j.job_id) return res.status(502).json({ error: j.error || "prover submit failed" });
     const background = Boolean(req.body?.background);
-    if (background) void pollAndSubmitBondOpen(j.job_id);
+    if (background) void pollAndSubmitBondOpen(j.job_id, built.accessor, reqId);
     res.json({
       jobId: j.job_id, reqId, qualRoot: built.qualRoot, nullifier: built.nullifier, accessor: built.accessor,
       recipientPub: built.recipientPub, token, minAmount: minAmount.toString(), deadline, anonSetSize: built.qualSize,
