@@ -167,9 +167,14 @@ export default function RoomManagement() {
       shownRoom.current = e.ownerRoom;
     }
     setBondRefreshing(true);
+    // Capture the reconcile generation at the read's START. A confirmed write (clear/set) bumps it via
+    // reconcileModel, so if it changed by the time this background refresh resolves, this read may predate the
+    // write and must NOT re-commit the stale pre-write value (the same revert bug, via the background refresh
+    // door): the reconcile owns the truth then.
+    const startGen = reconcileGen.current;
     getBondRequirementApi(e.ownerRoom)
       .then((r) => {
-        if (!live) return;
+        if (!live || reconcileGen.current !== startGen) return;
         const f = Boolean(r.found);
         const bo = Boolean(r.bondOpen);
         bondReqCache.set(e.ownerRoom, { found: f, bondOpen: bo });
@@ -183,7 +188,7 @@ export default function RoomManagement() {
         }
       })
       .catch(() => {
-        if (!live) return;
+        if (!live || reconcileGen.current !== startGen) return;
         // A refresh error keeps the last values; only a first-ever read (nothing shown yet) fails closed.
         setFound((prev) => (prev === null ? false : prev));
         setBondOpen((prev) => (prev === null ? false : prev));
@@ -193,7 +198,8 @@ export default function RoomManagement() {
         }
       })
       .finally(() => {
-        if (live) setBondRefreshing(false);
+        // Leave the refresh indicator to the reconcile if one superseded this read.
+        if (live && reconcileGen.current === startGen) setBondRefreshing(false);
       });
     return () => {
       live = false;
@@ -477,6 +483,11 @@ export default function RoomManagement() {
                   roomId={e.ownerRoom}
                   onChanged={() => reconcileModel(e.ownerRoom, true)}
                   onCleared={() => {
+                    // Reflect membership at once (parity with switchToMembership), so under RPC lag the panel
+                    // does not show the "Switch to membership" button for the whole poll window before settling.
+                    bondReqCache.set(e.ownerRoom, { found: false, bondOpen: false });
+                    setFound(false);
+                    setBondOpen(false);
                     setPicked("membership");
                     setSwitched(true);
                     reconcileModel(e.ownerRoom, false);
