@@ -158,10 +158,18 @@ test("dataroom Browse: lists a committee doc and wires the owner-open", async ({
   await expect(row).toHaveAttribute("data-kind", "committee");
   await expect(row).toContainText("anonymous");
 
-  // clicking it runs the owner-open: derive the room key (signMessage), then read the on-chain doc. This mock
-  // room id is not anchored on testnet, so the opener returns "not found" — a clean, wired error (not a crash).
-  await row.click();
+  // It is an expandable card now: the chevron toggle expands it and runs the owner-open (derive the room key via
+  // signMessage, then read the on-chain doc). This mock room id is not anchored on testnet, so the opener returns
+  // "not found" — a clean, wired error shown INLINE in the expanded card (not a crash).
+  await page.getByTestId("my-file-toggle").first().click();
+  await expect(page.getByTestId("my-file-content").first()).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("owner-open-error")).toBeVisible({ timeout: 30_000 });
+  // collapsing hides the card; re-expanding shows the CACHED error again (toggleOwnerDoc early-returns when a
+  // result/error is cached, so it does not re-run the open).
+  await page.getByTestId("my-file-toggle").first().click();
+  await expect(page.getByTestId("my-file-content")).toHaveCount(0);
+  await page.getByTestId("my-file-toggle").first().click();
+  await expect(page.getByTestId("owner-open-error")).toBeVisible();
 });
 
 // Loading + persistence in My files: a room's documents load behind a shimmer skeleton (the documents read is

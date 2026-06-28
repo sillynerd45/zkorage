@@ -288,7 +288,16 @@ test("discover: Check Bonded Access sends you to Bonded Proofs when you hold no 
     }) }));
   await page.goto("/app/dataroom/discover");
   await page.getByTestId("discover-bond-check").click();
-  // No bond -> Bonded Proofs > Bonded Access, pre-filled with this requirement, to lock one.
+  // No bond -> a confirmation asks before sending you off to lock one (no silent redirect).
+  await expect(page.getByTestId("confirm-modal")).toBeVisible();
+  await expect(page.getByTestId("confirm-modal")).toContainText("Lock a bond to open this room?");
+  // Cancel keeps you on Discover.
+  await page.getByTestId("confirm-cancel").click();
+  await expect(page.getByTestId("confirm-modal")).toHaveCount(0);
+  await expect(page).toHaveURL(/\/app\/dataroom\/discover$/);
+  // Confirm routes to Bonded Proofs > Bonded Access, pre-filled with this requirement, to lock one.
+  await page.getByTestId("discover-bond-check").click();
+  await page.getByTestId("confirm-go").click();
   await expect(page).toHaveURL(/\/app\/bonded\/tier\?/);
   await expect(page).toHaveURL(new RegExp(`token=${encodeURIComponent(CHK_TOKEN)}`));
   await expect(page).toHaveURL(/min=1000000000/);

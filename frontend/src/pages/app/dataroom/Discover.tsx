@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { actionButtonHover, Callout, CopyIconButton, DirectoryListSkeleton, RefreshBar, RoomSearch, ShowMore } from "@/components/app/dataroom/kit";
 import { BondRequirementDetail } from "@/components/app/dataroom/BondRequirementDetail";
+import { ConfirmModal } from "@/components/ConfirmModal";
 import { getBondQualSet, getMyRooms, type AnonTier, type DirectoryBond, type DirectoryRoom, type EnrollState } from "@/lib/api";
 
 // The text a directory room is matched against in search (name + id + description). Module-level + stable so
@@ -197,6 +198,9 @@ function BondCheckButton({ roomId, bond }: { roomId: string; bond: DirectoryBond
   const navigate = useNavigate();
   const { connected, address } = useWallet();
   const [busy, setBusy] = useState(false);
+  // When the wallet holds no qualifying bond, we ask before sending them off to lock one (locking a bond is a
+  // commitment, so a silent redirect is jarring). The dialog confirms the route; the lock itself happens later.
+  const [confirmLock, setConfirmLock] = useState(false);
   const check = async () => {
     setBusy(true);
     try {
@@ -206,7 +210,7 @@ function BondCheckButton({ roomId, bond }: { roomId: string; bond: DirectoryBond
       }
       const handle = loadIdentityAt(address);
       if (!handle) {
-        navigate(tierCreateLink(bond));
+        setConfirmLock(true);
         return;
       }
       const mine = bondAccessCommitment(handle.idSecret).toLowerCase();
@@ -218,16 +222,34 @@ function BondCheckButton({ roomId, bond }: { roomId: string; bond: DirectoryBond
         return;
       }
       const hasBond = q.locks.some((l) => l.commitment.toLowerCase() === mine);
-      navigate(hasBond ? accessSetupLink(roomId) : tierCreateLink(bond));
+      if (hasBond) navigate(accessSetupLink(roomId));
+      else setConfirmLock(true);
     } finally {
       setBusy(false);
     }
   };
   return (
-    <Button size="sm" onClick={check} disabled={busy} data-testid="discover-bond-check" className={actionButtonHover}>
-      {busy ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : <KeyRound aria-hidden="true" />}
-      {busy ? "Checking…" : "Check Bonded Access"}
-    </Button>
+    <>
+      <Button size="sm" onClick={check} disabled={busy} data-testid="discover-bond-check" className={actionButtonHover}>
+        {busy ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : <KeyRound aria-hidden="true" />}
+        {busy ? "Checking…" : "Check Bonded Access"}
+      </Button>
+      <ConfirmModal
+        open={confirmLock}
+        title="Lock a bond to open this room?"
+        tone="none"
+        confirmLabel="Lock a bond"
+        cancelLabel="Not now"
+        onConfirm={() => {
+          setConfirmLock(false);
+          navigate(tierCreateLink(bond));
+        }}
+        onCancel={() => setConfirmLock(false)}
+      >
+        You don't hold a qualifying bond for this room. Lock one to get access. Without it you can't open the
+        room's documents.
+      </ConfirmModal>
+    </>
   );
 }
 
