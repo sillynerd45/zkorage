@@ -1,69 +1,373 @@
-import { Link } from "react-router-dom";
-import { ArrowRight, FileSignature, Cpu, BadgeCheck, Compass, Terminal } from "lucide-react";
-import { capability, type Capability } from "@/lib/content";
+import { useEffect, useState, type ReactNode } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import {
+  ArrowRight,
+  FileSignature,
+  Cpu,
+  BadgeCheck,
+  Compass,
+  FolderLock,
+  Lock,
+  Check,
+  ChevronDown,
+  ExternalLink,
+  type LucideIcon,
+} from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
+import { Reveal } from "@/components/marketing/Reveal";
+import { useContracts } from "@/lib/hooks/useContracts";
+import { getCommitteeInfo, type CommitteeInfoResp } from "@/lib/api";
+import { short, explorer } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
+const ring =
+  "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
+
+// Accurate to BOTH products (the old "Attest / Prove / Verify" strip wrongly implied a third-party attester
+// for everything; the two pillars anchor on-chain instead).
 const STEPS = [
-  { icon: FileSignature, t: "Attest", d: "A trusted source signs the private data (custodian, KYC provider, bank)." },
+  { icon: FileSignature, t: "Anchor", d: "Seal a document or lock a bond on-chain. No third party holds your data." },
   { icon: Cpu, t: "Prove", d: "A self-hosted zkVM proves the fact. The data never leaves the prover you run." },
-  { icon: BadgeCheck, t: "Verify", d: "Anyone re-checks the proof on Stellar and gets the same answer. No account needed." },
+  { icon: BadgeCheck, t: "Verify", d: "Anyone re-checks the result on Stellar and gets the same answer. No wallet, no account." },
 ];
 
-// A featured pillar card (the two products zkorage leads with: the Data Room and Bonded Proofs). One big
-// click target that opens the pillar in the app.
-function Pillar({ cap, eyebrow }: { cap: Capability; eyebrow: string }) {
+const PILLARS = [
+  {
+    testid: "pillar-dataroom",
+    eyebrow: "Data Room",
+    title: "Data Room",
+    icon: FolderLock,
+    what: "Share sealed documents and admit readers anonymously.",
+    problem:
+      "Sharing sensitive files today means trusting a host with your documents and leaking who is looking at what.",
+    bullets: [
+      "Files stay encrypted. Only a tamper-evident fingerprint goes on-chain.",
+      "A reader proves they are an approved member, or that they hold a qualifying bond, without revealing who they are.",
+      "The access decision is recorded on the public ledger, so it can be re-checked later.",
+    ],
+    appTo: "/app/dataroom",
+    cta: "Open the Data Room",
+  },
+  {
+    testid: "pillar-bonded",
+    eyebrow: "Bonded Proofs",
+    title: "Bonded Proofs",
+    icon: Lock,
+    what: "Lock tokens until a time you choose, then prove a fact that holds only while the bond stays locked.",
+    problem: "Proving skin in the game or proof of funds normally means showing your wallet and your balance.",
+    bullets: [
+      "Prove you meet a requirement without showing your wallet or the amount.",
+      "The proof dies the moment you pull your collateral, so it cannot be faked after the fact.",
+      "Use a bond to enter a gated room, or to back a claim that anyone can re-check.",
+    ],
+    appTo: "/app/bonded",
+    cta: "Open Bonded Proofs",
+  },
+];
+
+const FAQS: { q: string; a: ReactNode }[] = [
+  {
+    q: "Is my data revealed?",
+    a: "No. The data stays with you. A self-hosted prover reads it to produce a proof, and only the proof and a fingerprint are published. Documents in a Data Room are encrypted before they leave your browser.",
+  },
+  {
+    q: "Do I need a wallet to verify a result?",
+    a: "No. Verifying reads the public ledger, so anyone can re-check a result with no wallet and no account. You only need a wallet to create a room, lock a bond, or store a document.",
+  },
+  {
+    q: "Who can see who accessed what?",
+    a: "A reader proves they are eligible without revealing who they are. The room owner sees that an approved reader got in, not which person. The access decision is on-chain; the identity behind it is not.",
+  },
+  {
+    q: "What actually goes on-chain?",
+    a: "A tamper-evident fingerprint of a sealed document or a locked bond, the proof, and the result of checking it. The document contents and the private values behind a claim never go on-chain.",
+  },
+  {
+    q: "Is it audited? Is this production?",
+    a: "No. zkorage runs on Stellar testnet with unaudited demo contracts. It shows the mechanism end to end. Do not use it with real funds.",
+  },
+];
+
+// Ambient backdrop: soft blue to emerald glow + a faint grid, concentrated behind the hero and masked to fade
+// out down the page. Decorative only (aria-hidden + pointer-events-none, scoped to the page's -z-10 layer).
+function AuroraBackdrop() {
   return (
-    <Link to={cap.to} className="group block focus-visible:outline-none">
-      <div className="overflow-hidden rounded-2xl border bg-card shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-md group-focus-visible:ring-2 group-focus-visible:ring-ring">
-        <div className="grid gap-6 p-7 sm:grid-cols-[1fr_auto] sm:items-center">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand">{eyebrow}</p>
-            <h3 className="mt-1.5 text-2xl font-bold tracking-tight">{cap.title}</h3>
-            <p className="mt-2 max-w-xl text-[15px] leading-relaxed text-muted-foreground">{cap.blurb}</p>
+    <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
+      <div
+        className="absolute inset-x-0 top-0 h-[720px]"
+        style={{
+          WebkitMaskImage: "linear-gradient(to bottom, #000 0%, #000 55%, transparent 100%)",
+          maskImage: "linear-gradient(to bottom, #000 0%, #000 55%, transparent 100%)",
+        }}
+      >
+        <div className="absolute -left-32 -top-40 h-[520px] w-[520px] rounded-full blur-3xl motion-safe:animate-aurora-one bg-[radial-gradient(closest-side,hsl(var(--brand)/0.28),transparent)]" />
+        <div className="absolute -right-24 -top-28 h-[460px] w-[460px] rounded-full blur-3xl motion-safe:animate-aurora-two bg-[radial-gradient(closest-side,hsl(var(--success)/0.22),transparent)]" />
+        <div className="absolute left-1/2 top-44 h-[420px] w-[680px] -translate-x-1/2 rounded-full blur-3xl motion-safe:animate-aurora-one bg-[radial-gradient(closest-side,hsl(var(--brand)/0.16),transparent)]" />
+      </div>
+      <div className="aurora-grid absolute inset-x-0 top-0 h-[720px] opacity-60 dark:opacity-40" />
+    </div>
+  );
+}
+
+function PillarCard({
+  eyebrow,
+  title,
+  what,
+  problem,
+  bullets,
+  appTo,
+  cta,
+  testid,
+  icon: Icon,
+  index,
+}: {
+  eyebrow: string;
+  title: string;
+  what: string;
+  problem: string;
+  bullets: string[];
+  appTo: string;
+  cta: string;
+  testid: string;
+  icon: LucideIcon;
+  index: number;
+}) {
+  return (
+    <Reveal as="article" index={index} step={120} className="flex flex-col rounded-2xl border bg-card p-7 shadow-sm" data-testid={testid}>
+      <div className="flex items-center gap-2.5">
+        <span className="grid size-9 place-items-center rounded-lg bg-brand/10 text-brand">
+          <Icon className="size-5" />
+        </span>
+        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand">{eyebrow}</p>
+      </div>
+      <h3 className="mt-3 text-2xl font-bold tracking-tight">{title}</h3>
+      <p className="mt-2 text-[15px] leading-relaxed text-muted-foreground">{what}</p>
+      <p className="mt-4 text-sm leading-relaxed">
+        <span className="font-medium text-foreground">The problem. </span>
+        <span className="text-muted-foreground">{problem}</span>
+      </p>
+      <ul className="mt-4 space-y-2.5">
+        {bullets.map((b) => (
+          <li key={b} className="flex items-start gap-2.5 text-sm leading-relaxed text-muted-foreground">
+            <Check className="mt-0.5 size-4 shrink-0 text-success" aria-hidden />
+            <span>{b}</span>
+          </li>
+        ))}
+      </ul>
+      <div className="mt-6 flex flex-wrap gap-3 pt-1">
+        <Link to={appTo} className={cn(buttonVariants(), "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card")}>
+          {cta} <ArrowRight className="size-4" />
+        </Link>
+        <Link to="/docs/capabilities" className={cn(buttonVariants({ variant: "ghost" }), "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card")}>
+          Learn more
+        </Link>
+      </div>
+    </Reveal>
+  );
+}
+
+function VerifyCta() {
+  const navigate = useNavigate();
+  const [value, setValue] = useState("");
+  function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const v = value.trim();
+    if (!v) return;
+    // Forward the raw paste to the Verify page, which auto-detects the type and routes to the right read.
+    navigate(`/verify?q=${encodeURIComponent(v)}`);
+  }
+  return (
+    <section className="mb-16 sm:mb-20" data-testid="verify-cta">
+      <Reveal className="rounded-2xl border bg-card p-7">
+        <h2 className="text-xl font-semibold tracking-tight">Don't trust. Verify.</h2>
+        <p className="mt-2 max-w-2xl text-[15px] leading-relaxed text-muted-foreground">
+          Every result zkorage publishes is checkable by anyone, on the public ledger. No wallet, no account,
+          no need to trust our server.
+        </p>
+        <div className="mt-6 grid gap-4 sm:grid-cols-2">
+          <form onSubmit={onSubmit} className="rounded-xl border bg-background p-5">
+            <label htmlFor="verify-cta-input" className="text-sm font-medium text-foreground">
+              Check a specific proof
+            </label>
+            <p id="verify-cta-hint" className="mt-1 text-xs leading-relaxed text-muted-foreground">
+              Paste a verify link or a proof id.
+            </p>
+            <div className="mt-3 flex gap-2">
+              <input
+                id="verify-cta-input"
+                data-testid="verify-cta-input"
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                aria-describedby="verify-cta-hint"
+                placeholder="Paste a verify link or id"
+                spellCheck={false}
+                autoComplete="off"
+                className="h-10 w-full rounded-md border border-input bg-card px-3 font-mono text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+              <button
+                type="submit"
+                className={cn(buttonVariants({ variant: "brand" }), "shrink-0 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background")}
+              >
+                <BadgeCheck className="size-4" /> Check
+              </button>
+            </div>
+          </form>
+          <div className="flex flex-col justify-between rounded-xl border bg-background p-5">
+            <div>
+              <p className="text-sm font-medium text-foreground">Browse public rooms</p>
+              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                See the rooms owners opted into the directory, by membership or bonded access.
+              </p>
+            </div>
+            <Link
+              to="/explorer"
+              data-testid="verify-cta-explorer"
+              className={cn(buttonVariants({ variant: "outline" }), "mt-3 w-fit", ring)}
+            >
+              <Compass className="size-4" /> Open Explorer
+            </Link>
           </div>
-          <span className={cn(buttonVariants({ size: "lg" }), "pointer-events-none w-full sm:w-auto")}>
-            Open in app <ArrowRight className="size-4" />
+        </div>
+      </Reveal>
+    </section>
+  );
+}
+
+function ContractStat({ label, id, loading }: { label: string; id: string | null; loading: boolean }) {
+  return (
+    <div className="rounded-xl border bg-background p-4">
+      <dt className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{label}</dt>
+      <dd className="mt-1.5 text-sm">
+        {!id ? (
+          <span className="text-muted-foreground">{loading ? "Loading…" : "unavailable"}</span>
+        ) : (
+          <span className="inline-flex items-center gap-2">
+            <code className="font-mono text-xs text-muted-foreground">{short(id, 4)}</code>
+            <a
+              href={explorer("contract", id, "testnet")}
+              target="_blank"
+              rel="noreferrer"
+              aria-label={`View the ${label} contract on the explorer`}
+              className={cn("rounded-sm text-muted-foreground transition-colors hover:text-foreground", ring)}
+            >
+              <ExternalLink className="size-4" />
+            </a>
+          </span>
+        )}
+      </dd>
+    </div>
+  );
+}
+
+function LiveStatus() {
+  const [info, setInfo] = useState<CommitteeInfoResp | null>(null);
+  const [err, setErr] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const c = useContracts();
+  useEffect(() => {
+    let live = true;
+    getCommitteeInfo()
+      .then((i) => live && setInfo(i))
+      .catch(() => live && setErr(true))
+      .finally(() => live && setLoading(false));
+    return () => {
+      live = false;
+    };
+  }, []);
+  const online = info ? info.online >= info.n : false;
+  return (
+    <section className="mb-16 sm:mb-20" data-testid="live-status">
+      <Reveal className="rounded-2xl border bg-card p-7">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-xl font-semibold tracking-tight">Live on testnet</h2>
+          <span className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium text-muted-foreground">
+            <span className="size-1.5 rounded-full bg-success" aria-hidden /> Stellar testnet
           </span>
         </div>
-      </div>
-    </Link>
+        <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+          The contracts and the key-release committee this site points at right now.
+        </p>
+        <dl className="mt-5 grid gap-3 sm:grid-cols-3">
+          <div className="rounded-xl border bg-background p-4">
+            <dt className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Committee</dt>
+            <dd className="mt-1.5 text-sm">
+              {loading ? (
+                <span className="text-muted-foreground">Checking…</span>
+              ) : err || !info ? (
+                <span className="text-muted-foreground">Status unavailable</span>
+              ) : (
+                <span className="inline-flex items-center gap-2 font-medium">
+                  <span className={cn("size-2 rounded-full", online ? "bg-success" : "bg-warning")} aria-hidden />
+                  {info.online} of {info.n} keepers online
+                </span>
+              )}
+            </dd>
+          </div>
+          <ContractStat label="Data Room" id={c.dataroomId} loading={c.loading} />
+          <ContractStat label="Escrow" id={c.escrowId} loading={c.loading} />
+        </dl>
+        <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
+          These are unaudited demo contracts on Stellar testnet, not for production funds.
+        </p>
+      </Reveal>
+    </section>
+  );
+}
+
+function FaqItem({ q, a }: { q: string; a: ReactNode }) {
+  return (
+    <details className="group rounded-xl border bg-card px-5 [&_summary::-webkit-details-marker]:hidden [&_summary]:list-none">
+      <summary className={cn("flex cursor-pointer items-center justify-between gap-4 rounded-md py-4 text-sm font-medium text-foreground", ring)}>
+        <span>{q}</span>
+        <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-open:rotate-180" aria-hidden />
+      </summary>
+      <div className="pb-4 pr-8 text-sm leading-relaxed text-muted-foreground">{a}</div>
+    </details>
   );
 }
 
 export default function Landing() {
-  const dataroom = capability("dataroom");
-  const bonded = capability("bonded");
   return (
-    <div data-testid="overview">
+    <div data-testid="overview" className="relative isolate overflow-x-clip">
+      <AuroraBackdrop />
+
       {/* hero */}
-      <section className="mb-12">
+      <section className="mb-16 pt-6 sm:mb-20 sm:pt-10">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand">
           zkorage · verifiable claims on Stellar
         </p>
-        <h1 className="mt-2 max-w-3xl text-4xl font-bold leading-[1.08] tracking-tight sm:text-5xl">
-          Prove a private fact. <span className="text-muted-foreground">Verify it on-chain.</span>
+        <h1 className="mt-3 max-w-3xl text-4xl font-bold leading-[1.08] tracking-tight sm:text-5xl">
+          Prove a private fact. <span className="text-muted-foreground">Verify it on Stellar.</span>
         </h1>
-        <p className="mt-4 max-w-2xl text-base leading-relaxed text-muted-foreground">
-          zkorage seals sensitive documents in a private room and proves facts about attested data, so a
-          verifier learns one fact and nothing else. Anyone can re-check the result on the public ledger,
-          without ever revealing the data behind it.
+        <p className="mt-4 max-w-2xl text-base leading-relaxed text-muted-foreground sm:text-lg">
+          zkorage seals sensitive documents and proves facts about private data, so a verifier learns one fact
+          and nothing else. Anyone can re-check the result on the public ledger, with no account and no access
+          to the data.
         </p>
-        <div className="mt-6 flex flex-wrap items-center gap-3">
-          <Link to="/app" className={cn(buttonVariants({ size: "lg" }))} data-testid="hero-open-app">
+        <div className="mt-7 flex flex-wrap items-center gap-3">
+          <Link to="/app" data-testid="hero-open-app" className={cn(buttonVariants({ size: "lg" }), ring)}>
             Open app <ArrowRight className="size-4" />
           </Link>
-          <Link to="/docs" className={cn(buttonVariants({ variant: "outline", size: "lg" }))}>
+          <Link to="/docs" className={cn(buttonVariants({ variant: "outline", size: "lg" }), ring)}>
             Read the docs
           </Link>
-          <span className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium text-muted-foreground">
-            <span className="size-1.5 rounded-full bg-success" /> Stellar testnet
+          <span className="inline-flex items-center gap-1.5 rounded-full border bg-card/70 px-2.5 py-1 text-xs font-medium text-muted-foreground backdrop-blur">
+            <span className="size-1.5 rounded-full bg-success" aria-hidden /> Running on Stellar testnet
           </span>
         </div>
+      </section>
 
-        <div className="mt-9 grid gap-3 sm:grid-cols-3">
+      {/* how it works */}
+      <section className="mb-16 sm:mb-20" data-testid="how-it-works">
+        <Reveal className="mb-5">
+          <h2 className="text-xl font-semibold tracking-tight">How it works</h2>
+          <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+            The same three steps power both products.
+          </p>
+        </Reveal>
+        <div className="grid gap-3 sm:grid-cols-3">
           {STEPS.map((s, i) => (
-            <div key={s.t} className="rounded-xl border bg-card p-5">
+            <Reveal key={s.t} index={i} className="rounded-xl border bg-card p-5">
               <div className="flex items-center gap-2.5">
                 <span className="grid size-8 place-items-center rounded-lg bg-muted text-muted-foreground">
                   <s.icon className="size-4" />
@@ -73,63 +377,68 @@ export default function Landing() {
                 </span>
               </div>
               <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">{s.d}</p>
-            </div>
+            </Reveal>
           ))}
         </div>
       </section>
 
-      {/* the two pillars: Data Room (the headliner) + Bonded Proofs */}
-      <section className="mb-12">
-        <div className="mb-4">
-          <h2 className="text-lg font-semibold tracking-tight">What you can do</h2>
-          <p className="text-sm text-muted-foreground">
-            Two products on the engine. Open either in the app to run it against the live testnet.
+      {/* the two pillars */}
+      <section className="mb-16 sm:mb-20" data-testid="pillars">
+        <Reveal className="mb-5">
+          <h2 className="text-xl font-semibold tracking-tight">Two products on one engine</h2>
+          <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+            Both run against the live testnet. Open either in the app.
           </p>
-        </div>
-        <div className="space-y-4">
-          {dataroom && <Pillar cap={dataroom} eyebrow="Featured" />}
-          {bonded && <Pillar cap={bonded} eyebrow="Also on zkorage" />}
+        </Reveal>
+        <div className="grid gap-5 lg:grid-cols-2">
+          {PILLARS.map((p, i) => (
+            <PillarCard key={p.testid} index={i} {...p} />
+          ))}
         </div>
       </section>
 
       {/* don't trust. verify */}
-      <section className="mb-12">
-        <div className="rounded-2xl border bg-card p-7">
-          <h2 className="text-lg font-semibold tracking-tight">Don't trust. Verify.</h2>
-          <p className="mt-2 max-w-2xl text-[15px] leading-relaxed text-muted-foreground">
-            Every claim zkorage publishes is checkable by anyone, directly on the public ledger. There is no
-            wallet, no account, and no need to trust our server. Re-check a single proof, or browse every verified record.
-          </p>
-          <div className="mt-5 flex flex-wrap gap-3">
-            <Link to="/verify" className={cn(buttonVariants())}>
-              <BadgeCheck className="size-4" /> Verify a proof
-            </Link>
-            <Link to="/explorer" className={cn(buttonVariants({ variant: "outline" }))}>
-              <Compass className="size-4" /> Open Explorer
-            </Link>
-          </div>
-        </div>
+      <VerifyCta />
+
+      {/* live on testnet */}
+      <LiveStatus />
+
+      {/* faq */}
+      <section className="mb-16 sm:mb-20" data-testid="faq">
+        <Reveal className="mb-5">
+          <h2 className="text-xl font-semibold tracking-tight">Questions</h2>
+        </Reveal>
+        <Reveal className="space-y-3">
+          {FAQS.map((f) => (
+            <FaqItem key={f.q} q={f.q} a={f.a} />
+          ))}
+        </Reveal>
       </section>
 
-      {/* for developers */}
-      <section className="mb-4">
-        <div className="flex flex-col gap-3 rounded-2xl border bg-card p-7 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-start gap-3.5">
-            <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-brand/10 text-brand">
-              <Terminal className="size-5" />
-            </span>
-            <div>
-              <h2 className="text-lg font-semibold tracking-tight">For developers</h2>
-              <p className="mt-1 max-w-xl text-sm leading-relaxed text-muted-foreground">
-                A read-only TypeScript SDK, an MCP server, and a REST API. Query and re-verify any claim
-                from your own code, with no keys and no need to trust our server.
-              </p>
-            </div>
+      {/* closing cta */}
+      <section className="mb-4" data-testid="closing-cta">
+        <Reveal className="overflow-hidden rounded-2xl border bg-gradient-to-br from-brand/10 via-card to-success/10 p-8 text-center sm:p-10">
+          <h2 className="text-2xl font-bold tracking-tight">See it run on testnet</h2>
+          <p className="mx-auto mt-2 max-w-xl text-sm leading-relaxed text-muted-foreground">
+            Open a room, lock a bond, or re-check a published result. Everything runs against the live Stellar
+            testnet.
+          </p>
+          <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+            <Link to="/app" data-testid="closing-cta-open-app" className={cn(buttonVariants({ size: "lg" }), ring)}>
+              Open app <ArrowRight className="size-4" />
+            </Link>
+            <Link to="/docs" className={cn(buttonVariants({ variant: "outline", size: "lg" }), ring)}>
+              Read the docs
+            </Link>
           </div>
-          <Link to="/docs/developers" className={cn(buttonVariants({ variant: "outline" }), "shrink-0")}>
-            Developer docs <ArrowRight className="size-4" />
-          </Link>
-        </div>
+          <p className="mt-5 text-xs text-muted-foreground">
+            Building on it?{" "}
+            <Link to="/docs/developers" className={cn("rounded-sm font-medium text-brand underline-offset-4 hover:underline", ring)}>
+              Read the developer docs
+            </Link>{" "}
+            for the SDK, MCP server, and REST API.
+          </p>
+        </Reveal>
       </section>
     </div>
   );
