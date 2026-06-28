@@ -36,11 +36,11 @@ function tierCreateLink(s: ReturnType<typeof useSharedOpen>): string {
 
 // One helper line per sync state, so the description text changes by state but the box stays a stable height.
 const SYNC_HELP: Record<SyncState, string> = {
-  off: "Encrypted with your wallet, so your rooms follow you to other devices. The server cannot read it.",
-  locked: "Sync is on for this account. Sign in once on this device to load your rooms.",
-  syncing: "Signing in and syncing your rooms.",
-  synced: "Your rooms are synced and encrypted with your wallet.",
-  error: "Could not sync your rooms. Your wallet stays the only key.",
+  off: "Encrypted with your wallet, so your rooms and Bonded Access follow you to other devices. The server cannot read it.",
+  locked: "Sync is on for this account. Sign in once on this device to load your rooms and Bonded Access.",
+  syncing: "Signing in and syncing your rooms and Bonded Access.",
+  synced: "Your rooms and Bonded Access are synced, encrypted with your wallet.",
+  error: "Could not sync. Your wallet stays the only key.",
 };
 
 // The status of the in-progress Open for one document. Each branch is plain and short; "approved" reads as a
@@ -462,9 +462,9 @@ export default function OpenShared() {
             </div>
           )}
 
-          {/* Sync across devices: an opt-in toggle. Turning it on signs once and pulls your rooms; while it is
-              off the switch carries a gentle attention pulse. The helper block keeps a stable height across all
-              states, and a returning device shows a prominent "Sign in to turn on sync" action. */}
+          {/* Sync across devices: a calm setting bound to the app-wide preference (the connect dialog is now the
+              primary place sync is turned on). Turning it on signs once and pulls your rooms + Bonded Access. The
+              helper block keeps a stable height across states; a returning device shows "Sign in to turn on sync". */}
           <div className="mt-4 border-t pt-3">
             <div className="flex items-center justify-between gap-3">
               <span className="inline-flex items-center gap-2 text-[13px] font-medium">
@@ -623,9 +623,7 @@ function SyncToggle({ checked, onChange }: { checked: boolean; onChange: (on: bo
       className={cn(
         "relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-        checked
-          ? "bg-brand"
-          : "bg-muted-foreground/40 animate-sync-attn hover:animate-none focus-visible:animate-none",
+        checked ? "bg-brand" : "bg-muted-foreground/40",
       )}
     >
       <span

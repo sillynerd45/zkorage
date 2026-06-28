@@ -29,6 +29,7 @@ import { useWallet, useTxSigner } from "@/lib/wallet/WalletContext";
 import { useDataRoomIdentity } from "@/lib/hooks/useDataRoomIdentity";
 import { readJoinRequests, writeJoinRequests } from "@/lib/dataroom/requests";
 import { pullVault, pushVault, forgetVault, isVaultSyncOn, setVaultSyncOn } from "@/lib/dataroom/vault";
+import { SYNC_EVENT } from "@/lib/sync/prefs";
 import { writeOpenTicket, clearOpenTicket, findOpenTicket } from "@/lib/dataroom/openTicket";
 import { markBondLocked, clearBondLocked, hasBondLockedFor } from "@/lib/dataroom/bondLocks";
 import { getBondOpenIdentity } from "@/lib/bonded/bondOpenIdentity";
@@ -107,6 +108,18 @@ export function useSharedOpen() {
   const [syncState, setSyncState] = useState<SyncState>("off");
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
   useEffect(() => { setSyncOn(isVaultSyncOn(connected ? address : null)); }, [connected, address]);
+  // When sync is turned on / restored elsewhere (the connect dialog or the wallet menu), re-read the preference
+  // and the freshly merged rooms so this page reflects it without a navigation.
+  useEffect(() => {
+    const onSync = () => {
+      const on = isVaultSyncOn(connected ? address : null);
+      setSyncOn(on);
+      if (address) reloadOpenable(address);
+      if (on && ident.hasSignature(address)) setSyncState("synced");
+    };
+    window.addEventListener(SYNC_EVENT, onSync);
+    return () => window.removeEventListener(SYNC_EVENT, onSync);
+  }, [connected, address, reloadOpenable, ident]);
 
   // Public directory names/descriptions (listed rooms only) so an approved room shows a human name like the
   // Discover tab, not just an id. One public read; a private/unlisted room falls back to your own label.
