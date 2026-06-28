@@ -361,8 +361,8 @@ export function BondAccessDiagram({ idPrefix, decorative }: DiagramProps) {
       title="Opening a room with a bond"
       desc="A sequence diagram of opening a bond-only room across five actors: your browser, the backend, the self-hosted prover, the three keepers, and the Soroban contracts. Your browser uses a reusable bond handle (no wallet signature) to prove you hold a qualifying bond while hiding your wallet, your lock, and the exact amount; the proof runs on the self-hosted prover in the background; a grant is recorded on the public chain under an anonymous handle; the keepers each check the grant and release a key share; and your browser rebuilds the key, verifies the file, and decrypts it. The room opens with no owner approval."
     >
-      <PhaseBand y={56} h={150} label="CHECK" tint />
-      <PhaseBand y={206} h={128} label="PROVE" tint={false} />
+      <PhaseBand y={56} h={158} label="CHECK" tint />
+      <PhaseBand y={214} h={120} label="PROVE" tint={false} />
       <PhaseBand y={334} h={146} label="GRANT" tint />
       <PhaseBand y={480} h={120} label="RELEASE" tint={false} />
       <PhaseBand y={600} h={180} label="OPEN" tint />
