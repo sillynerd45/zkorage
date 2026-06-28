@@ -2,8 +2,8 @@ import { DiagramSvg, Node, Edge, colsLeft, type DiagramProps } from "./kit";
 
 // The five documentation flowcharts. Each is a single left-to-right row so it stays scannable. The branch
 // detail (membership vs bonded, plain bond vs qualifying bond) lives in the prose and the "Under the hood"
-// expander, not in the drawing. Every node is private (dashed brand), public (solid neutral), or verified
-// (emerald). See ./kit for the shared primitives.
+// expander, not in the drawing. Every node is private (dashed brand) or public (solid neutral). See ./kit
+// for the shared primitives.
 
 // Storing a document: encrypt, split the key, store off-chain, anchor a fingerprint. No proof.
 export function StoreDiagram({ idPrefix, decorative }: DiagramProps) {
@@ -58,7 +58,7 @@ export function OpenDiagram({ idPrefix, decorative }: DiagramProps) {
       <Node left={c[0]} kind="private" title={["You prove", "you qualify"]} sub="nothing else shown" />
       <Node left={c[1]} kind="public" title={["Access", "granted"]} sub="on the chain" />
       <Node left={c[2]} kind="private" title={["Keepers", "release the key"]} sub="2 of 3" />
-      <Node left={c[3]} kind="verified" title={["The file", "opens"]} sub="only for you" />
+      <Node left={c[3]} kind="private" title={["The file", "opens"]} sub="only for you" />
       <Edge idPrefix={idPrefix} from={c[0]} to={c[1]} />
       <Edge idPrefix={idPrefix} from={c[1]} to={c[2]} />
       <Edge idPrefix={idPrefix} from={c[2]} to={c[3]} />
@@ -98,7 +98,7 @@ export function BondAccessDiagram({ idPrefix, decorative }: DiagramProps) {
       <Node left={c[0]} kind="private" title={["Prove you", "hold a bond"]} sub="wallet stays hidden" />
       <Node left={c[1]} kind="public" title={["Grant", "recorded"]} sub="anonymous handle" />
       <Node left={c[2]} kind="private" title={["Keepers", "release the key"]} sub="2 of 3" />
-      <Node left={c[3]} kind="verified" title={["The room", "opens"]} sub="no approval" />
+      <Node left={c[3]} kind="private" title={["The room", "opens"]} sub="no approval" />
       <Edge idPrefix={idPrefix} from={c[0]} to={c[1]} />
       <Edge idPrefix={idPrefix} from={c[1]} to={c[2]} />
       <Edge idPrefix={idPrefix} from={c[2]} to={c[3]} />

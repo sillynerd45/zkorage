@@ -1,7 +1,8 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Maximize2, X } from "lucide-react";
 import { Disclosure } from "@/components/Disclosure";
+import { NodeLegend } from "./kit";
 
 // A flowchart figure for the docs. The whole plate is a button that opens a larger, described copy in a
 // dialog (click-to-zoom). The inline copy is decorative; the figcaption plus an sr-only ordered list are
@@ -13,16 +14,15 @@ export function DiagramFigure({
   title,
   caption,
   steps,
-  legend,
   render,
 }: {
   title: string;
   caption: string;
   steps: string[];
-  legend?: ReactNode;
   render: DiagramRender;
 }) {
   const [open, setOpen] = useState(false);
+  const close = useCallback(() => setOpen(false), []);
   const baseId = useId();
   return (
     <figure className="my-1">
@@ -34,7 +34,7 @@ export function DiagramFigure({
         className="group relative block w-full rounded-xl border bg-card p-4 shadow-sm transition-colors hover:border-brand/40 sm:p-6"
       >
         {render({ decorative: true, idPrefix: `${baseId}-inline` })}
-        <span className="pointer-events-none absolute right-3 top-3 inline-flex items-center gap-1 rounded-md border bg-card/80 px-2 py-1 text-[11px] text-muted-foreground opacity-70 backdrop-blur transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 sm:opacity-0">
+        <span className="pointer-events-none absolute right-3 top-3 inline-flex items-center gap-1 rounded-md border bg-card/80 px-2 py-1 text-[11px] text-muted-foreground opacity-70 backdrop-blur transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 sm:opacity-50">
           <Maximize2 className="size-3" aria-hidden="true" /> Zoom
         </span>
       </button>
@@ -42,7 +42,7 @@ export function DiagramFigure({
       <figcaption className="mt-2 max-w-[68ch] text-[13px] leading-relaxed text-muted-foreground">
         {caption}
       </figcaption>
-      {legend}
+      <NodeLegend />
 
       <ol className="sr-only">
         {steps.map((s, i) => (
@@ -50,7 +50,7 @@ export function DiagramFigure({
         ))}
       </ol>
 
-      <Lightbox open={open} title={title} caption={caption} onClose={() => setOpen(false)}>
+      <Lightbox open={open} title={title} caption={caption} onClose={close}>
         {render({ decorative: false, idPrefix: `${baseId}-zoom` })}
       </Lightbox>
     </figure>
@@ -144,6 +144,7 @@ function Lightbox({
           </div>
         </div>
         {caption && <p className="mt-3 text-[13px] leading-relaxed text-muted-foreground">{caption}</p>}
+        <NodeLegend />
       </div>
     </div>,
     document.body,

@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 // is a dashed brand outline, a public-chain node is a solid neutral outline, and each carries a one-word
 // sublabel plus a text legend (WCAG 1.4.1). Hand-drawn boxes-and-arrows, no image files, no canvas.
 
-export type NodeKind = "private" | "public" | "verified";
+export type NodeKind = "private" | "public";
 
 // Each diagram is rendered twice: a decorative inline copy (the figcaption + an sr-only step list carry the
 // meaning) and a described copy inside the zoom dialog (role="img" + <title>/<desc>). idPrefix keeps the
@@ -33,9 +33,8 @@ export function colsLeft(n: number): number[] {
 }
 
 const NODE_RECT: Record<NodeKind, string> = {
-  private: "fill-brand/5 stroke-brand",
+  private: "fill-brand/10 stroke-brand",
   public: "fill-card stroke-muted-foreground",
-  verified: "fill-success/5 stroke-success",
 };
 
 // One flow box. `title` may be one or two short lines; `sub` is the one-word private/public cue.
@@ -208,7 +207,7 @@ function Swatch({ kind }: { kind: NodeKind }) {
   );
 }
 
-export function NodeLegend({ verified = false, className }: { verified?: boolean; className?: string }) {
+export function NodeLegend({ className }: { className?: string }) {
   return (
     <ul className={cn("mt-2 flex flex-wrap gap-x-5 gap-y-1.5 text-[11px] text-muted-foreground", className)}>
       <li className="inline-flex items-center gap-1.5">
@@ -217,11 +216,6 @@ export function NodeLegend({ verified = false, className }: { verified?: boolean
       <li className="inline-flex items-center gap-1.5">
         <Swatch kind="public" /> On the public chain
       </li>
-      {verified && (
-        <li className="inline-flex items-center gap-1.5">
-          <Swatch kind="verified" /> Anyone can verify
-        </li>
-      )}
     </ul>
   );
 }

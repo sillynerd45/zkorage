@@ -11,7 +11,6 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { SectionCard, DataRow } from "@/components/marketing/blocks";
 import { DiagramFigure, UnderTheHood } from "./diagrams/DiagramFigure";
-import { NodeLegend } from "./diagrams/kit";
 import {
   StoreDiagram,
   JoinApproveDiagram,
@@ -23,7 +22,7 @@ import {
 // ── Overview / concepts ───────────────────────────────────────────────────────
 const ENGINE = [
   { icon: Anchor, t: "Anchor", d: "Tie the fact to something real and public. A locked bond, the fingerprint of a room's approved list, or a stored file's fingerprint already lives on the public chain, so a proof has something solid to stand on." },
-  { icon: Cpu, t: "Prove (on a server you run)", d: "A zero-knowledge proof checks the fact and reveals only the answer. It runs on a prover you control, so your private data never leaves it. We never send private data to a shared proving market." },
+  { icon: Cpu, t: "Prove (on a server we host)", d: "A zero-knowledge proof checks the fact and reveals only the answer. The proving runs on a server we host, never in your browser and never on a shared market, and it discards your private inputs once the proof is built." },
   { icon: BadgeCheck, t: "Verify (on the public chain)", d: "A small contract on Stellar checks the proof, and the result is public. Anyone can re-check it with no account and no need to trust our server." },
 ];
 
@@ -83,20 +82,20 @@ export function DocsOverview() {
 
 // ── Pillar explainers (Data Room + Bonded Proofs) ─────────────────────────────
 // Long-form, layered: a plain story up top, the proof names and on-chain checks tucked into "Under the
-// hood". Plain <section>/<p> for prose (Card is only the diagram plate), max-w-[68ch] line length, h3 per
-// scenario. No em-dashes anywhere in this copy.
+// hood". Plain <section>/<p> for prose (Card is only the diagram plate); the whole pillar shares one column
+// width so prose, figures, and rules line up. h2 per scenario. No em-dashes anywhere in this copy.
 
-function DocH3({ id, children }: { id: string; children: ReactNode }) {
+function DocHeading({ id, children }: { id: string; children: ReactNode }) {
   return (
-    <h3 id={id} className="text-[17px] font-semibold tracking-tight text-foreground">
+    <h2 id={id} className="scroll-mt-24 text-[17px] font-semibold tracking-tight text-foreground">
       {children}
-    </h3>
+    </h2>
   );
 }
 
 function P({ children, lead = false }: { children: ReactNode; lead?: boolean }) {
   return (
-    <p className={cn("max-w-[68ch] leading-relaxed text-muted-foreground", lead ? "text-[15px]" : "text-sm")}>
+    <p className={cn("text-[15px] leading-relaxed", lead ? "text-foreground" : "text-muted-foreground")}>
       {children}
     </p>
   );
@@ -120,7 +119,7 @@ function HoodList({ items }: { items: ReactNode[] }) {
 function InApp({ base, tabs }: { base: string; tabs: (DataroomTab | BondedTab)[] }) {
   return (
     <section aria-labelledby="docs-in-app" className="space-y-2">
-      <DocH3 id="docs-in-app">In the app</DocH3>
+      <DocHeading id="docs-in-app">In the app</DocHeading>
       <ul className="divide-y divide-border/70">
         {tabs
           .filter((t) => t.slug)
@@ -137,17 +136,57 @@ function InApp({ base, tabs }: { base: string; tabs: (DataroomTab | BondedTab)[]
   );
 }
 
+// A compact in-page jump list for the long pillar pages (the side-rail navigates sections; this navigates
+// the scenarios within a section).
+function OnThisPage({ items }: { items: { id: string; label: string }[] }) {
+  return (
+    <nav aria-label="On this page" className="rounded-lg border bg-muted/30 px-4 py-3">
+      <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">On this page</p>
+      <ul className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:gap-x-5 sm:gap-y-1.5">
+        {items.map((it) => (
+          <li key={it.id}>
+            <a href={`#${it.id}`} className="text-[13px] text-brand hover:underline">
+              {it.label}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  );
+}
+
+const DR_NAV = [
+  { id: "dr-what", label: "What a Data Room is" },
+  { id: "dr-store", label: "How a document is stored" },
+  { id: "dr-access", label: "Membership and Bonded Access" },
+  { id: "dr-join", label: "Joining and approving" },
+  { id: "dr-open", label: "How a document is opened" },
+  { id: "dr-discover", label: "Private and public rooms" },
+  { id: "dr-verify", label: "Checking a Data Room" },
+];
+
+const BP_NAV = [
+  { id: "bp-what", label: "What a Bonded Proof is" },
+  { id: "bp-create", label: "How a bond is created" },
+  { id: "bp-link", label: "How it connects to the Data Room" },
+  { id: "bp-open", label: "How a bond opens a room" },
+  { id: "bp-verify", label: "Checking a Bonded Proof" },
+];
+
 export function DocsDataRoom() {
   return (
-    <div className="space-y-10">
+    <div className="max-w-[42rem] space-y-10">
       <P lead>
         A Data Room is a sealed place for sensitive files. You prove you are allowed in without showing who
-        you are, the files stay encrypted the whole time, and only a short tamper-evident fingerprint is ever
-        public. Anyone can still confirm a file was not swapped, and the people reading it stay anonymous.
+        you are, the files stay encrypted the whole time, and the only thing about a file that ever goes public
+        is a short tamper-evident fingerprint. Anyone can still confirm a file was not swapped, and the people
+        reading it stay anonymous.
       </P>
 
+      <OnThisPage items={DR_NAV} />
+
       <section aria-labelledby="dr-what" className="space-y-4">
-        <DocH3 id="dr-what">What a Data Room is</DocH3>
+        <DocHeading id="dr-what">What a Data Room is</DocHeading>
         <P>
           Say you need to share a term sheet, a cap table, or a due-diligence folder with a small group. You
           want three things at once: the contents stay private, the readers stay private, and anyone can still
@@ -160,7 +199,7 @@ export function DocsDataRoom() {
       </section>
 
       <section aria-labelledby="dr-store" className="space-y-5">
-        <DocH3 id="dr-store">How a document is stored</DocH3>
+        <DocHeading id="dr-store">How a document is stored</DocHeading>
         <P>
           When you store a document, your browser does the sealing before anything leaves your computer. It
           encrypts the file, then splits the key that unlocks it into three pieces held by three separate
@@ -168,9 +207,10 @@ export function DocsDataRoom() {
           earned access.
         </P>
         <P>
-          The encrypted file is kept off the chain. The only thing written to the public chain is a short
-          fingerprint of it. That fingerprint cannot be turned back into the file, but it does let anyone
-          confirm the file was not changed. Storing a document uses no zero-knowledge proof.
+          The encrypted file is kept off the chain. What goes on the public chain is a short fingerprint of it
+          and a pointer to where it is stored, never the contents and never the key. That fingerprint cannot be
+          turned back into the file, but it does let anyone confirm the file was not changed. Storing a document
+          uses no zero-knowledge proof.
         </P>
         <DiagramFigure
           title="Storing a document"
@@ -183,7 +223,6 @@ export function DocsDataRoom() {
           ]}
           render={(p) => <StoreDiagram {...p} />}
         />
-        <NodeLegend />
         <UnderTheHood>
           <HoodList
             items={[
@@ -197,7 +236,7 @@ export function DocsDataRoom() {
       </section>
 
       <section aria-labelledby="dr-access" className="space-y-4">
-        <DocH3 id="dr-access">Membership and Bonded Access</DocH3>
+        <DocHeading id="dr-access">Membership and Bonded Access</DocHeading>
         <P>Every room uses one of two ways to decide who gets in. A room is one or the other.</P>
         <P>
           <b className="text-foreground">Membership.</b> The owner approves readers one by one. You ask to
@@ -221,7 +260,7 @@ export function DocsDataRoom() {
       </section>
 
       <section aria-labelledby="dr-join" className="space-y-5">
-        <DocH3 id="dr-join">Joining and approving</DocH3>
+        <DocHeading id="dr-join">Joining and approving</DocHeading>
         <P>
           To ask to join a Membership room, you send a membership ID. It is a code derived from your wallet,
           not your wallet address. You can add a nickname so the owner knows who you are, or stay fully
@@ -242,7 +281,6 @@ export function DocsDataRoom() {
           ]}
           render={(p) => <JoinApproveDiagram {...p} />}
         />
-        <NodeLegend />
         <UnderTheHood>
           <HoodList
             items={[
@@ -256,7 +294,7 @@ export function DocsDataRoom() {
       </section>
 
       <section aria-labelledby="dr-open" className="space-y-5">
-        <DocH3 id="dr-open">How a document is opened</DocH3>
+        <DocHeading id="dr-open">How a document is opened</DocHeading>
         <P>
           To open a document, you make a proof that you are allowed in. In a Membership room you prove you are
           on the approved list, without showing which member you are. In a Bonded room you prove you hold a
@@ -264,10 +302,10 @@ export function DocsDataRoom() {
           nothing else.
         </P>
         <P>
-          A one-time pass is recorded so the same credential cannot open twice. The three keepers check that
-          your proof landed on the chain, then each hands you its piece of the key. Your browser puts the
-          pieces together and decrypts the file. The proving runs on a server we host, never in your browser,
-          and that server never receives the file.
+          A one-time pass is recorded so the same credential cannot open twice. The keepers check that your
+          proof landed on the chain, then hand you their pieces of the key. Your browser only needs two of the
+          three to rebuild the key and decrypt the file. The proving runs on a server we host, never in your
+          browser, and that server never receives the file.
         </P>
         <DiagramFigure
           title="Opening a document"
@@ -280,7 +318,6 @@ export function DocsDataRoom() {
           ]}
           render={(p) => <OpenDiagram {...p} />}
         />
-        <NodeLegend verified />
         <UnderTheHood>
           <HoodList
             items={[
@@ -294,7 +331,7 @@ export function DocsDataRoom() {
       </section>
 
       <section aria-labelledby="dr-discover" className="space-y-4">
-        <DocH3 id="dr-discover">Private and public rooms</DocH3>
+        <DocHeading id="dr-discover">Private and public rooms</DocHeading>
         <P>
           A room has three visibility levels. Private is the default: the room can only be found by a link the
           owner shares. Unlisted can be looked up by its exact id. Listed shows up in the public directory.
@@ -316,7 +353,7 @@ export function DocsDataRoom() {
       <M7ShowcasePanel />
 
       <section aria-labelledby="dr-verify" className="space-y-4">
-        <DocH3 id="dr-verify">Checking a Data Room</DocH3>
+        <DocHeading id="dr-verify">Checking a Data Room</DocHeading>
         <P>
           Anyone can check a room with no account and no wallet. Open <code className="font-mono text-xs">/verify/room/&lt;id&gt;</code>.
           It reads the public contract to confirm the room exists and whether it uses Membership or Bonded
@@ -335,15 +372,17 @@ export function DocsDataRoom() {
 
 export function DocsBondedProofs() {
   return (
-    <div className="space-y-10">
+    <div className="max-w-[42rem] space-y-10">
       <P lead>
         A bond is tokens you lock in public until a time you choose. Locking is open for anyone to see. The
         private part comes after: you can prove you hold a qualifying bond without showing your wallet or the
         amount, and use that to open a room with no approval.
       </P>
 
+      <OnThisPage items={BP_NAV} />
+
       <section aria-labelledby="bp-what" className="space-y-4">
-        <DocH3 id="bp-what">What a Bonded Proof is</DocH3>
+        <DocHeading id="bp-what">What a Bonded Proof is</DocHeading>
         <P>
           Bonded Proofs is a simple escrow plus the proofs built on it. You lock a token until an unlock time.
           You can lock a bond to yourself and take it back after it unlocks, or send it one way to someone
@@ -356,7 +395,7 @@ export function DocsBondedProofs() {
       </section>
 
       <section aria-labelledby="bp-create" className="space-y-5">
-        <DocH3 id="bp-create">How a bond is created</DocH3>
+        <DocHeading id="bp-create">How a bond is created</DocHeading>
         <P>
           You pick a token, an amount, and an unlock time, then lock it. The lock is fully public: the chain
           shows your wallet, the token, the amount, and the unlock time. Creating a bond uses no proof.
@@ -375,7 +414,6 @@ export function DocsBondedProofs() {
           ]}
           render={(p) => <BondCreateDiagram {...p} />}
         />
-        <NodeLegend />
         <UnderTheHood>
           <HoodList
             items={[
@@ -388,7 +426,7 @@ export function DocsBondedProofs() {
       </section>
 
       <section aria-labelledby="bp-link" className="space-y-4">
-        <DocH3 id="bp-link">How it connects to the Data Room</DocH3>
+        <DocHeading id="bp-link">How it connects to the Data Room</DocHeading>
         <P>
           A Data Room owner can require a qualifying bond instead of approving readers one by one. Anyone who
           locked a bond that meets the requirement can open the room, with no approval and no waiting.
@@ -402,7 +440,7 @@ export function DocsBondedProofs() {
       </section>
 
       <section aria-labelledby="bp-open" className="space-y-5">
-        <DocH3 id="bp-open">How a bond opens a room</DocH3>
+        <DocHeading id="bp-open">How a bond opens a room</DocHeading>
         <P>
           You prove you hold a qualifying bond. The proof hides your wallet, which lock you used, and the exact
           amount. It records a grant on the public chain under your anonymous handle. From there the room opens
@@ -419,7 +457,6 @@ export function DocsBondedProofs() {
           ]}
           render={(p) => <BondAccessDiagram {...p} />}
         />
-        <NodeLegend verified />
         <UnderTheHood>
           <HoodList
             items={[
@@ -432,7 +469,7 @@ export function DocsBondedProofs() {
       </section>
 
       <section aria-labelledby="bp-verify" className="space-y-4">
-        <DocH3 id="bp-verify">Checking a Bonded Proof</DocH3>
+        <DocHeading id="bp-verify">Checking a Bonded Proof</DocHeading>
         <P>
           Anyone can re-check a grant with no account. Open <code className="font-mono text-xs">/verify/bond</code>{" "}
           and it reads the public bond gate to confirm the grant is live, then prints a command you can run
