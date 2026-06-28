@@ -1,7 +1,7 @@
 import { Link, NavLink } from "react-router-dom";
 import { ShieldCheck, ExternalLink } from "lucide-react";
 import { NAV_SECTIONS, MARKETING_LINKS } from "./nav-registry";
-import { ThemeToggle } from "./ThemeToggle";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { cn } from "@/lib/utils";
 
 // Fixed grouped left sidebar (Blank/BlockWallet pattern). Active = filled pill. Footer carries the

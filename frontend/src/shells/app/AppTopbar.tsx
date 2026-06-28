@@ -1,7 +1,7 @@
 import { Link, useLocation } from "react-router-dom";
 import { ShieldCheck } from "lucide-react";
 import { CAPABILITIES, dataroomTab } from "@/lib/content";
-import { ThemeToggle } from "./ThemeToggle";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { FreighterButton } from "./FreighterButton";
 
 // Derive the current page title from the route so the app top bar always names where you are.
