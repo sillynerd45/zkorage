@@ -108,9 +108,10 @@ test("wallet silently reconnects and shows the address + menu (testnet)", async 
   await expect(page.getByTestId("wallet-menu")).toBeVisible();
   await expect(page.getByTestId("wallet-network")).toHaveText("TESTNET");
   await expect(page.getByTestId("wallet-disconnect")).toBeVisible();
-  // disconnect returns to the connect button
+  // disconnect leaves the app for the public landing page
   await page.getByTestId("wallet-disconnect").click();
-  await expect(page.getByTestId("freighter-connect")).toContainText("Connect");
+  await expect(page.getByTestId("overview")).toBeVisible();
+  await expect(page).toHaveURL(/\/$/);
 });
 
 test("wallet flags a wrong network", async ({ page }) => {

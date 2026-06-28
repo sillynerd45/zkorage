@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Wallet,
   ChevronDown,
@@ -34,6 +35,7 @@ function fmtXlm(b: string): string {
 export function FreighterButton() {
   const w = useWallet();
   const sync = useSync();
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [funding, setFunding] = useState<null | "busy" | "done" | "error">(null);
@@ -274,6 +276,7 @@ export function FreighterButton() {
             onClick={() => {
               w.disconnect();
               setOpen(false);
+              navigate("/"); // leave the app for the public landing page after disconnecting
             }}
             testid="wallet-disconnect"
             full
