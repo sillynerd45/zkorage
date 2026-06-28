@@ -68,7 +68,7 @@ test("Open: an approved member is invited to set up access, not told they don't 
 
   await page.goto(`/app/dataroom/documents?room=${ROOM}#open`);
   await expect(page.getByTestId("access-room-detail")).toBeVisible({ timeout: 30_000 });
-  await page.getByTestId("access-open").first().click();
+  await page.getByTestId("access-doc-toggle").first().click();
 
   const status = page.getByTestId("access-status");
   await expect(status).toHaveAttribute("data-phase", "approved", { timeout: 30_000 });
@@ -98,7 +98,7 @@ test("Open: setting up access proves once then waits for the batch window (not s
   await page.route("**/dataroom/membership/queue-status/**", (r) => r.fulfill(json({ ticket: "aa".repeat(16), status: "queued", roomId: ROOM, accessor: "cd".repeat(32), flushAt: Date.now() + 60_000, nextFlushAt: Date.now() + 60_000, windowMs: 60_000, txHash: null, error: null })));
 
   await page.goto(`/app/dataroom/documents?room=${ROOM}#open`);
-  await page.getByTestId("access-open").first().click();
+  await page.getByTestId("access-doc-toggle").first().click();
   await expect(page.getByTestId("access-setup-btn")).toBeVisible({ timeout: 30_000 });
   await page.getByTestId("access-setup-btn").click();
 
@@ -113,7 +113,7 @@ test("Open: a room below the anonymity floor blocks opening (red meter)", async 
   await stubReads(page, "eligible", 2); // below the floor
 
   await page.goto(`/app/dataroom/documents?room=${ROOM}#open`);
-  await page.getByTestId("access-open").first().click();
+  await page.getByTestId("access-doc-toggle").first().click();
   await expect(page.getByTestId("access-status")).toHaveAttribute("data-phase", "below-floor", { timeout: 30_000 });
   await expect(page.getByTestId("anon-meter")).toHaveAttribute("data-tier", "red");
   await expect(page.getByTestId("access-below-floor")).toContainText("5 members");
@@ -124,7 +124,7 @@ test("Open: a non-member is pointed to request to join", async ({ page }) => {
   await stubReads(page, "none", 8);
 
   await page.goto(`/app/dataroom/documents?room=${ROOM}#open`);
-  await page.getByTestId("access-open").first().click();
+  await page.getByTestId("access-doc-toggle").first().click();
   await expect(page.getByTestId("access-status")).toHaveAttribute("data-phase", "not-member", { timeout: 30_000 });
   await expect(page.getByTestId("access-go-membership")).toHaveAttribute("href", "/app/dataroom/membership");
 });
@@ -206,7 +206,7 @@ test("Open: renders dark; the approved state reads positive", async ({ page }) =
   await page.addInitScript(mock);
   await stubReads(page, "eligible", 8);
   await page.goto(`/app/dataroom/documents?room=${ROOM}#open`);
-  await page.getByTestId("access-open").first().click();
+  await page.getByTestId("access-doc-toggle").first().click();
   await expect(page.getByTestId("access-approved")).toBeVisible({ timeout: 30_000 });
   await page.screenshot({ path: "tests/dataroom-access-approved-dark.png", fullPage: true });
 });

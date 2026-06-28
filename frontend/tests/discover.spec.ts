@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { bondAccessCommitment } from "zkorage-sdk";
 
 // M5 — the public directory + resolve-by-id. The Discover page is wallet-OPTIONAL (browsing is public), so
 // these tests run WITHOUT a wallet mock and stub the read-only directory/room-meta endpoints.
@@ -137,7 +138,7 @@ test("discover: your own listed room is marked, not joinable", async ({ page }) 
   await expect(page.getByTestId("discover-join")).toHaveCount(1);
 });
 
-test("discover: a bond-only room shows the bond requirement + 'Create Bonded Access', not request-to-join", async ({ page }) => {
+test("discover: a bond-only room shows the bond requirement + 'Check Bonded Access', not request-to-join", async ({ page }) => {
   const errs: string[] = [];
   page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/i.test(m.text())) errs.push(m.text()); });
   const BONDED = "5".repeat(64);
@@ -177,18 +178,22 @@ test("discover: a bond-only room shows the bond requirement + 'Create Bonded Acc
   await expect(req.locator(`a[href="https://stellar.expert/explorer/testnet/contract/${BTOKEN}"]`)).toBeVisible();
   await expect(page.getByTestId("discover-bond-issuer").locator(`a[href="https://stellar.expert/explorer/testnet/account/${BISSUER}"]`)).toBeVisible();
 
-  // The action is "Create Bonded Access" -> the lock-bond + prove flow, NOT request-to-join.
-  const open = page.getByTestId("discover-bond-create");
+  // The action is "Check Bonded Access" (a button that checks access then routes), NOT request-to-join.
+  const open = page.getByTestId("discover-bond-check");
   await expect(open).toBeVisible();
-  await expect(open).toContainText("Create Bonded Access");
-  await expect(open).toHaveAttribute("href", `/app/dataroom/documents?room=${BONDED}#open`);
+  await expect(open).toContainText("Check Bonded Access");
   await expect(page.getByTestId("discover-join")).toHaveCount(0);
 
   await page.screenshot({ path: "tests/discover-bonded.png", fullPage: true });
+
+  // No wallet -> the check cannot read this browser's bond, so it hands off to the Open page (which prompts
+  // connect and re-runs the check there).
+  await open.click();
+  await expect(page).toHaveURL(new RegExp(`/app/dataroom/documents\\?room=${BONDED}#open`));
   expect(errs, errs.join("\n")).toHaveLength(0);
 });
 
-test("discover: a bond-only room resolved by id shows the requirement + 'Create Bonded Access'", async ({ page }) => {
+test("discover: a bond-only room resolved by id shows the requirement + 'Check Bonded Access'", async ({ page }) => {
   const errs: string[] = [];
   page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/i.test(m.text())) errs.push(m.text()); });
   const BONDED = "6".repeat(64);
@@ -216,12 +221,75 @@ test("discover: a bond-only room resolved by id shows the requirement + 'Create 
   await expect(result.getByTestId("discover-bond-req")).toContainText(/:\d{2}/); // deadline includes the time
   await expect(result.getByTestId("discover-bond-issuer").locator("a")).toHaveAttribute("href", `https://stellar.expert/explorer/testnet/account/${BISSUER}`);
   await expect(result.getByTestId("bucket-badge")).toHaveCount(0);
-  // The action is "Create Bonded Access" -> the lock-bond + prove flow, NOT request-to-join.
-  const create = result.getByTestId("discover-bond-create");
-  await expect(create).toContainText("Create Bonded Access");
-  await expect(create).toHaveAttribute("href", `/app/dataroom/documents?room=${BONDED}#open`);
+  // The action is "Check Bonded Access" (button that checks access then routes), NOT request-to-join.
+  const create = result.getByTestId("discover-bond-check");
+  await expect(create).toContainText("Check Bonded Access");
   await expect(result.getByTestId("discover-join")).toHaveCount(0);
   expect(errs, errs.join("\n")).toHaveLength(0);
+});
+
+// "Check Bonded Access" routing: with a connected wallet that holds a handle, the button reads this browser's
+// handle commitment, looks it up in the live qualifying set, and routes accordingly (no signature needed).
+const CHECK_ADDR = "GDLECNXD76OZQROASQGWEP4KAMJWTJXZW2LN7OJGYPXIJDRXACWGXZY6";
+const CHECK_ID_SECRET = "11".repeat(32);
+const CHECK_COMMITMENT = bondAccessCommitment(CHECK_ID_SECRET);
+const BONDED_CHK = "8".repeat(64);
+const CHK_TOKEN = "CALISDUWPL24M3LWLOXIWYNRQ42YYMZJ4ZU6UYIVCCB4NH4DMV767NZX";
+const CHK_REQ = { bondOpen: true, token: CHK_TOKEN, symbol: "TUSD", decimals: 7, issuer: null, minAmount: "1000000000", deadline: 4102444800, reqId: "cd".repeat(32) };
+
+async function connectedWithHandle(page: import("@playwright/test").Page) {
+  await page.addInitScript(`
+    localStorage.setItem("zkorage.wallet.connected", "1");
+    window.__freighterMock = {
+      isConnected: async () => ({ isConnected: true }),
+      isAllowed: async () => ({ isAllowed: true }),
+      requestAccess: async () => ({ address: "${CHECK_ADDR}" }),
+      getAddress: async () => ({ address: "${CHECK_ADDR}" }),
+      getNetwork: async () => ({ network: "TESTNET", networkPassphrase: "Test SDF Network ; September 2015" }),
+    };
+    localStorage.setItem("zkorage-bond-identity.${CHECK_ADDR}", JSON.stringify({
+      accessor: "${"a".repeat(64)}", idSecret: "${CHECK_ID_SECRET}", idTrapdoor: "${"22".repeat(32)}",
+      holderSeed: "${"33".repeat(32)}", qualCommitment: "${CHECK_COMMITMENT}", minted: true,
+    }));
+  `);
+  await stubs(page);
+  await page.route("**/dataroom/directory", (r) =>
+    r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+      count: 1, dataroomId: "",
+      rooms: [{ roomId: BONDED_CHK, name: "Bonded deal room", description: "Lock a bond to enter.", memberBucket: "under 5", anonTier: "forming", listedAt: 3, bond: CHK_REQ }],
+    }) }));
+}
+
+test("discover: Check Bonded Access opens the room when you hold a qualifying bond", async ({ page }) => {
+  await connectedWithHandle(page);
+  // The qualifying set contains THIS handle's commitment -> you hold a bond.
+  await page.route("**/bonded/bond/qual-set**", (r) =>
+    r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+      token: CHK_TOKEN, minAmount: "1000000000", deadline: 4102444800, reqId: CHK_REQ.reqId,
+      anonSetSize: 4, minAnonSet: 3, belowMin: false, computedRoot: "", published: true, ringLen: 1,
+      locks: [{ id: 1, commitment: CHECK_COMMITMENT, amount: "1000000000", unlock_time: 4102444800, depositor: "" }],
+    }) }));
+  await page.goto("/app/dataroom/discover");
+  await page.getByTestId("discover-bond-check").click();
+  // Holds a bond -> Documents>Open with setup=bond so the open proof starts on its own.
+  await expect(page).toHaveURL(new RegExp(`/app/dataroom/documents\\?room=${BONDED_CHK}&setup=bond#open`));
+});
+
+test("discover: Check Bonded Access sends you to Bonded Proofs when you hold no bond", async ({ page }) => {
+  await connectedWithHandle(page);
+  // The qualifying set does NOT contain this handle's commitment -> no qualifying bond.
+  await page.route("**/bonded/bond/qual-set**", (r) =>
+    r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+      token: CHK_TOKEN, minAmount: "1000000000", deadline: 4102444800, reqId: CHK_REQ.reqId,
+      anonSetSize: 0, minAnonSet: 3, belowMin: true, computedRoot: "", published: false, ringLen: 0, locks: [],
+    }) }));
+  await page.goto("/app/dataroom/discover");
+  await page.getByTestId("discover-bond-check").click();
+  // No bond -> Bonded Proofs > Bonded Access, pre-filled with this requirement, to lock one.
+  await expect(page).toHaveURL(/\/app\/bonded\/tier\?/);
+  await expect(page).toHaveURL(new RegExp(`token=${encodeURIComponent(CHK_TOKEN)}`));
+  await expect(page).toHaveURL(/min=1000000000/);
+  await expect(page).toHaveURL(/sym=TUSD/);
 });
 
 test("discover: looking up your own private room by id offers 'Your room', not request-to-join", async ({ page }) => {

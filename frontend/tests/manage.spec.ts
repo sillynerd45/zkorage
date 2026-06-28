@@ -159,6 +159,42 @@ test("manage: a bond-only room can switch back to membership", async ({ page }) 
   await expect(page.getByTestId("manage-model-current-membership")).toBeVisible({ timeout: 15_000 });
 });
 
+test("manage: switching to membership sticks even if the chain read lags (stale found:true)", async ({ page }) => {
+  // Reproduces the bug: after a successful clear, the post-write GET briefly returned the OLD found:true (RPC
+  // lag), which flipped the model back so "Switch to membership" reappeared. The reconcile must keep membership
+  // and never commit a contradicting stale read. Here the GET stays bond-only for the first 2 reads AFTER the
+  // clear, then reports membership.
+  await page.addInitScript(mock);
+  await stubsCommon(page);
+  let cleared = false;
+  let postClearReads = 0;
+  await page.route("**/dataroom/bond-requirement/**", (r) => {
+    if (r.request().method() !== "GET") return r.continue();
+    const bond = json({ found: true, scope: "room", bondOpen: true, mode: "open", gate: "C".repeat(56), reqId: "ab".repeat(32), token: TOKEN, minAmount: MIN, deadline: DEADLINE });
+    if (!cleared) return r.fulfill(bond);
+    // First 2 reads after the clear are stale (still bond-only); later reads reflect the cleared state.
+    postClearReads++;
+    return r.fulfill(postClearReads <= 2 ? bond : json({ found: false, bondOpen: false }));
+  });
+  await page.route("**/dataroom/bond-requirement/clear", (r) => { cleared = true; return r.fulfill(json({ ok: true, mode: "xdr", xdr: "AAAA", source: ADDR })); });
+  await page.route("**/tx/submit", (r) => r.fulfill(json({ ok: true, txHash: "ab".repeat(8) })));
+
+  await page.goto("/app/dataroom/manage");
+  await page.getByTestId("manage-owner-room").first().click();
+  await expect(page.getByTestId("manage-model-current-bond")).toBeVisible({ timeout: 15_000 });
+  await page.getByTestId("manage-model-membership").click();
+  await page.getByTestId("manage-switch-membership").click();
+  await expect.poll(() => cleared, { timeout: 15_000 }).toBe(true);
+  // Optimistically membership at once, and it must NOT flip back to the Switch button while the stale reads land.
+  await expect(page.getByTestId("manage-switched")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("manage-switch-membership")).toHaveCount(0);
+  await expect(page.getByTestId("manage-model-current-membership")).toBeVisible();
+  // After the reconcile has polled past the stale window, it is still membership (no regression to bond).
+  await expect.poll(() => postClearReads, { timeout: 15_000 }).toBeGreaterThan(2);
+  await expect(page.getByTestId("manage-switch-membership")).toHaveCount(0);
+  await expect(page.getByTestId("manage-model-current-membership")).toBeVisible();
+});
+
 test("manage: a bond-only room shows the Current requirement card (standout + contract/issuer links) + a submenu to edit", async ({ page }) => {
   const errs: string[] = [];
   page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/i.test(m.text())) errs.push(m.text()); });
