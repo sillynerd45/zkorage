@@ -26,7 +26,7 @@ const ring =
 // Accurate to BOTH products (the old "Attest / Prove / Verify" strip wrongly implied a third-party attester
 // for everything; the two pillars anchor on-chain instead).
 const STEPS = [
-  { icon: FileSignature, t: "Anchor", d: "Seal a document or lock a bond on-chain. No third party holds your data." },
+  { icon: FileSignature, t: "Anchor", d: "Seal a document or lock a bond on-chain. A document is encrypted first, so no one can read it." },
   { icon: Cpu, t: "Prove", d: "A self-hosted zkVM proves the fact. The data never leaves the prover you run." },
   { icon: BadgeCheck, t: "Verify", d: "Anyone re-checks the result on Stellar and gets the same answer. No wallet, no account." },
 ];
@@ -84,29 +84,21 @@ const FAQS: { q: string; a: ReactNode }[] = [
     q: "What actually goes on-chain?",
     a: "A tamper-evident fingerprint of a sealed document or a locked bond, the proof, and the result of checking it. The document contents and the private values behind a claim never go on-chain.",
   },
-  {
-    q: "Is it audited? Is this production?",
-    a: "No. zkorage runs on Stellar testnet with unaudited demo contracts. It shows the mechanism end to end. Do not use it with real funds.",
-  },
 ];
 
 // Ambient backdrop: soft blue to emerald glow + a faint grid, concentrated behind the hero and masked to fade
 // out down the page. Decorative only (aria-hidden + pointer-events-none, scoped to the page's -z-10 layer).
 function AuroraBackdrop() {
   return (
-    <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
-      <div
-        className="absolute inset-x-0 top-0 h-[720px]"
-        style={{
-          WebkitMaskImage: "linear-gradient(to bottom, #000 0%, #000 55%, transparent 100%)",
-          maskImage: "linear-gradient(to bottom, #000 0%, #000 55%, transparent 100%)",
-        }}
-      >
-        <div className="absolute -left-32 -top-40 h-[520px] w-[520px] rounded-full blur-3xl motion-safe:animate-aurora-one bg-[radial-gradient(closest-side,hsl(var(--brand)/0.28),transparent)]" />
-        <div className="absolute -right-24 -top-28 h-[460px] w-[460px] rounded-full blur-3xl motion-safe:animate-aurora-two bg-[radial-gradient(closest-side,hsl(var(--success)/0.22),transparent)]" />
-        <div className="absolute left-1/2 top-44 h-[420px] w-[680px] -translate-x-1/2 rounded-full blur-3xl motion-safe:animate-aurora-one bg-[radial-gradient(closest-side,hsl(var(--brand)/0.16),transparent)]" />
-      </div>
-      <div className="aurora-grid absolute inset-x-0 top-0 h-[720px] opacity-60 dark:opacity-40" />
+    <div aria-hidden className="pointer-events-none absolute inset-y-0 left-1/2 -z-10 w-screen -translate-x-1/2 overflow-hidden">
+      {/* Full-bleed so the glow reaches the viewport edges, not just the padded content column (which read as
+          a rectangle). Soft radial glows behind the hero; each fades to transparent on its own (closest-side),
+          so the backdrop dissolves into the page with no hard edge or rectangular band. */}
+      <div className="absolute -left-40 -top-48 h-[600px] w-[600px] rounded-full blur-3xl motion-safe:animate-aurora-one bg-[radial-gradient(closest-side,hsl(var(--brand)/0.20),transparent)]" />
+      <div className="absolute -right-36 -top-40 h-[560px] w-[560px] rounded-full blur-3xl motion-safe:animate-aurora-two bg-[radial-gradient(closest-side,hsl(var(--success)/0.16),transparent)]" />
+      <div className="absolute left-1/2 top-24 h-[520px] w-[820px] -translate-x-1/2 rounded-full blur-3xl motion-safe:animate-aurora-one bg-[radial-gradient(closest-side,hsl(var(--brand)/0.10),transparent)]" />
+      {/* Faint grid, masked to a soft ellipse from the top (see .aurora-grid in index.css), so it has no edge. */}
+      <div className="aurora-grid absolute inset-x-0 top-0 h-[620px] opacity-50 dark:opacity-30" />
     </div>
   );
 }
@@ -332,7 +324,7 @@ function FaqItem({ q, a }: { q: string; a: ReactNode }) {
 
 export default function Landing() {
   return (
-    <div data-testid="overview" className="relative isolate overflow-x-clip">
+    <div data-testid="overview" className="relative isolate">
       <AuroraBackdrop />
 
       {/* hero */}
@@ -435,13 +427,6 @@ export default function Landing() {
               Read the docs
             </Link>
           </div>
-          <p className="mt-5 text-xs text-muted-foreground">
-            Building on it?{" "}
-            <Link to="/docs/developers" className={cn("rounded-sm font-medium text-brand underline-offset-4 hover:underline", ring)}>
-              Read the developer docs
-            </Link>{" "}
-            for the SDK, MCP server, and REST API.
-          </p>
         </Reveal>
       </section>
     </div>
