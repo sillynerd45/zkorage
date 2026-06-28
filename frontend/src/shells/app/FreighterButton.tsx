@@ -8,9 +8,11 @@ import {
   LogOut,
   AlertTriangle,
   Download,
+  RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useWallet } from "@/lib/wallet/WalletContext";
+import { useSync } from "@/lib/sync/useSync";
 import { explorer } from "@/lib/format";
 
 const FREIGHTER_INSTALL = "https://www.freighter.app/";
@@ -31,6 +33,7 @@ function fmtXlm(b: string): string {
 // either way.
 export function FreighterButton() {
   const w = useWallet();
+  const sync = useSync();
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [funding, setFunding] = useState<null | "busy" | "done" | "error">(null);
@@ -238,6 +241,31 @@ export function FreighterButton() {
                       : "Fund testnet account"}
                 </MenuBtn>
               )}
+
+              {/* Cross-device sync: one signature carries your rooms + Bonded Access to other devices. The home
+                  for turning sync on later, for a user who dismissed the connect dialog. */}
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => void sync.toggle()}
+                disabled={sync.busy}
+                data-testid="wallet-sync"
+                className="mt-1 flex w-full items-center justify-between rounded-md px-2 py-1.5 text-xs transition-colors hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
+              >
+                <span className="inline-flex items-center gap-1.5">
+                  <RefreshCw className="size-3.5" /> Sync across devices
+                </span>
+                <span
+                  data-testid="wallet-sync-state"
+                  className={
+                    sync.on
+                      ? "rounded-full bg-emerald-500/15 px-2 py-0.5 font-medium text-emerald-600 dark:text-emerald-400"
+                      : "text-muted-foreground"
+                  }
+                >
+                  {sync.busy ? "…" : sync.on ? "On" : "Off"}
+                </span>
+              </button>
             </>
           )}
 
