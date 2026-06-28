@@ -17,7 +17,8 @@ import {
 // in the prose + the "Under the hood" expander). Every actor/node is private (dashed brand) or public (solid
 // neutral); a returned value is a dashed arrow; a wallet-signed step carries a key glyph. See ./kit.
 
-// The 12 store steps, defined once so the in-diagram badge numbers and the screen-reader <ol> never drift.
+// The 12 store steps, defined once so the screen-reader <ol> stays in sync with the diagram's 12 badges (the
+// badge numerals are literals next to this array; keep the two aligned when editing).
 export const STORE_STEPS = [
   "Your browser resolves the room's id from the room name.",
   "Your browser fetches the keeper committee and their three seal keys.",
@@ -39,13 +40,13 @@ export const STORE_STEPS = [
 export function StoreDiagram({ idPrefix, decorative }: DiagramProps) {
   const x = lifelineCols(6);
   const [BROWSER, WALLET, BACKEND, R2, KEEPERS, SOROBAN] = x;
-  const VB_H = 868;
-  const bottomY = 860;
+  const STORE_VB_H = 868;
+  const bottomY = STORE_VB_H - 8;
   return (
     <DiagramSvg
       idPrefix={idPrefix}
       decorative={decorative}
-      height={VB_H}
+      height={STORE_VB_H}
       minWidth={decorative ? undefined : 700}
       title="Storing a document"
       desc="A sequence diagram of storing a document across six actors: your browser, your wallet, the backend, Cloudflare R2, the three keepers, and the Soroban DataRoom contract. Your browser encrypts the file and splits its key locally, the backend stores the encrypted file off the chain and hands the sealed key shares to the keepers, and a short record is anchored on the public chain. Your wallet signs each on-chain write while the backend builds and submits the transaction. No key and no contents ever go on-chain, and no zero-knowledge proof is used to store."
@@ -73,12 +74,12 @@ export function StoreDiagram({ idPrefix, decorative }: DiagramProps) {
       <SeqMsg idPrefix={idPrefix} fromX={BACKEND} toX={BROWSER} y={178} label="keepers online" variant="return" />
 
       {/* CREATE ROOM (only when the room is new) */}
-      <SeqMsg idPrefix={idPrefix} n={3} fromX={BROWSER} toX={WALLET} y={224} label="sign: create room" tone="brand" sign />
+      <SeqMsg idPrefix={idPrefix} n={3} fromX={BROWSER} toX={WALLET} y={224} label="sign: create room" tone="brand" sign labelAlign="start" />
       <SeqMsg idPrefix={idPrefix} fromX={BROWSER} toX={SOROBAN} y={258} label="create_room, you become owner" tone="brand" />
       <SeqMsg idPrefix={idPrefix} fromX={SOROBAN} toX={BROWSER} y={282} label="owner set" variant="return" />
 
       {/* SIGN KEY */}
-      <SeqMsg idPrefix={idPrefix} n={4} fromX={BROWSER} toX={WALLET} y={336} label="sign: derive room key (off-chain)" tone="brand" sign />
+      <SeqMsg idPrefix={idPrefix} n={4} fromX={BROWSER} toX={WALLET} y={336} label="sign: derive room key (off-chain)" tone="brand" sign labelAlign="start" />
 
       {/* SEAL LOCALLY: the in-browser dealer */}
       <SeqBox
@@ -105,7 +106,7 @@ export function StoreDiagram({ idPrefix, decorative }: DiagramProps) {
 
       {/* ANCHOR */}
       <SeqMsg idPrefix={idPrefix} n={9} fromX={BACKEND} toX={BROWSER} y={664} label="content hash + r2 pointer" variant="return" />
-      <SeqMsg idPrefix={idPrefix} n={10} fromX={BROWSER} toX={WALLET} y={698} label="sign: anchor" tone="brand" sign />
+      <SeqMsg idPrefix={idPrefix} n={10} fromX={BROWSER} toX={WALLET} y={698} label="sign: anchor" tone="brand" sign labelAlign="start" />
       <SeqMsg idPrefix={idPrefix} n={11} fromX={BROWSER} toX={SOROBAN} y={730} label="put_committee_document" tone="brand" />
       <SeqBox
         x={512}

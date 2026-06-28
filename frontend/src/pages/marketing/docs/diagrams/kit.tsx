@@ -331,6 +331,7 @@ export function SeqMsg({
   variant = "call",
   tone = "muted",
   sign = false,
+  labelAlign = "center",
 }: {
   idPrefix: string;
   n?: number;
@@ -341,11 +342,20 @@ export function SeqMsg({
   variant?: "call" | "return";
   tone?: "muted" | "brand";
   sign?: boolean;
+  // "start" anchors the label at the source end (just past the badge) so a long label on a SHORT arrow does
+  // not overhang back across the badge. The sign arrows (short Browser->Wallet hops) use it.
+  labelAlign?: "center" | "start";
 }) {
   const dir = Math.sign(toX - fromX) || 1;
   const x1 = fromX + dir * 6;
   const x2 = toX - dir * 2;
   const midX = (x1 + x2) / 2;
+  const start = labelAlign === "start";
+  const labelX = start ? x1 + dir * 24 : midX;
+  const labelAnchor = start ? (dir > 0 ? "start" : "end") : "middle";
+  // Seat the key glyph on the arrow near the target (the wallet), with a card halo so the line does not strike
+  // through it. Reads as "this arrow carries a signature" instead of a glyph floating below the line.
+  const keyX = toX - dir * 16;
   return (
     <g>
       <line
@@ -360,9 +370,9 @@ export function SeqMsg({
         markerEnd={`url(#${idPrefix}-arrow-${tone})`}
       />
       <text
-        x={midX}
+        x={labelX}
         y={y - 8}
-        textAnchor="middle"
+        textAnchor={labelAnchor}
         fontSize={variant === "return" ? 11 : 12}
         fontStyle={variant === "return" ? "italic" : undefined}
         fontWeight={variant === "return" ? 400 : 500}
@@ -371,7 +381,12 @@ export function SeqMsg({
         {label}
       </text>
       {typeof n === "number" && <StepBadge x={x1 + dir * 11} y={y} n={n} />}
-      {sign && <SignKey x={toX - dir * 13} y={y + 10} />}
+      {sign && (
+        <g aria-hidden="true">
+          <circle cx={keyX} cy={y} r={7} className="fill-card" />
+          <SignKey x={keyX} y={y} />
+        </g>
+      )}
     </g>
   );
 }
