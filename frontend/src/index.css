@@ -89,6 +89,33 @@
   }
 }
 
+/* Landing hero: a faint decorative grid. Lines derive from --foreground so they invert correctly per theme
+   (dark ink on the light page, light on the dark page), both very faint. A radial mask keeps the grid near
+   the hero and dissolves it at the edges. Decorative only (the layer is aria-hidden + pointer-events-none). */
+.aurora-grid {
+  background-image:
+    linear-gradient(to right, hsl(var(--foreground) / 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, hsl(var(--foreground) / 0.05) 1px, transparent 1px);
+  background-size: 56px 56px;
+  -webkit-mask-image: radial-gradient(ellipse 78% 60% at 50% 0%, #000 38%, transparent 76%);
+          mask-image: radial-gradient(ellipse 78% 60% at 50% 0%, #000 38%, transparent 76%);
+}
+
+/* Scroll reveal. Default = VISIBLE: useReveal only sets data-reveal when IntersectionObserver exists AND
+   motion is allowed, so content is never stuck hidden if JS, the observer, or motion is unavailable. */
+[data-reveal] {
+  transition: opacity 0.55s ease-out, transform 0.55s ease-out;
+  transition-delay: var(--reveal-delay, 0ms);
+}
+[data-reveal="hidden"] {
+  opacity: 0;
+  transform: translateY(16px);
+}
+[data-reveal="shown"] {
+  opacity: 1;
+  transform: none;
+}
+
 /* Respect prefers-reduced-motion: disable transitions/animations (carried over from prior UX pass). */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
@@ -96,6 +123,11 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
+  }
+  /* Pin the aurora blobs to a clean resting frame instead of an off-center freeze. */
+  [class*="animate-aurora"] {
+    animation: none !important;
+    transform: none !important;
   }
 }
 

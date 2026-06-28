@@ -19,6 +19,7 @@ export function useDirectory() {
   const [loading, setLoading] = useState(directoryCache === null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [dataroomId, setDataroomId] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     const warm = directoryCache !== null;
@@ -29,6 +30,7 @@ export function useDirectory() {
       const r = await getDirectory();
       directoryCache = r.rooms;
       setRooms(r.rooms);
+      setDataroomId(r.dataroomId ?? null);
     } catch (e) {
       // On a warm background refresh, keep the cached list painted and stay silent; only surface the error on a
       // cold load (nothing to show otherwise).
@@ -72,6 +74,7 @@ export function useDirectory() {
     loading,
     refreshing,
     error,
+    dataroomId,
     reload,
     lookupId,
     setLookupId,
