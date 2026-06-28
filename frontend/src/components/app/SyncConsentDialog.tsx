@@ -18,6 +18,10 @@ export function SyncConsentDialog() {
   const [error, setError] = useState<string | null>(null);
   // Addresses handled this session, so we ask (or auto-apply) at most once per account per session.
   const handled = useRef<Set<string>>(new Set());
+  // Latest checkbox value, read by the stable dismiss/enable handlers so toggling it never re-runs the focus
+  // trap effect (which would steal focus back to the dismiss button on every keystroke).
+  const dontAskRef = useRef(false);
+  dontAskRef.current = dontAsk;
 
   const dismissRef = useRef<HTMLButtonElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
@@ -84,20 +88,20 @@ export function SyncConsentDialog() {
   }, [address]);
 
   const dismiss = useCallback(() => {
-    setDontAsk(dontAsk); // honor "don't ask again" even on a dismiss; leave the sync preference unchanged
+    setDontAsk(dontAskRef.current); // honor "don't ask again" even on a dismiss; leave the sync preference unchanged
     close();
-  }, [dontAsk, close]);
+  }, [close]);
 
   const enable = useCallback(async () => {
     setError(null);
-    setDontAsk(dontAsk);
+    setDontAsk(dontAskRef.current);
     try {
       await sync.enable();
       close();
     } catch {
       setError("Sync was not turned on. You can turn it on anytime from the wallet menu.");
     }
-  }, [dontAsk, sync, close]);
+  }, [sync, close]);
 
   if (!open) return null;
   return createPortal(

@@ -9,6 +9,7 @@ const OWNER_ROOM = "b".repeat(64);
 const JOIN_ROOM = "a".repeat(64);
 const mock = (addr: string) => `
   localStorage.setItem("zkorage.wallet.connected", "1");
+  localStorage.setItem("zkorage.sync.dontAsk", "1");
   window.__freighterMock = {
     isConnected: async () => ({ isConnected: true }),
     isAllowed: async () => ({ isAllowed: true }),

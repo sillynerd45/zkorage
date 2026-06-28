@@ -67,6 +67,7 @@ function freighterMock(opts: { network?: string } = {}) {
   const network = opts.network ?? "TESTNET";
   return `
     localStorage.setItem("zkorage.wallet.connected", "1");
+  localStorage.setItem("zkorage.sync.dontAsk", "1");
     window.__freighterMock = {
       isConnected: async () => ({ isConnected: true }),
       isAllowed: async () => ({ isAllowed: true }),
