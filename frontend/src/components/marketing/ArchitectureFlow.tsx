@@ -29,14 +29,16 @@ export function ArchitectureFlow({ className }: { className?: string }) {
         data-testid="architecture-trigger"
         className="group relative block w-full overflow-hidden rounded-xl border transition-colors hover:border-brand/40"
       >
-        <img src={LIGHT} alt="" aria-hidden="true" loading="lazy" decoding="async" className="block w-full dark:hidden" />
-        <img src={DARK} alt="" aria-hidden="true" loading="lazy" decoding="async" className="hidden w-full dark:block" />
+        <img src={LIGHT} alt="" aria-hidden="true" width={1920} height={1034} loading="lazy" decoding="async" className="block w-full dark:hidden" />
+        <img src={DARK} alt="" aria-hidden="true" width={1920} height={1033} loading="lazy" decoding="async" className="hidden w-full dark:block" />
         <span className="pointer-events-none absolute right-3 top-3 inline-flex items-center gap-1 rounded-md border bg-card/80 px-2 py-1 text-[11px] text-muted-foreground opacity-70 backdrop-blur transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 sm:opacity-50">
           <Maximize2 className="size-3" aria-hidden="true" /> Zoom
         </span>
       </button>
       <p className="sr-only">{ALT}</p>
 
+      {/* legend={<></>} (an empty fragment, not an absent prop) suppresses DiagramFigure's default node
+          legend, which does not apply here: this raster has its own legend baked in. */}
       <Lightbox open={open} title="How zkorage works" onClose={() => setOpen(false)} legend={<></>}>
         <img src={LIGHT} alt={ALT} className="block h-auto w-full min-w-[760px] dark:hidden" />
         <img src={DARK} alt={ALT} className="hidden h-auto w-full min-w-[760px] dark:block" />

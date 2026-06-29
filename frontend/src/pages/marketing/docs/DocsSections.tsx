@@ -66,8 +66,9 @@ export function DocsOverview() {
 
       <SectionCard label="How the pieces connect">
         <p className="text-[15px] leading-relaxed text-muted-foreground">
-          Your file never leaves the parts you control. The diagram shows the full path: your browser
-          encrypts the file and splits its key, the backend stores only the locked file in Cloudflare R2, a
+          Your file leaves your browser only as ciphertext, so nobody but you ever sees it in the clear. The
+          diagram shows the full path: your browser encrypts the file and splits its key, the backend stores
+          only the locked file in Cloudflare R2, a
           committee of keepers holds the key in pieces, a server we host builds the zero-knowledge proof, and
           Stellar holds the public, re-checkable record.
         </p>
@@ -104,7 +105,7 @@ export function DocsOverview() {
         <p className="mt-3 text-[15px] leading-relaxed text-muted-foreground">
           Stellar is what makes this practical. Soroban added native BN254 host functions, so checking a
           zero-knowledge proof on-chain is cheap and fast. That lets the public ledger, not our server, be the
-          thing you trust. Anchoring a record and recording who got access costs very little, and anyone can
+          thing you trust. Anchoring a record and recording an anonymous grant costs very little, and anyone can
           re-read the result.
         </p>
         <p className="mt-3 text-sm">
