@@ -44,3 +44,13 @@ test("deploy: shell renders with no fatal page error (badge present after route 
   await expect(page.getByTestId("version-badge")).toBeVisible();
   expect(fatal, `uncaught page errors: ${fatal.join("\n")}`).toHaveLength(0);
 });
+
+test("deploy: marketing top bar opens Documentation + Verify in the same tab (new tab is app-shell only)", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const nav = page.getByRole("navigation", { name: "Primary" });
+  for (const name of ["Documentation", "Verify"]) {
+    await expect(nav.getByRole("link", { name, exact: true })).not.toHaveAttribute("target", "_blank");
+  }
+});
