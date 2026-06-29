@@ -1,6 +1,13 @@
-# zkorage
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="frontend/public/brand/zkorage-mark-light.jpg">
+    <img alt="zkorage logo" src="frontend/public/brand/zkorage-mark-dark.jpg" width="96" height="96">
+  </picture>
+</p>
 
-Prove a fact about private data without showing the data, and let anyone check the proof on Stellar.
+<h1 align="center">zkorage</h1>
+
+<p align="center">Prove a fact about private data without showing the data, and let anyone check the proof on Stellar.</p>
 
 You hold some private information. It could be a document, a reserve balance, or a KYC record. You want to
 prove one fact about it ("reserves are at least the supply", "this person passed KYC", "this file says
@@ -76,6 +83,13 @@ wallet.
 
 ## How it works
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="frontend/public/diagrams/zkorage-architecture-dark.png">
+    <img alt="How zkorage works" src="frontend/public/diagrams/zkorage-architecture-light.png" width="880">
+  </picture>
+</p>
+
 Three pieces:
 
 - **Prover (off-chain, self-hosted).** A RISC Zero zkVM guest checks the private input, asserts the fact you
@@ -124,21 +138,46 @@ cd frontend && npm install && npm run dev
 The contract ids are already filled in `backend/.env.example`. To submit transactions through the server
 relay, set `SIGNER_SECRET` to a funded testnet key. Reads and verification work without it.
 
+**Cloudflare R2 is optional.** The backend stores the encrypted Data Room files in object storage. Leave the
+`R2_*` variables blank in `backend/.env` to use the built-in local store at `backend/data/blobs`, which is
+fine for local development. To use Cloudflare R2 instead, set `R2_ACCOUNT_ID`, `R2_ENDPOINT`, `R2_BUCKET`,
+`R2_ACCESS_KEY_ID`, and `R2_SECRET_ACCESS_KEY` in `backend/.env`.
+
 Open http://localhost:5173. Connect Freighter (set to Testnet) to sign your own transactions, or use the app
 without a wallet to read and verify.
 
-### Build the contracts or run the prover yourself
+### Run the prover
 
-Building the Soroban contracts needs the Rust toolchain and the `stellar` CLI. Running the prover needs RISC
-Zero (via `rzup`) on an x86 Linux box with Docker. Neither is required to run the web app above. The contracts
-are already deployed to testnet (see below) and the prover is self-hosted.
+The prover turns a private input into a proof. It is self-hosted on purpose, because it is the only part of
+the system that sees the private data. You do not need it to browse, read, or verify. You only need it to
+create new proofs. It builds and runs on Linux (x86_64), not on Windows.
+
+You need the Rust toolchain, RISC Zero (installed with `rzup`), and Docker (the final Groth16 wrap runs in a
+container).
+
+```bash
+cd prover
+cargo run --release -p host    # proves the bundled demo claim and writes a proof bundle
+```
+
+To produce proofs that verify on-chain you need the canonical, reproducible guest build, and there is also a
+distributed setup (a public gateway plus a GPU or CPU worker). Both are documented in `prover/README.md`.
+
+### Build the contracts
+
+Building the Soroban contracts needs the Rust toolchain and the `stellar` CLI. This is not required to run the
+web app above, since the contracts are already deployed to testnet (see
+[Deployed contracts](#deployed-contracts-testnet)).
 
 ## Self-test
 
 ```bash
 cd sdk && npm run smoke              # re-verify the live testnet claims from the chain
 cd mcp && npm install && npm run build && npm run selftest   # a client calls every MCP tool
-cd frontend && npx playwright test   # browser end-to-end tests (Chrome runs GPU-disabled, do not change that)
+
+# Frontend end-to-end tests (Chrome runs GPU-disabled, do not change that):
+cd frontend && npx playwright install   # first run only: download the test browser
+npx playwright test
 ```
 
 To run the frontend tests against the live site instead of a local server:
@@ -174,6 +213,9 @@ stellar contract invoke --id CDQ2PA27UTJDLPA4XTGG647SNTMUYO2KRFGS3SW5SMNBIWRB7JV
 stellar contract invoke --id CBAPC663PTWIWDLYNCG5WAD5MIZF4SKY43U6L2NM5ZUU5XFOS4JDYAFW \
   --network testnet --source <any-funded-account> -- verify --seal <hex> --image_id <hex> --journal <hex>
 ```
+
+Here `journal` is the sha256 digest of the journal bytes. The app's Verify page fills in the exact values for
+any claim, so you do not have to assemble them by hand.
 
 ## Status
 
