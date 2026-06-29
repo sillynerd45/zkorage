@@ -347,6 +347,31 @@ export const getPayrollHistory = (start = 0, limit = 50) =>
 export const auditPayroll = (viewKey?: string) =>
   post<PayrollAuditResp>("/payroll/audit", viewKey ? { viewKey } : {});
 
+// ── Faucet (test classic assets) ─────────────────────────────────────────────────────────────────
+export interface FaucetAssetInfo {
+  code: string;
+  name: string;
+  issuer: string;
+  sac: string;
+}
+export interface FaucetInfoResp {
+  configured: boolean;
+  amount: string;
+  windowHours: number;
+  assets: FaucetAssetInfo[];
+}
+export const getFaucetInfo = () => fetch(`${BASE}/faucet/info`).then(j<FaucetInfoResp>);
+export const faucetBuildTrustlines = (address: string) =>
+  post<{ ok: true; xdr?: string; codes?: string[]; none?: boolean }>("/faucet/build-trustlines", { address });
+export interface FaucetClaimResp {
+  ok: true;
+  sent: { code: string; amount: string; txHash: string }[];
+  skipped: { code: string; reason: string }[];
+  amount: string;
+}
+export const faucetClaim = (address: string, signedTrustlineXdr?: string) =>
+  post<FaucetClaimResp>("/faucet/claim", { address, signedTrustlineXdr });
+
 async function post<T>(path: string, body: unknown): Promise<T> {
   return fetch(`${BASE}${path}`, {
     method: "POST",
