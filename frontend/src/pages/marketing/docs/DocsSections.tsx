@@ -85,7 +85,7 @@ export function DocsOverview() {
 
 function DocHeading({ id, children }: { id: string; children: ReactNode }) {
   return (
-    <h2 id={id} className="scroll-mt-24 text-[17px] font-semibold tracking-tight text-foreground">
+    <h2 id={id} className="scroll-mt-[150px] text-[17px] font-semibold tracking-tight text-foreground lg:scroll-mt-24">
       {children}
     </h2>
   );
@@ -134,42 +134,8 @@ function InApp({ base, tabs }: { base: string; tabs: (DataroomTab | BondedTab)[]
   );
 }
 
-// A compact in-page jump list for the long pillar pages (the side-rail navigates sections; this navigates
-// the scenarios within a section).
-function OnThisPage({ items }: { items: { id: string; label: string }[] }) {
-  return (
-    <nav aria-label="On this page" className="rounded-lg border bg-muted/30 px-4 py-3">
-      <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">On this page</p>
-      <ul className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:gap-x-5 sm:gap-y-1.5">
-        {items.map((it) => (
-          <li key={it.id}>
-            <a href={`#${it.id}`} className="text-[13px] text-brand hover:underline">
-              {it.label}
-            </a>
-          </li>
-        ))}
-      </ul>
-    </nav>
-  );
-}
-
-const DR_NAV = [
-  { id: "dr-what", label: "What a Data Room is" },
-  { id: "dr-store", label: "How a document is stored" },
-  { id: "dr-access", label: "Membership and Bonded Access" },
-  { id: "dr-join", label: "Joining and approving" },
-  { id: "dr-open", label: "How a document is opened" },
-  { id: "dr-discover", label: "Private and public rooms" },
-  { id: "dr-verify", label: "Checking a Data Room" },
-];
-
-const BP_NAV = [
-  { id: "bp-what", label: "What a Bonded Proof is" },
-  { id: "bp-create", label: "How a bond is created" },
-  { id: "bp-link", label: "How it connects to the Data Room" },
-  { id: "bp-open", label: "How a bond opens a room" },
-  { id: "bp-verify", label: "Checking a Bonded Proof" },
-];
+// The in-page jump list (DOCS_SUBNAV) now lives in the docs side-rail (nested under the active pillar on
+// desktop) + a sticky "On this page" bar on mobile, so it stays reachable while scrolling. See Docs.tsx.
 
 export function DocsDataRoom() {
   return (
@@ -180,8 +146,6 @@ export function DocsDataRoom() {
         is a short tamper-evident fingerprint. Anyone can still confirm a file was not swapped, and the people
         reading it stay anonymous.
       </P>
-
-      <OnThisPage items={DR_NAV} />
 
       <section aria-labelledby="dr-what" className="space-y-4">
         <DocHeading id="dr-what">What a Data Room is</DocHeading>
@@ -361,8 +325,6 @@ export function DocsBondedProofs() {
         private part comes after: you can prove you hold a qualifying bond without showing your wallet or the
         amount, and use that to open a room with no approval.
       </P>
-
-      <OnThisPage items={BP_NAV} />
 
       <section aria-labelledby="bp-what" className="space-y-4">
         <DocHeading id="bp-what">What a Bonded Proof is</DocHeading>

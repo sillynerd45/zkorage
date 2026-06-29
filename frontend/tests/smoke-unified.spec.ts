@@ -70,6 +70,25 @@ test("docs pillar sections render, a diagram zooms, and under-the-hood expands",
   await expect(page).toHaveURL(/\/docs\/data-room$/);
 });
 
+test("docs section nav: desktop nested submenu + mobile sticky 'On this page' bar", async ({ page }) => {
+  // Desktop: the left rail nests the active pillar's sub-sections (a real jump link inside the sections nav).
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto("/docs/data-room");
+  const railLink = page
+    .getByRole("navigation", { name: "Documentation sections" })
+    .getByRole("link", { name: "How a document is opened" });
+  await expect(railLink).toBeVisible();
+  await expect(railLink).toHaveAttribute("href", "#dr-open");
+
+  // Mobile: a collapsible "On this page" bar expands to the same jump list.
+  await page.setViewportSize({ width: 390, height: 780 });
+  await page.goto("/docs/bonded-proofs");
+  const toggle = page.getByRole("button", { name: /on this page/i });
+  await expect(toggle).toBeVisible();
+  await toggle.click();
+  await expect(page.getByRole("link", { name: "How a bond is created" })).toBeVisible();
+});
+
 test("landing → sections + verify CTAs work", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByTestId("hero-open-app")).toBeVisible();

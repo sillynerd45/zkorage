@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { Reveal } from "@/components/marketing/Reveal";
+import { HowItWorksFlow } from "@/components/marketing/HowItWorksFlow";
 import { useContracts } from "@/lib/hooks/useContracts";
 import { getCommitteeInfo, type CommitteeInfoResp } from "@/lib/api";
 import { short, explorer } from "@/lib/format";
@@ -24,11 +25,12 @@ const ring =
   "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 
 // Accurate to BOTH products (the old "Attest / Prove / Verify" strip wrongly implied a third-party attester
-// for everything; the two pillars anchor on-chain instead).
+// for everything; the two pillars anchor on-chain instead). The Verify step is scoped to reading: the browser
+// re-checks with no wallet, while writing (or the Stellar CLI) needs an account.
 const STEPS = [
-  { icon: FileSignature, t: "Anchor", d: "Seal a document or lock a bond on-chain. A document is encrypted first, so no one can read it." },
-  { icon: Cpu, t: "Prove", d: "A self-hosted zkVM proves the fact. The data never leaves the prover you run." },
-  { icon: BadgeCheck, t: "Verify", d: "Anyone re-checks the result on Stellar and gets the same answer. No wallet, no account." },
+  { icon: FileSignature, t: "Anchor", d: "Seal a document or lock a bond, and a short fingerprint of it goes on Stellar. A document is encrypted first, so no one can read it." },
+  { icon: Cpu, t: "Prove", d: "A prover you self-host reads your private data and makes a zero-knowledge proof. The data never leaves your prover; the proof reveals only the answer." },
+  { icon: BadgeCheck, t: "Verify", d: "Anyone re-checks the result on Stellar and gets the same answer. The browser reads the public ledger with no wallet or account." },
 ];
 
 const PILLARS = [
@@ -340,8 +342,12 @@ export default function Landing() {
         <Reveal className="mb-5">
           <h2 className="text-xl font-semibold tracking-tight">How it works</h2>
           <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">
-            The same three steps power both products.
+            Your data stays on a prover you run. Only a fingerprint and the proof reach Stellar, where anyone can
+            re-check the result. The same three steps power both products.
           </p>
+        </Reveal>
+        <Reveal className="mb-3">
+          <HowItWorksFlow />
         </Reveal>
         <div className="grid gap-3 sm:grid-cols-3">
           {STEPS.map((s, i) => (
