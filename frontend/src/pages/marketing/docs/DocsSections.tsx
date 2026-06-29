@@ -33,18 +33,32 @@ export function DocsOverview() {
     <div className="space-y-5">
       <SectionCard label="What zkorage is">
         <p className="text-[15px] leading-relaxed text-muted-foreground">
-          zkorage is a zero-knowledge toolkit on Stellar with two parts. A{" "}
-          <Link to="/docs/data-room" className="text-brand hover:underline">
-            Data Room
-          </Link>{" "}
-          keeps sensitive files sealed, lets the right people in without revealing who they are, and still lets
-          anyone confirm a file was not altered.{" "}
-          <Link to="/docs/bonded-proofs" className="text-brand hover:underline">
-            Bonded Proofs
-          </Link>{" "}
-          lets you lock tokens in public, then prove a fact about them, like that you hold a qualifying bond,{" "}
-          <b className="text-foreground">without revealing your wallet</b>. In both, a verifier learns one
-          fact and nothing else.
+          zkorage is a zero-knowledge toolkit on Stellar with two parts:
+        </p>
+        <BulletList
+          className="mt-3"
+          items={[
+            <>
+              <Link to="/docs/data-room" className="font-semibold text-foreground hover:text-brand hover:underline">
+                Data Room
+              </Link>{" "}
+              keeps sensitive files sealed, lets the right people in without revealing who they are, and still
+              lets anyone confirm a file was not altered.
+            </>,
+            <>
+              <Link
+                to="/docs/bonded-proofs"
+                className="font-semibold text-foreground hover:text-brand hover:underline"
+              >
+                Bonded Proofs
+              </Link>{" "}
+              lets you lock tokens in public, then prove a fact about them, like that you hold a qualifying bond,{" "}
+              <b className="text-foreground">without revealing your wallet</b>.
+            </>,
+          ]}
+        />
+        <p className="mt-3 text-[15px] leading-relaxed text-muted-foreground">
+          In both, a verifier learns one fact and nothing else.
         </p>
       </SectionCard>
 
@@ -113,6 +127,21 @@ function HoodList({ items }: { items: ReactNode[] }) {
   );
 }
 
+// A bullet list for the plain-story layer (distinct from HoodList, which lives inside "Under the hood"). Items
+// are ReactNode, so a bold or linked lead label can front each one. Matches the prose size (text-[15px]).
+function BulletList({ items, className }: { items: ReactNode[]; className?: string }) {
+  return (
+    <ul className={cn("space-y-2", className)}>
+      {items.map((it, i) => (
+        <li key={i} className="flex gap-2.5 text-[15px] leading-relaxed text-muted-foreground">
+          <span aria-hidden="true" className="mt-2 size-1.5 shrink-0 rounded-full bg-brand/60" />
+          <span>{it}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 // The "In the app" footer: links to the real flows for this pillar.
 function InApp({ base, tabs }: { base: string; tabs: (DataroomTab | BondedTab)[] }) {
   return (
@@ -151,9 +180,16 @@ export function DocsDataRoom() {
         <DocHeading id="dr-what">What a Data Room is</DocHeading>
         <P>
           Say you need to share a term sheet, a cap table, or a due-diligence folder with a small group. You
-          want three things at once: the contents stay private, the readers stay private, and anyone can still
-          confirm that the file on record was not altered. A Data Room gives you all three.
+          want three things at once:
         </P>
+        <BulletList
+          items={[
+            "the contents stay private",
+            "the readers stay private",
+            "anyone can still confirm that the file on record was not altered",
+          ]}
+        />
+        <P>A Data Room gives you all three.</P>
         <P>
           A room holds documents and a list of who may read them. The owner decides how readers get in.
           Getting in, and reading, never reveals which person you are.
@@ -283,15 +319,31 @@ export function DocsDataRoom() {
 
       <section aria-labelledby="dr-discover" className="space-y-4">
         <DocHeading id="dr-discover">Private and public rooms</DocHeading>
-        <P>
-          A room has three visibility levels. Private is the default: the room can only be found by a link the
-          owner shares. Unlisted can be looked up by its exact id. Listed shows up in the public directory.
-        </P>
+        <P>A room has three visibility levels:</P>
+        <BulletList
+          items={[
+            <>
+              <b className="text-foreground">Private</b> is the default. The room can only be found by a link
+              the owner shares.
+            </>,
+            <>
+              <b className="text-foreground">Unlisted</b> can be looked up by its exact id.
+            </>,
+            <>
+              <b className="text-foreground">Listed</b> shows up in the public directory.
+            </>,
+          ]}
+        />
         <P>
           The directory never shows an exact member count or who opened what. It shows only a rough size band,
-          like under 5, 5 to 19, 20 to 49, or 50 and up. Listing a room is a convenience for finding it. It is
-          not what keeps you private. Your privacy comes from the anonymous open proof, the minimum crowd size,
-          and the keepers. Discovery uses no proof. You can browse listed rooms in the{" "}
+          like under 5, 5 to 19, 20 to 49, or 50 and up.
+        </P>
+        <P>
+          Listing a room is a convenience for finding it, not what keeps you private. Your privacy comes from
+          the anonymous open proof, the minimum crowd size, and the keepers.
+        </P>
+        <P>
+          Discovery uses no proof. You can browse listed rooms in the{" "}
           <Link to="/explorer" className="text-brand hover:underline">
             Explorer
           </Link>
