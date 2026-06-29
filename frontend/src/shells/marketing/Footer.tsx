@@ -2,11 +2,13 @@ import { Link } from "react-router-dom";
 import { BrandMark } from "@/components/BrandMark";
 
 // Marketing-shell footer: site links + honest testnet note. (The fixed VersionBadge carries the build SHA.)
-const LINKS: { to: string; label: string }[] = [
-  { to: "/docs", label: "Documentation" },
-  { to: "/verify", label: "Verify it yourself" },
+// `newTab` opens an internal route in a new tab (keeps the current page); `external` is an off-site link.
+const LINKS: { to: string; label: string; newTab?: boolean; external?: boolean }[] = [
+  { to: "/docs", label: "Documentation", newTab: true },
+  { to: "/verify", label: "Verify it yourself", newTab: true },
   { to: "/explorer", label: "Explorer" },
   { to: "/faucet", label: "Faucet" },
+  { to: "https://github.com/sillynerd45/zkorage", label: "GitHub", external: true },
   { to: "/app", label: "Open the app" },
 ];
 
@@ -28,11 +30,28 @@ export function Footer() {
           </p>
         </div>
         <nav aria-label="Footer" className="grid grid-cols-2 gap-x-10 gap-y-2 text-sm">
-          {LINKS.map((l) => (
-            <Link key={l.to} to={l.to} className="text-muted-foreground transition-colors hover:text-foreground">
-              {l.label}
-            </Link>
-          ))}
+          {LINKS.map((l) =>
+            l.external ? (
+              <a
+                key={l.to}
+                href={l.to}
+                target="_blank"
+                rel="noreferrer"
+                className="text-muted-foreground transition-colors hover:text-foreground"
+              >
+                {l.label}
+              </a>
+            ) : (
+              <Link
+                key={l.to}
+                to={l.to}
+                {...(l.newTab ? { target: "_blank", rel: "noreferrer" } : {})}
+                className="text-muted-foreground transition-colors hover:text-foreground"
+              >
+                {l.label}
+              </Link>
+            ),
+          )}
         </nav>
       </div>
     </footer>

@@ -11,6 +11,7 @@ import {
   Check,
   ChevronDown,
   ExternalLink,
+  Github,
   type LucideIcon,
 } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
@@ -331,6 +332,15 @@ export default function Landing() {
           <Link to="/docs" className={cn(buttonVariants({ variant: "outline", size: "lg" }), ring)}>
             Read the docs
           </Link>
+          <a
+            href="https://github.com/sillynerd45/zkorage"
+            target="_blank"
+            rel="noreferrer"
+            data-testid="hero-github"
+            className={cn(buttonVariants({ variant: "outline", size: "lg" }), ring)}
+          >
+            <Github className="size-4" /> GitHub
+          </a>
           <span className="inline-flex items-center gap-1.5 rounded-full border bg-card/70 px-2.5 py-1 text-xs font-medium text-muted-foreground backdrop-blur">
             <span className="size-1.5 rounded-full bg-success" aria-hidden /> Running on Stellar testnet
           </span>

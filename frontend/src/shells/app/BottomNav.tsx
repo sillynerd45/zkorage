@@ -103,6 +103,8 @@ export function BottomNav() {
                     <Link
                       key={l.to}
                       to={l.to}
+                      target="_blank"
+                      rel="noreferrer"
                       onClick={() => setOpen(false)}
                       className="flex items-center gap-2 rounded-lg border px-3 py-2.5 text-sm text-muted-foreground hover:bg-accent"
                     >
