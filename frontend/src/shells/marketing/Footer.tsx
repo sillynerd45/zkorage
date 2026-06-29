@@ -21,7 +21,8 @@ export function Footer() {
             <span className="text-[17px]">zkorage</span>
           </div>
           <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">
-            Prove a private fact and let anyone re-check it on Stellar, without revealing the data behind it.
+            Share sealed documents and open them anonymously, on Stellar. Anyone can re-check the result without
+            ever seeing the files.
           </p>
           <p className="mt-3 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium text-muted-foreground">
             <span className="size-1.5 rounded-full bg-success" /> Stellar testnet · demo, unaudited

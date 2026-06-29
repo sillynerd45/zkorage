@@ -213,3 +213,25 @@ export const DOCS_SECTIONS: DocsSection[] = [
 
 export const docsSection = (slug: string | undefined) =>
   DOCS_SECTIONS.find((s) => s.slug === (slug ?? ""));
+
+// In-page sub-sections for the long pillar pages, keyed by docs slug. The `id`s must match the `DocHeading`
+// ids in DocsSections.tsx. The docs side-rail nests these under the active pillar (desktop) and a sticky
+// "On this page" bar lists them (mobile); a scroll-spy highlights the one in view.
+export const DOCS_SUBNAV: Record<string, { id: string; label: string }[]> = {
+  "data-room": [
+    { id: "dr-what", label: "What a Data Room is" },
+    { id: "dr-store", label: "How a document is stored" },
+    { id: "dr-access", label: "Membership and Bonded Access" },
+    { id: "dr-join", label: "Joining and approving" },
+    { id: "dr-open", label: "How a document is opened" },
+    { id: "dr-discover", label: "Private and public rooms" },
+    { id: "dr-verify", label: "Checking a Data Room" },
+  ],
+  "bonded-proofs": [
+    { id: "bp-what", label: "What a Bonded Proof is" },
+    { id: "bp-create", label: "How a bond is created" },
+    { id: "bp-link", label: "How it connects to the Data Room" },
+    { id: "bp-open", label: "How a bond opens a room" },
+    { id: "bp-verify", label: "Checking a Bonded Proof" },
+  ],
+};
