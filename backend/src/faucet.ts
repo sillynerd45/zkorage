@@ -49,6 +49,8 @@ function horizon(): Horizon.Server {
   return new Horizon.Server(HORIZON_URL);
 }
 
+type HorizonAccount = Awaited<ReturnType<Horizon.Server["loadAccount"]>>;
+
 function assetOf(a: FaucetAsset): Asset {
   return new Asset(a.code, a.issuer);
 }
@@ -57,7 +59,9 @@ const trustKey = (a: FaucetAsset) => `${a.code}:${a.issuer}`;
 
 // The account's funded state + the set of faucet trustlines it already holds. A missing account (Horizon 404)
 // is reported as not-funded, so the caller can prompt friendbot rather than treating it as an error.
-export async function accountState(address: string): Promise<{ funded: boolean; trusts: Set<string> }> {
+export async function accountState(
+  address: string,
+): Promise<{ funded: boolean; trusts: Set<string>; acct: HorizonAccount | null }> {
   try {
     const acct = await horizon().loadAccount(address);
     const trusts = new Set<string>();
@@ -65,11 +69,11 @@ export async function accountState(address: string): Promise<{ funded: boolean; 
       if (b.asset_type === "native") continue;
       if (b.asset_code && b.asset_issuer) trusts.add(`${b.asset_code}:${b.asset_issuer}`);
     }
-    return { funded: true, trusts };
+    return { funded: true, trusts, acct };
   } catch (e: unknown) {
     const status = (e as { response?: { status?: number } })?.response?.status;
     if (status === 404 || (e as { name?: string })?.name === "NotFoundError") {
-      return { funded: false, trusts: new Set() };
+      return { funded: false, trusts: new Set(), acct: null };
     }
     throw e;
   }
@@ -80,19 +84,23 @@ export async function accountState(address: string): Promise<{ funded: boolean; 
 export async function buildTrustlineXdr(
   address: string,
 ): Promise<{ xdr: string; codes: string[] } | { none: true }> {
-  const { funded, trusts } = await accountState(address);
-  if (!funded) throw new Error("account not found; fund the wallet with testnet XLM first");
+  const { funded, trusts, acct } = await accountState(address);
+  if (!funded || !acct) throw new Error("account not found; fund the wallet with testnet XLM first");
   const missing = FAUCET_ASSETS.filter((a) => !trusts.has(trustKey(a)));
   if (missing.length === 0) return { none: true };
-  const acct = await horizon().loadAccount(address);
   const b = new TransactionBuilder(acct, { fee: BASE_FEE, networkPassphrase: PASSPHRASE });
   for (const a of missing) b.addOperation(Operation.changeTrust({ asset: assetOf(a) }));
   const tx = b.setTimeout(300).build();
   return { xdr: tx.toXDR(), codes: missing.map((a) => a.code) };
 }
 
-export async function submitSignedXdr(signedXdr: string): Promise<string> {
+// Submit the user-signed trustline transaction. Validates it is a plain (not fee-bump) transaction whose
+// source is the claiming wallet and whose ops are all changeTrust, so this is not a generic Horizon relay.
+export async function submitSignedXdr(signedXdr: string, expectedSource: string): Promise<string> {
   const tx = TransactionBuilder.fromXDR(signedXdr, PASSPHRASE);
+  if ("innerTransaction" in tx) throw new Error("a fee-bump transaction is not accepted here");
+  if (tx.source !== expectedSource) throw new Error("the trustline transaction is not for this account");
+  if (!tx.operations.every((o) => o.type === "changeTrust")) throw new Error("only changeTrust operations are allowed");
   const r = await horizon().submitTransaction(tx as Parameters<Horizon.Server["submitTransaction"]>[0]);
   return r.hash;
 }

@@ -88,9 +88,14 @@ export default function Faucet() {
     setBusy("fund");
     setMsg(null);
     try {
-      await fetch(`${FRIENDBOT}?addr=${encodeURIComponent(w.address)}`);
+      const r = await fetch(`${FRIENDBOT}?addr=${encodeURIComponent(w.address)}`);
       await refresh();
-      setMsg({ kind: "success", text: "Funded with testnet XLM. You can create trustlines now." });
+      // friendbot returns 400 if the account already exists; either way refresh shows the real balance.
+      setMsg(
+        r.ok
+          ? { kind: "success", text: "Funded with testnet XLM. You can create trustlines now." }
+          : { kind: "info", text: "This wallet may already be funded. Check the balance above." },
+      );
     } catch (e) {
       setMsg({ kind: "error", text: (e as Error)?.message || "could not reach friendbot" });
     } finally {

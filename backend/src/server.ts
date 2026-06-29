@@ -5426,7 +5426,7 @@ function startBatchFlusher(): void {
 }
 
 // ───────────────────────────────────────────────────────────────────────────────────────────────
-// Faucet — test classic assets (TUSD / TGLD / TBND / TBIL). Connect a wallet, create trustlines, the
+// Faucet: test classic assets (TUSD / TGLD / TBND / TBIL). Connect a wallet, create trustlines, the
 // issuer pays 10,000 of each. Classic ops over Horizon (see faucet.ts). Once per 24h per wallet.
 // ───────────────────────────────────────────────────────────────────────────────────────────────
 const FAUCET_RETRY_HOURS = (addr: string) =>
@@ -5434,6 +5434,33 @@ const FAUCET_RETRY_HOURS = (addr: string) =>
 // Claims are serialized: each issuer account has a single sequence number, so two concurrent claims for the
 // same asset would collide. Claims are rare (once/day/wallet), so a single in-process queue is plenty.
 let faucetClaimChain: Promise<unknown> = Promise.resolve();
+// Per-IP throttle on claims: a fresh keypair bypasses the per-wallet ledger, so this bounds spam of the
+// serialized issuer queue + the issuers' fee XLM. Generous (testers may share a NAT); env-tunable. Same
+// shape as the other limiters.
+const FAUCET_RL_WINDOW_MS = 10 * 60_000;
+const FAUCET_RL_MAX = numEnv(process.env.FAUCET_RL_MAX, 20, 1);
+const FAUCET_RL_MAX_IPS = 10_000;
+const faucetHits = new Map<string, number[]>();
+function faucetRateLimited(ip: string, nowMs: number): boolean {
+  if (faucetHits.size > FAUCET_RL_MAX_IPS) {
+    for (const [k, ts] of faucetHits) {
+      const live = ts.filter((t) => nowMs - t < FAUCET_RL_WINDOW_MS);
+      if (live.length === 0) faucetHits.delete(k);
+      else faucetHits.set(k, live);
+    }
+    if (faucetHits.size > FAUCET_RL_MAX_IPS) {
+      let toEvict = faucetHits.size - FAUCET_RL_MAX_IPS;
+      for (const k of faucetHits.keys()) {
+        if (toEvict-- <= 0) break;
+        faucetHits.delete(k);
+      }
+    }
+  }
+  const hits = (faucetHits.get(ip) ?? []).filter((t) => nowMs - t < FAUCET_RL_WINDOW_MS);
+  hits.push(nowMs);
+  faucetHits.set(ip, hits);
+  return hits.length > FAUCET_RL_MAX;
+}
 
 app.get("/faucet/info", (_req, res) => {
   res.json({
@@ -5469,6 +5496,9 @@ app.post("/faucet/claim", async (req, res) => {
   const address = String(body?.address ?? "");
   if (!StrKey.isValidEd25519PublicKey(address)) return res.status(400).json({ ok: false, error: "address (G-address) required" });
   if (!faucetConfigured()) return res.status(503).json({ ok: false, error: "the faucet is not configured" });
+  if (faucetRateLimited(clientIp(req), Date.now())) {
+    return res.status(429).json({ ok: false, error: "too many faucet requests from your network; please try again later" });
+  }
   if (Date.now() - faucetLastClaim(address) < FAUCET_WINDOW_MS) {
     const h = FAUCET_RETRY_HOURS(address);
     return res.status(429).json({ ok: false, error: `you already claimed; try again in about ${h} hour${h === 1 ? "" : "s"}`, retryInHours: h });
@@ -5478,7 +5508,7 @@ app.post("/faucet/claim", async (req, res) => {
     // re-check inside the queue to close a double-submit race
     if (Date.now() - faucetLastClaim(address) < FAUCET_WINDOW_MS) return { rateLimited: true } as const;
     if (typeof body.signedTrustlineXdr === "string" && body.signedTrustlineXdr) {
-      await faucetSubmitSignedXdr(body.signedTrustlineXdr); // establish the trustlines first
+      await faucetSubmitSignedXdr(body.signedTrustlineXdr, address); // establish the trustlines first
     }
     const { funded, trusts } = await accountState(address);
     if (!funded) throw new Error("account not found; fund the wallet with testnet XLM first");
