@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { ShieldCheck } from "lucide-react";
+import { BrandMark } from "@/components/BrandMark";
 
 // Marketing-shell footer: site links + honest testnet note. (The fixed VersionBadge carries the build SHA.)
 const LINKS: { to: string; label: string }[] = [
@@ -15,9 +15,7 @@ export function Footer() {
       <div className="mx-auto flex max-w-5xl flex-col gap-6 px-6 py-10 sm:flex-row sm:items-start sm:justify-between">
         <div className="max-w-sm">
           <div className="flex items-center gap-2 font-semibold tracking-tight">
-            <span className="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground">
-              <ShieldCheck className="size-4" />
-            </span>
+            <BrandMark />
             <span className="text-[17px]">zkorage</span>
           </div>
           <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">

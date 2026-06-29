@@ -1,5 +1,6 @@
 import { Link, NavLink } from "react-router-dom";
-import { ShieldCheck, ExternalLink } from "lucide-react";
+import { ExternalLink } from "lucide-react";
+import { BrandMark } from "@/components/BrandMark";
 import { NAV_SECTIONS, MARKETING_LINKS } from "./nav-registry";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { cn } from "@/lib/utils";
@@ -11,9 +12,7 @@ export function Sidebar() {
     <aside className="fixed inset-y-0 left-0 z-30 hidden w-72 flex-col border-r bg-card lg:flex">
       <div className="flex h-16 items-center border-b px-5">
         <Link to="/app" className="flex items-center gap-2 font-semibold tracking-tight" aria-label="zkorage home">
-          <span className="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground">
-            <ShieldCheck className="size-4" />
-          </span>
+          <BrandMark />
           <span className="text-[17px]">zkorage</span>
         </Link>
       </div>

@@ -6,6 +6,7 @@ import { GLOSSARY } from "@/lib/glossary";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { SectionCard } from "@/components/marketing/blocks";
+import { ArchitectureFlow } from "@/components/marketing/ArchitectureFlow";
 import { DiagramFigure, UnderTheHood } from "./diagrams/DiagramFigure";
 import { SeqLegend } from "./diagrams/kit";
 import {
@@ -33,7 +34,8 @@ export function DocsOverview() {
     <div className="space-y-5">
       <SectionCard label="What zkorage is">
         <p className="text-[15px] leading-relaxed text-muted-foreground">
-          zkorage is a zero-knowledge toolkit on Stellar with two parts:
+          zkorage is a zero-knowledge toolkit built on Stellar (Soroban). It proves a fact about private data
+          and lets anyone verify that fact on the public chain, without revealing the data. It has two parts:
         </p>
         <BulletList
           className="mt-3"
@@ -62,7 +64,20 @@ export function DocsOverview() {
         </p>
       </SectionCard>
 
-      <SectionCard label="How it works">
+      <SectionCard label="How the pieces connect">
+        <p className="text-[15px] leading-relaxed text-muted-foreground">
+          Your file leaves your browser only as ciphertext, so nobody but you ever sees it in the clear. The
+          diagram shows the full path: your browser encrypts the file and splits its key, the backend stores
+          only the locked file in Cloudflare R2, a
+          committee of keepers holds the key in pieces, a server we host builds the zero-knowledge proof, and
+          Stellar holds the public, re-checkable record.
+        </p>
+        <div className="mt-4">
+          <ArchitectureFlow />
+        </div>
+      </SectionCard>
+
+      <SectionCard label="The idea in three steps">
         <ol className="space-y-4">
           {ENGINE.map((s, i) => (
             <li key={s.t} className="flex gap-3.5">
@@ -78,6 +93,105 @@ export function DocsOverview() {
             </li>
           ))}
         </ol>
+      </SectionCard>
+
+      <SectionCard label="Data Room, and why on Stellar">
+        <p className="text-[15px] leading-relaxed text-muted-foreground">
+          Sharing a sensitive file usually forces a bad trade. You either trust a server that can read it and
+          hope its access list stays honest, or you post a public hash that leaks who is involved. A Data Room
+          avoids both. The contents stay encrypted, the readers stay anonymous, and the only public thing
+          about a file is a short fingerprint, so anyone can confirm it was not swapped.
+        </p>
+        <p className="mt-3 text-[15px] leading-relaxed text-muted-foreground">
+          Stellar is what makes this practical. Soroban added native BN254 host functions, so checking a
+          zero-knowledge proof on-chain is cheap and fast. That lets the public ledger, not our server, be the
+          thing you trust. Anchoring a record and recording an anonymous grant costs very little, and anyone can
+          re-read the result.
+        </p>
+        <p className="mt-3 text-sm">
+          <Link to="/docs/data-room" className="font-medium text-brand hover:underline">
+            Read the Data Room walkthrough
+            <ArrowRight className="ml-1 inline size-3.5" aria-hidden="true" />
+          </Link>
+        </p>
+      </SectionCard>
+
+      <SectionCard label="Bonded Proofs, and how they open a Data Room">
+        <p className="text-[15px] leading-relaxed text-muted-foreground">
+          A bond is tokens you lock in public, in a small Soroban escrow contract. Bonded Proofs let you prove
+          a fact about that bond, like that you hold at least a set amount in a given token and it has not
+          expired, without revealing which wallet or which lock.
+        </p>
+        <p className="mt-3 text-[15px] leading-relaxed text-muted-foreground">
+          A room owner can use this as the way in. Instead of approving people one by one, the owner sets a
+          bond requirement. Anyone holding a qualifying bond proves it anonymously and the room opens, with no
+          owner approval and no wallet revealed. One bond handle opens every room that shares the same
+          requirement.
+        </p>
+        <p className="mt-3 text-sm">
+          <Link to="/docs/bonded-proofs" className="font-medium text-brand hover:underline">
+            Read the Bonded Proofs walkthrough
+            <ArrowRight className="ml-1 inline size-3.5" aria-hidden="true" />
+          </Link>
+        </p>
+      </SectionCard>
+
+      <SectionCard label="The zero-knowledge proof system">
+        <p className="text-[15px] leading-relaxed text-muted-foreground">
+          The proof is the only thing that makes a verifier certain without seeing the data, so here is exactly
+          how it is built and how Stellar checks it.
+        </p>
+
+        <p className="mt-4 text-sm font-semibold text-foreground">The proving pipeline (RISC Zero)</p>
+        <HoodList
+          items={[
+            <>
+              We write the check as an ordinary Rust program, called a <b className="text-foreground">guest</b>,
+              and run it inside the <b className="text-foreground">RISC Zero zkVM</b> (a general-purpose
+              zero-knowledge virtual machine, version 5.0.0-rc.1). The zkVM produces a STARK proof that the
+              program ran correctly on the given inputs.
+            </>,
+            <>
+              A host step wraps that STARK into a small <b className="text-foreground">Groth16</b> proof over
+              the <b className="text-foreground">BN254</b> curve, so it is cheap to check on-chain.
+            </>,
+            <>
+              Proving runs on a <b className="text-foreground">server we host</b>, never in your browser and
+              never on a shared proving market, because the prover sees the private inputs. The private witness
+              is discarded once the proof is built.
+            </>,
+            <>
+              Each guest has a fixed <b className="text-foreground">image id</b>, a hash of the exact program.
+              Anyone can rebuild the guest and reproduce the same image id.
+            </>,
+          ]}
+        />
+
+        <p className="mt-4 text-sm font-semibold text-foreground">How Stellar checks it</p>
+        <HoodList
+          items={[
+            <>
+              A bare <b className="text-foreground">Groth16 verifier contract</b> on Soroban checks the proof
+              using Stellar&apos;s native BN254 host functions (CAP-0080). It is rebuilt against soroban-sdk
+              26.1.0.
+            </>,
+            <>
+              A <b className="text-foreground">policy or gate contract</b> sits on top. It pins the expected
+              image id (so a proof only counts if it came from the exact program we published), binds the
+              proven claim to on-chain facts (for example a room&apos;s approved-list root, or a live bond
+              lock), blocks reuse with a one-time <b className="text-foreground">nullifier</b>, and records the
+              result in public.
+            </>,
+            <>
+              The result lives on the ledger. Anyone can re-read it and re-verify, with no account and without
+              trusting our server.
+            </>,
+          ]}
+        />
+
+        <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
+          The verifier and gate contracts are unaudited and run on Stellar testnet, for the demo.
+        </p>
       </SectionCard>
 
       <SectionCard label="ZK is load-bearing">

@@ -1,5 +1,5 @@
 import { Link, useLocation } from "react-router-dom";
-import { ShieldCheck } from "lucide-react";
+import { BrandMark } from "@/components/BrandMark";
 import { CAPABILITIES, dataroomTab } from "@/lib/content";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { FreighterButton } from "./FreighterButton";
@@ -30,9 +30,7 @@ export function AppTopbar() {
         className="flex items-center gap-2 font-semibold tracking-tight lg:hidden"
         aria-label="zkorage home"
       >
-        <span className="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground">
-          <ShieldCheck className="size-4" />
-        </span>
+        <BrandMark />
         <span className="text-[16px]">zkorage</span>
       </Link>
       <h1 className="hidden truncate text-base font-semibold tracking-tight lg:block" data-testid="app-page-title">

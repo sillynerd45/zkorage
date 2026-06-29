@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { Reveal } from "@/components/marketing/Reveal";
-import { HowItWorksFlow } from "@/components/marketing/HowItWorksFlow";
+import { ArchitectureFlow } from "@/components/marketing/ArchitectureFlow";
 import { useContracts } from "@/lib/hooks/useContracts";
 import { getCommitteeInfo, type CommitteeInfoResp } from "@/lib/api";
 import { short, explorer } from "@/lib/format";
@@ -347,7 +347,7 @@ export default function Landing() {
           </p>
         </Reveal>
         <Reveal className="mb-3">
-          <HowItWorksFlow />
+          <ArchitectureFlow />
         </Reveal>
         <div className="grid gap-3 sm:grid-cols-3">
           {STEPS.map((s, i) => (
