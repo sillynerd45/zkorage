@@ -94,13 +94,10 @@ export default function Contracts() {
         testid="contracts-bonded"
         title="Bonded Proofs"
         loading={c.loading}
-        intro="The escrow that time-locks collateral and the gates that read it, including the bond token and the supply token they price against."
+        intro="The escrow that time-locks a bond, and the anonymous gate that checks it to let a reader open a room."
         rows={[
           { label: "Escrow", id: c.escrowId },
-          { label: "Bond token (zUSD)", id: c.bondTokenId },
-          { label: "Solvency gate", id: c.solvencyGateId },
-          { label: "Bonded Access gate", id: c.tierGateId },
-          { label: "Supply token", id: c.supplyTokenId },
+          { label: "Bonded Access gate", id: c.bondGateId },
         ]}
       />
 

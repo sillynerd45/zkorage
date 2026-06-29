@@ -54,6 +54,8 @@ export function Sidebar() {
             <li key={l.to}>
               <Link
                 to={l.to}
+                target="_blank"
+                rel="noreferrer"
                 className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               >
                 <ExternalLink className="size-3.5" />
