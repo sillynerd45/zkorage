@@ -31,7 +31,7 @@ _HEX_SIBLINGS = re.compile(r"^[0-9a-fA-F]{1280}$")  # depth-20 Merkle path = 640
 _HEX256 = re.compile(r"^[0-9a-fA-F]{512}$")  # a 256-byte value (RSA-2048 modulus / signature) as 512 hex
 _HEX_STATEMENT = re.compile(r"^[0-9a-fA-F]{176}$")  # the fixed 88-byte signed bank statement as 176 hex
 
-PROVER_DIR = os.environ.get("PROVER_DIR", "/home/<user>/Project/Stellar/zkorage/prover")
+PROVER_DIR = os.environ.get("PROVER_DIR", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 HOST_BIN = os.environ.get("HOST_BIN", os.path.join(PROVER_DIR, "target/release/host"))
 HOST_IDENTITY_BIN = os.environ.get("HOST_IDENTITY_BIN", os.path.join(PROVER_DIR, "target/release/host_identity"))
 HOST_COMPLIANCE_BIN = os.environ.get("HOST_COMPLIANCE_BIN", os.path.join(PROVER_DIR, "target/release/host_compliance"))

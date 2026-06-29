@@ -1,7 +1,7 @@
 # deploy/: Frontend + Backend containers (internet exposure)
 
 Containerized Frontend + Backend, exposed via the **existing Cloudflare Tunnel on the prover VM**
-(`<user>-VMware`, `<vm-host>`, several cores), the same `cloudflared` that already serves
+(an always-on Linux VM), the same `cloudflared` that already serves
 `prover.wazowsky.id`. The FE/BE containers run **on that VM**, so the VM's `cloudflared` routes to them
 over its own `localhost`. (The GPU prover worker stays in the Windows box's WSL2 and *pulls* jobs from the
 VM, unaffected by this.)
@@ -39,18 +39,18 @@ rows above to the existing tunnel, no new tunnel/daemon needed.
   would otherwise hand out CRLF → breaks `.dockerignore` matching).
 
 ## VM deploy location + run
-Deploy dir on the VM: **`/home/<user>/Project/Stellar/zkorage-web`** (kept separate from the prover dir).
+Deploy dir on the VM: **`<deploy-dir>`** (kept separate from the prover dir).
 ```bash
-ssh -i ~/.ssh/id_<user>_vm <user>@<vm-host>
-cd /home/<user>/Project/Stellar/zkorage-web
+ssh -i ~/.ssh/<key> <user>@<vm-host>
+cd <deploy-dir>
 docker compose up -d --build      # build + start both, detached
 docker compose ps                 # STATUS should show (healthy)
 docker compose logs -f backend    # tail logs
-docker compose down               # stop + remove (does NOT touch the <user>-* containers)
+docker compose down               # stop + remove (does NOT touch other non-zkorage containers)
 ```
 Verify on the VM: `curl http://localhost:8787/health` → `{"ok":true}`; `curl -I http://localhost:4173/` →
 `no-store`. Explicit `container_name`s (`zkorage-frontend`/`zkorage-backend`) + a `zkorage-web` compose
-project keep this isolated from the VM's other (`<user>-*`) stacks.
+project keep this isolated from the VM's other (non-zkorage) stacks.
 
 ## (Re)deploy from the Windows dev box → VM
 The version badge is stamped on the **Windows box** at `npm run build`, so build there, then ship + rebuild
@@ -61,11 +61,11 @@ cd frontend && npm run build && cd ..        # stamps dist/ with the current com
 tar czf - --exclude='backend/node_modules' --exclude='sdk/node_modules' --exclude='keyper/node_modules' \
   --exclude='backend/.env' --exclude='backend/data' --exclude='keyper/data' --exclude='*.tsbuildinfo' \
   backend sdk keyper frontend/dist frontend/serve.json deploy docker-compose.yml .dockerignore .gitattributes \
-| ssh -i ~/.ssh/id_<user>_vm <user>@<vm-host> \
-  'tar xzf - -C /home/<user>/Project/Stellar/zkorage-web'
+| ssh -i ~/.ssh/<key> <user>@<vm-host> \
+  'tar xzf - -C <deploy-dir>'
 # Then on the VM:
-ssh -i ~/.ssh/id_<user>_vm <user>@<vm-host> \
-  'cd /home/<user>/Project/Stellar/zkorage-web && docker compose up -d --build'
+ssh -i ~/.ssh/<key> <user>@<vm-host> \
+  'cd <deploy-dir> && docker compose up -d --build'
 ```
 The tar now ships `keyper/` too (the keeper image builds from the same root context) and EXCLUDES
 `keyper/data` so the VM keeps its own Shamir share stores (mirrors the `backend/.env` + `backend/data`
@@ -81,10 +81,10 @@ build there, then ship `dist` and rebuild just the `frontend` container (backend
 ```bash
 cd frontend && npm run build && cd ..                 # stamps dist/ with the current commit SHA
 tar czf - frontend/dist frontend/serve.json \
-| ssh -i ~/.ssh/id_<user>_vm <user>@<vm-host> \
-  'tar xzf - -C /home/<user>/Project/Stellar/zkorage-web'
-ssh -i ~/.ssh/id_<user>_vm <user>@<vm-host> \
-  'cd /home/<user>/Project/Stellar/zkorage-web && docker compose up -d --build frontend'
+| ssh -i ~/.ssh/<key> <user>@<vm-host> \
+  'tar xzf - -C <deploy-dir>'
+ssh -i ~/.ssh/<key> <user>@<vm-host> \
+  'cd <deploy-dir> && docker compose up -d --build frontend'
 ```
 Verify: `curl -I https://zkorage.wazowsky.id/` → `200` + `no-store`; the badge `<sha>` matches the shipped
 commit. No Cloudflare change needed (the `zkorage.wazowsky.id` → localhost:4173 route already exists).
@@ -107,7 +107,7 @@ restrict browser CORS (`KEYPER_ALLOWED_ORIGINS`); `GET /health` echoes both so y
 **Per-box secrets/config live in `./.env`** next to `docker-compose.yml` on the VM (compose interpolation,
 NOT shipped by the deploy tar, so a redeploy never clobbers it):
 ```bash
-# /home/<user>/Project/Stellar/zkorage-web/.env  (create once; chmod 600)
+# <deploy-dir>/.env  (create once; chmod 600)
 KEYPER_DEAL_TOKEN=<a strong random token>     # shared by the backend dealer + all 3 keepers; gates /deal
 DATAROOM_CONTRACT_ID=<the live DataRoom C... > # match backend/.env
 SIM_SOURCE_PUBKEY=<a funded testnet G...>      # the keepers' read-only simulation source (match backend/.env)
@@ -118,7 +118,7 @@ silently fall back to the demo token and mismatch the backend.
 **Seed the demo committee docs' shares to the fresh keepers** (their share stores start empty), AFTER all 3
 are healthy (a partial deal aborts):
 ```bash
-ssh -i ~/.ssh/id_<user>_vm <user>@<vm-host> \
+ssh -i ~/.ssh/<key> <user>@<vm-host> \
   'docker exec zkorage-backend node scripts/dr-prod-reseal-committee.mjs'
 ```
 This re-splits a fresh K' for the DR3 demo doc (`a17388e8…/614664eb…`) and the DR6 / Pattern-2 demo doc

@@ -64,3 +64,8 @@ identity-*.toml
 
 # ── UX redesign scratch (palette swatches) ──
 /.ux-swatches/
+
+# ── Prover worker prebuilt binaries (build artifacts; copied into the worker image at build time) ──
+/prover/worker/host
+/prover/worker/host_*
+/prover/worker/r0vm

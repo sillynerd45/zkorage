@@ -1,9 +1,9 @@
 #!/bin/bash
 # Push the 8 v5 NON-cuda canonical host bins to the VM CPU fallback (so it emits v5 image_ids).
 set -e
-KEY=$HOME/.ssh/id_<user>_vm
-VM=<user>@<vm-host>
-DEST=/home/<user>/Project/Stellar/zkorage/prover/target/release
+KEY="${KEY:-$HOME/.ssh/id_vm}"
+VM="${VM:-user@vm-host}"
+DEST="${DEST:-/home/user/zkorage/prover/target/release}"
 SRC=$HOME/zkorage-r5/target-cpu/release
 echo "=== 8 cpu bins ==="; ls -la "$SRC"/host "$SRC"/host_identity "$SRC"/host_compliance "$SRC"/host_payroll "$SRC"/host_accredited "$SRC"/host_dataroom_seal "$SRC"/host_membership "$SRC"/host_docauth | awk '{print $5, $NF}'
 echo "=== backup VM 3.0.5 bins ==="

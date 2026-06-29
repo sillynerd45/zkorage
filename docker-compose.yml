@@ -1,5 +1,5 @@
 # zkorage Frontend + Backend + the 3-keeper threshold committee, containerized for durable internet
-# exposure (Cloudflare Tunnel). Runs on the prover VM (<vm-host>). The VM's cloudflared routes to the
+# exposure (Cloudflare Tunnel). Runs on the prover VM. The VM's cloudflared routes to the
 # FE/BE over localhost:
 #   zkorage.wazowsky.id -> http://localhost:4173   (frontend)
 #   apizk.wazowsky.id   -> http://localhost:8787   (backend)
@@ -18,7 +18,7 @@
 #   docker compose up -d --build      # build + start everything, detached
 #   docker compose ps                 # status + health
 #   docker compose logs -f keyper1    # tail one keeper
-#   docker compose down               # stop + remove (named volumes + the <user>-* stacks are untouched)
+#   docker compose down               # stop + remove (named volumes + other non-zkorage stacks are untouched)
 
 services:
   backend:
@@ -36,13 +36,14 @@ services:
       KEYPER_ENDPOINTS: "http://keyper1:8801,http://keyper2:8802,http://keyper3:8803"
       KEYPER_DEAL_TOKEN: "${KEYPER_DEAL_TOKEN:?set KEYPER_DEAL_TOKEN in ./.env}"
       COMMITTEE_THRESHOLD: "2"
-      # Reach the prover gateway DIRECTLY at the VM's LAN IP (it listens on 0.0.0.0:8080), NOT through the
-      # Cloudflare hairpin. An apizk-inbound prove-access that makes an outbound to https://prover.wazowsky.id
-      # on the SAME cloudflared head-of-line blocks until CF times out (the proof still completes, but the
-      # jobId response is lost). The direct path needs the host firewall to allow the docker subnets to port
-      # 8080 (ufw: `allow from 172.16.0.0/12 to any port 8080 proto tcp`). <vm-host> is stable across
-      # docker network recreates (unlike the bridge gateway 172.20.0.1). Overrides backend/.env's PROVER_URL.
-      PROVER_URL: "http://<vm-host>:8080"
+      # Prefer reaching the prover gateway DIRECTLY at the VM's LAN address (it listens on 0.0.0.0:8080),
+      # NOT through the Cloudflare hairpin. An apizk-inbound prove-access that makes an outbound to the public
+      # gateway on the SAME cloudflared head-of-line blocks until CF times out (the proof still completes, but
+      # the jobId response is lost). The direct path needs the host firewall to allow the docker subnets to
+      # port 8080 (ufw: `allow from 172.16.0.0/12 to any port 8080 proto tcp`). The LAN address is stable
+      # across docker network recreates (unlike the bridge gateway 172.20.0.1). Set PROVER_URL to that direct
+      # address in the VM's ./.env to skip the hairpin; it defaults to the public gateway here.
+      PROVER_URL: "${PROVER_URL:-https://prover.wazowsky.id}"
       # New join requests per IP per 10 min. Raised from the code default (10) so a showcase/demo room can be
       # provisioned in one pass; still a bounded griefing speed-bump (the per-room pending cap 200 is the real
       # per-room backstop).

@@ -4,7 +4,7 @@
 # matching CANONICAL host binary (each embeds the deterministic guest ELF, so the worker emits the same
 # image_id the on-chain contracts pin — required, or proofs are rejected with ImageMismatch).
 set -uo pipefail
-: "${VM_URL:?set VM_URL (e.g. http://<vm-host>:8080)}"
+: "${VM_URL:?set VM_URL (e.g. https://prover.wazowsky.id)}"
 TOKEN="${WORKER_TOKEN:-}"
 HOST_BIN="${HOST_BIN:-/prover/target/release/host}"                       # reserves (PoR)
 HOST_IDENTITY_BIN="${HOST_IDENTITY_BIN:-/prover/target/release/host_identity}"     # identity (KYC)
