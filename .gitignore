@@ -64,5 +64,3 @@ identity-*.toml
 
 # ── UX redesign scratch (palette swatches) ──
 /.ux-swatches/
-/frontend/dist-a/
-/frontend/dist-b/

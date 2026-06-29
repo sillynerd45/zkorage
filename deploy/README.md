@@ -79,11 +79,10 @@ shipped.
 The unified marketing-site + sidebar-app frontend is a SINGLE `vite build` → `frontend/dist` (no more
 `VITE_VARIANT` / `dist-a` / `dist-b`). **As of 2026-06-19 it is the main site at `zkorage.wazowsky.id`**
 (VM `:4173`, container `zkorage-frontend`, the `docker-compose.yml` `frontend` service). The old violet
-build and the throwaway A/B + preview deploys are **decommissioned**: containers `zkorage-frontend-a`
-(:4174), `zkorage-frontend-b` (:4175), and `zkorage-frontend-preview` are removed and the `zkorage-ab`
-compose project is torn down — so the `zkorage-a.wazowsky.id` / `zkorage-b.wazowsky.id` Public Hostnames
-can be removed from the Cloudflare tunnel. (`docker-compose.ab.yml`, `docker-compose.preview.yml`, and
-`deploy/frontend-*.Dockerfile` are kept in-repo as history but are no longer used.)
+build and the throwaway A/B + preview deploys are **decommissioned** and their files have been removed from
+the repo (the `docker-compose.ab.yml` / `docker-compose.preview.yml` compose files and the
+`deploy/frontend-{a,b,preview}.Dockerfile` images). The matching Public Hostnames
+(`zkorage-a.wazowsky.id` / `zkorage-b.wazowsky.id`) can be removed from the Cloudflare tunnel.
 
 Redeploy the main site from the Windows dev box (the badge SHA is stamped at `npm run build`):
 ```bash
