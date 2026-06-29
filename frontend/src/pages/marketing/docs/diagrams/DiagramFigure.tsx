@@ -61,7 +61,8 @@ export function DiagramFigure({
 }
 
 // The zoom dialog. Same portal/backdrop/Escape/focus-trap as ConfirmModal, wider, no footer, focus on Close.
-function Lightbox({
+// Exported so the raster ArchitectureFlow can reuse the same accessible zoom.
+export function Lightbox({
   open,
   title,
   caption,
