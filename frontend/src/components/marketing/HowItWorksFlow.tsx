@@ -4,6 +4,8 @@
 // ledger. Same meaning-not-color convention as the docs diagrams: private/off-chain is a dashed brand outline,
 // public is a solid neutral outline. Hand-built SVG, theme tokens (no hex), no animation (reduced-motion safe).
 
+import { useId } from "react";
+
 const VB_W = 820;
 const VB_H = 196;
 const NY = 18;
@@ -44,7 +46,7 @@ function FlowNode({ n }: { n: (typeof NODES)[keyof typeof NODES] }) {
   );
 }
 
-function Arrow({ from, to, label, tone }: { from: number; to: number; label: string; tone: "muted" | "brand" }) {
+function Arrow({ idp, from, to, label, tone }: { idp: string; from: number; to: number; label: string; tone: "muted" | "brand" }) {
   return (
     <g>
       <line
@@ -55,7 +57,7 @@ function Arrow({ from, to, label, tone }: { from: number; to: number; label: str
         strokeWidth={1.75}
         strokeLinecap="round"
         className={tone === "brand" ? "stroke-brand" : "stroke-muted-foreground"}
-        markerEnd={`url(#hiw-arrow-${tone})`}
+        markerEnd={`url(#${idp}-arrow-${tone})`}
       />
       <text x={(from + to) / 2} y={MID_Y - 7} textAnchor="middle" fontSize={11} className="fill-muted-foreground">
         {label}
@@ -65,6 +67,7 @@ function Arrow({ from, to, label, tone }: { from: number; to: number; label: str
 }
 
 export function HowItWorksFlow() {
+  const uid = useId();
   const yC = cx(NODES.you);
   const sC = cx(NODES.stellar);
   const ctrlX = (yC + sC) / 2;
@@ -76,10 +79,10 @@ export function HowItWorksFlow() {
         preserveAspectRatio="xMidYMid meet"
         className="h-auto"
         role="img"
-        aria-labelledby="hiw-t hiw-d"
+        aria-labelledby={`${uid}-t ${uid}-d`}
       >
-        <title id="hiw-t">How zkorage works</title>
-        <desc id="hiw-d">
+        <title id={`${uid}-t`}>How zkorage works</title>
+        <desc id={`${uid}-d`}>
           Your data goes only to a prover you self-host and never leaves it. The prover produces a
           zero-knowledge proof, and a short fingerprint plus the proof result are written to Stellar. Anyone can
           re-check the public result by reading the ledger.
@@ -88,7 +91,7 @@ export function HowItWorksFlow() {
           {(["muted", "brand"] as const).map((tone) => (
             <marker
               key={tone}
-              id={`hiw-arrow-${tone}`}
+              id={`${uid}-arrow-${tone}`}
               viewBox="0 0 10 10"
               refX="8.5"
               refY="5"
@@ -102,14 +105,15 @@ export function HowItWorksFlow() {
           ))}
         </defs>
 
-        {/* Anchor: a fingerprint path from You straight to Stellar, dipping below and skipping the prover. */}
+        {/* Anchor: a fingerprint path from You straight to Stellar, dipping below and skipping the prover. Drawn
+            thinner + lighter than the data arrows so it reads as a derived public artifact, not a data flow. */}
         <path
           d={`M ${yC} ${NY + NH} Q ${ctrlX} ${VB_H - 8} ${sC} ${NY + NH}`}
           fill="none"
-          strokeWidth={1.75}
+          strokeWidth={1.25}
           strokeLinecap="round"
-          className="stroke-muted-foreground"
-          markerEnd="url(#hiw-arrow-muted)"
+          className="stroke-muted-foreground/55"
+          markerEnd={`url(#${uid}-arrow-muted)`}
         />
         <text x={ctrlX} y={VB_H - 16} textAnchor="middle" fontSize={11.5} className="fill-muted-foreground">
           anchor: a public fingerprint
@@ -120,9 +124,9 @@ export function HowItWorksFlow() {
         <FlowNode n={NODES.stellar} />
         <FlowNode n={NODES.anyone} />
 
-        <Arrow from={NODES.you.x + NODES.you.w} to={NODES.prover.x} label="your data" tone="brand" />
-        <Arrow from={NODES.prover.x + NODES.prover.w} to={NODES.stellar.x} label="proof" tone="brand" />
-        <Arrow from={NODES.stellar.x + NODES.stellar.w} to={NODES.anyone.x} label="reads" tone="muted" />
+        <Arrow idp={uid} from={NODES.you.x + NODES.you.w} to={NODES.prover.x} label="your data" tone="brand" />
+        <Arrow idp={uid} from={NODES.prover.x + NODES.prover.w} to={NODES.stellar.x} label="proof" tone="brand" />
+        <Arrow idp={uid} from={NODES.stellar.x + NODES.stellar.w} to={NODES.anyone.x} label="reads" tone="muted" />
       </svg>
       <figcaption className="mt-3 text-[13px] leading-relaxed text-muted-foreground">
         Your file and the prover stay private (dashed). Only a fingerprint, the proof, and the result are public

@@ -85,7 +85,7 @@ export function DocsOverview() {
 
 function DocHeading({ id, children }: { id: string; children: ReactNode }) {
   return (
-    <h2 id={id} className="scroll-mt-[150px] text-[17px] font-semibold tracking-tight text-foreground lg:scroll-mt-24">
+    <h2 id={id} className="scroll-mt-[168px] text-[17px] font-semibold tracking-tight text-foreground lg:scroll-mt-24">
       {children}
     </h2>
   );

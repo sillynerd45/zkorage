@@ -59,15 +59,18 @@ function useActiveHeading(ids: string[]): string | null {
 
 export default function Docs() {
   const { section } = useParams();
-  // Folded/retired sections: keep old links working.
-  if (section === "capabilities") return <Navigate to="/docs/data-room" replace />;
-  if (section === "developers") return <Navigate to="/docs" replace />;
-  const active = docsSection(section) ?? DOCS_SECTIONS[0];
+  // Folded/retired sections: keep old links working. Compute the redirect BEFORE the hooks below and return
+  // AFTER them, so the hook order stays stable across the capabilities -> data-room redirect (which reuses this
+  // same /docs/:section route and so does NOT remount the component).
+  const redirect =
+    section === "capabilities" ? "/docs/data-room" : section === "developers" ? "/docs" : null;
+  const active = docsSection(redirect ? "" : section) ?? DOCS_SECTIONS[0];
   const Body = CONTENT[active.slug] ?? DocsOverview;
-  const subnav = DOCS_SUBNAV[active.slug] ?? [];
+  const subnav = redirect ? [] : DOCS_SUBNAV[active.slug] ?? [];
   const activeId = useActiveHeading(subnav.map((s) => s.id));
   const [mobileOpen, setMobileOpen] = useState(false);
   const activeLabel = subnav.find((s) => s.id === activeId)?.label ?? subnav[0]?.label ?? "";
+  if (redirect) return <Navigate to={redirect} replace />;
 
   return (
     <>
@@ -86,6 +89,7 @@ export default function Docs() {
               type="button"
               onClick={() => setMobileOpen((o) => !o)}
               aria-expanded={mobileOpen}
+              aria-controls="docs-onthispage-list"
               className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm"
             >
               <List className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
@@ -97,17 +101,17 @@ export default function Docs() {
               />
             </button>
             {mobileOpen && (
-              <ul className="border-t p-1.5">
+              <ul id="docs-onthispage-list" className="max-h-[60vh] overflow-auto border-t p-1.5">
                 {subnav.map((s) => (
                   <li key={s.id}>
                     <a
                       href={`#${s.id}`}
                       onClick={() => setMobileOpen(false)}
                       className={cn(
-                        "block rounded-md px-2.5 py-1.5 text-[13px] leading-snug",
+                        "block rounded-md border-l-2 px-2.5 py-2.5 text-[13px] leading-snug",
                         s.id === activeId
-                          ? "bg-accent font-medium text-foreground"
-                          : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+                          ? "border-brand bg-accent font-medium text-foreground"
+                          : "border-transparent text-muted-foreground hover:bg-accent/60 hover:text-foreground",
                       )}
                     >
                       {s.label}
@@ -144,12 +148,12 @@ export default function Docs() {
                   </NavLink>
                   {/* Desktop: nested, sticky sub-section nav under the active pillar, scroll-spy highlighted. */}
                   {isCurrent && subnav.length > 0 && (
-                    <ul className="ml-3 mt-1 hidden border-l border-border/70 lg:block">
+                    <ul className="ml-3 mb-1.5 mt-1 hidden border-l border-border/70 lg:block">
                       {subnav.map((sub) => (
                         <li key={sub.id}>
                           <a
                             href={`#${sub.id}`}
-                            aria-current={sub.id === activeId ? "true" : undefined}
+                            aria-current={sub.id === activeId ? "location" : undefined}
                             className={cn(
                               "-ml-px block border-l-2 py-1 pl-3 pr-2 text-[13px] leading-snug transition-colors",
                               sub.id === activeId

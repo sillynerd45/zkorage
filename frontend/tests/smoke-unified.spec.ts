@@ -65,9 +65,11 @@ test("docs pillar sections render, a diagram zooms, and under-the-hood expands",
   await page.goto("/docs/bonded-proofs");
   await expect(page.getByRole("heading", { name: "How a bond is created" })).toBeVisible();
 
-  // The retired Capabilities slug redirects into the Data Room section.
+  // The retired Capabilities slug redirects into the Data Room section AND renders (the redirect reuses the
+  // same /docs/:section route, so the page must not crash on the hook-order change).
   await page.goto("/docs/capabilities");
   await expect(page).toHaveURL(/\/docs\/data-room$/);
+  await expect(page.getByRole("heading", { name: "What a Data Room is" })).toBeVisible();
 });
 
 test("docs section nav: desktop nested submenu + mobile sticky 'On this page' bar", async ({ page }) => {
