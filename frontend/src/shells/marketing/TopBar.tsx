@@ -11,6 +11,7 @@ const NAV = [
   { to: "/docs", label: "Documentation" },
   { to: "/verify", label: "Verify" },
   { to: "/explorer", label: "Explorer" },
+  { to: "/faucet", label: "Faucet" },
 ];
 
 function linkCls(isActive: boolean) {

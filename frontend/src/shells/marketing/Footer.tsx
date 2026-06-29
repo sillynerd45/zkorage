@@ -6,6 +6,7 @@ const LINKS: { to: string; label: string }[] = [
   { to: "/docs", label: "Documentation" },
   { to: "/verify", label: "Verify it yourself" },
   { to: "/explorer", label: "Explorer" },
+  { to: "/faucet", label: "Faucet" },
   { to: "/app", label: "Open the app" },
 ];
 

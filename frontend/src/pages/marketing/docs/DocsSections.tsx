@@ -67,11 +67,18 @@ export function DocsOverview() {
       <SectionCard label="How the pieces connect">
         <p className="text-[15px] leading-relaxed text-muted-foreground">
           Your file leaves your browser only as ciphertext, so nobody but you ever sees it in the clear. The
-          diagram shows the full path: your browser encrypts the file and splits its key, the backend stores
-          only the locked file in Cloudflare R2, a
-          committee of keepers holds the key in pieces, a server we host builds the zero-knowledge proof, and
-          Stellar holds the public, re-checkable record.
+          diagram shows the full path:
         </p>
+        <BulletList
+          className="mt-3"
+          items={[
+            "Your browser encrypts the file and splits its key.",
+            "The backend stores only the locked file in Cloudflare R2.",
+            "A committee of keepers holds the key in pieces.",
+            "A server we host builds the zero-knowledge proof.",
+            "Stellar holds the public, re-checkable record.",
+          ]}
+        />
         <div className="mt-4">
           <ArchitectureFlow />
         </div>
@@ -191,15 +198,6 @@ export function DocsOverview() {
 
         <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
           The verifier and gate contracts are unaudited and run on Stellar testnet, for the demo.
-        </p>
-      </SectionCard>
-
-      <SectionCard label="ZK is load-bearing">
-        <p className="text-sm leading-relaxed text-muted-foreground">
-          The zero-knowledge proof is the only thing that lets a verifier be certain of a fact without seeing
-          the data or trusting our server. If an access list plus encryption (or just reading the public
-          chain) would do the same job, ZK would be theatre. Here it isn't: the verifier learns one fact and
-          nothing else, and re-checks it independently.
         </p>
       </SectionCard>
     </div>

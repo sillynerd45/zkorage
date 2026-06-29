@@ -20,6 +20,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { StrKey, xdr } from "@stellar/stellar-sdk";
 import {
+  FAUCET_ASSETS, FAUCET_AMOUNT as FAUCET_TOKEN_AMOUNT, FAUCET_WINDOW_MS, faucetConfigured,
+  buildTrustlineXdr, submitSignedXdr as faucetSubmitSignedXdr, payAsset, accountState,
+} from "./faucet.js";
+import { lastClaim as faucetLastClaim, recordClaim as faucetRecordClaim } from "./faucet-store.js";
+import {
   attest, attestKyc, attestPayroll, attestAccredited, attestRevenue, attestTeaser, attestSolvency,
   kycIssuerPubkey, payrollAttesterPubkey, accreditedIssuerPubkey, revenueAttesterPubkey, teaserAttesterPubkey,
   solvencyAuditorPubkey, demoSubjectId, demoInvestorId,
@@ -5419,6 +5424,97 @@ function startBatchFlusher(): void {
   scheduleNext();
   console.log(`[dr-batch] access-batching flusher armed | window ${DR_BATCH_WINDOW_MS} ms${process.env.DR_BATCH_ALLOW_MANUAL_FLUSH === "1" ? " | manual-flush ENABLED" : ""}`);
 }
+
+// ───────────────────────────────────────────────────────────────────────────────────────────────
+// Faucet — test classic assets (TUSD / TGLD / TBND / TBIL). Connect a wallet, create trustlines, the
+// issuer pays 10,000 of each. Classic ops over Horizon (see faucet.ts). Once per 24h per wallet.
+// ───────────────────────────────────────────────────────────────────────────────────────────────
+const FAUCET_RETRY_HOURS = (addr: string) =>
+  Math.ceil((FAUCET_WINDOW_MS - (Date.now() - faucetLastClaim(addr))) / 3_600_000);
+// Claims are serialized: each issuer account has a single sequence number, so two concurrent claims for the
+// same asset would collide. Claims are rare (once/day/wallet), so a single in-process queue is plenty.
+let faucetClaimChain: Promise<unknown> = Promise.resolve();
+
+app.get("/faucet/info", (_req, res) => {
+  res.json({
+    configured: faucetConfigured(),
+    amount: FAUCET_TOKEN_AMOUNT,
+    windowHours: Math.round(FAUCET_WINDOW_MS / 3_600_000),
+    assets: FAUCET_ASSETS.map((a) => ({ code: a.code, name: a.name, issuer: a.issuer, sac: a.sac })),
+  });
+});
+
+// Build the unsigned changeTrust XDR for whatever faucet assets the wallet does not yet trust (the user
+// signs it in Freighter). { none: true } means all are already trusted, so no signature is needed.
+app.post("/faucet/build-trustlines", async (req, res) => {
+  const address = String((req.body as { address?: string })?.address ?? "");
+  if (!StrKey.isValidEd25519PublicKey(address)) return res.status(400).json({ ok: false, error: "address (G-address) required" });
+  if (!faucetConfigured()) return res.status(503).json({ ok: false, error: "the faucet is not configured" });
+  try {
+    const r = await buildTrustlineXdr(address);
+    if ("none" in r) return res.json({ ok: true, none: true });
+    res.json({ ok: true, xdr: r.xdr, codes: r.codes });
+  } catch (e) {
+    const m = err(e);
+    // unfunded wallet -> 400 (the UI prompts friendbot), not a 5xx that Cloudflare would mask
+    if (/not found|404/i.test(m)) return res.status(400).json({ ok: false, error: m });
+    res.status(500).json({ ok: false, error: m });
+  }
+});
+
+// Establish trustlines (if the client signed them) + pay 10,000 of each trusted asset from its issuer.
+// Rate-limited to once per FAUCET_WINDOW_MS per wallet. A failed/empty send does not burn the cooldown.
+app.post("/faucet/claim", async (req, res) => {
+  const body = req.body as { address?: string; signedTrustlineXdr?: string };
+  const address = String(body?.address ?? "");
+  if (!StrKey.isValidEd25519PublicKey(address)) return res.status(400).json({ ok: false, error: "address (G-address) required" });
+  if (!faucetConfigured()) return res.status(503).json({ ok: false, error: "the faucet is not configured" });
+  if (Date.now() - faucetLastClaim(address) < FAUCET_WINDOW_MS) {
+    const h = FAUCET_RETRY_HOURS(address);
+    return res.status(429).json({ ok: false, error: `you already claimed; try again in about ${h} hour${h === 1 ? "" : "s"}`, retryInHours: h });
+  }
+
+  const run = faucetClaimChain.then(async () => {
+    // re-check inside the queue to close a double-submit race
+    if (Date.now() - faucetLastClaim(address) < FAUCET_WINDOW_MS) return { rateLimited: true } as const;
+    if (typeof body.signedTrustlineXdr === "string" && body.signedTrustlineXdr) {
+      await faucetSubmitSignedXdr(body.signedTrustlineXdr); // establish the trustlines first
+    }
+    const { funded, trusts } = await accountState(address);
+    if (!funded) throw new Error("account not found; fund the wallet with testnet XLM first");
+    const sent: { code: string; amount: string; txHash: string }[] = [];
+    const skipped: { code: string; reason: string }[] = [];
+    for (const a of FAUCET_ASSETS) {
+      if (!trusts.has(`${a.code}:${a.issuer}`)) {
+        skipped.push({ code: a.code, reason: "no trustline" });
+        continue;
+      }
+      try {
+        const txHash = await payAsset(a.code, address, FAUCET_TOKEN_AMOUNT);
+        sent.push({ code: a.code, amount: FAUCET_TOKEN_AMOUNT, txHash });
+      } catch (e) {
+        skipped.push({ code: a.code, reason: err(e) });
+      }
+    }
+    if (sent.length > 0) faucetRecordClaim(address, Date.now());
+    return { sent, skipped } as const;
+  });
+  faucetClaimChain = run.catch(() => {}); // keep the queue alive after a failure
+
+  try {
+    const out = await run;
+    if ("rateLimited" in out) {
+      const h = FAUCET_RETRY_HOURS(address);
+      return res.status(429).json({ ok: false, error: `you already claimed; try again in about ${h} hour${h === 1 ? "" : "s"}`, retryInHours: h });
+    }
+    if (out.sent.length === 0) {
+      return res.status(400).json({ ok: false, error: "no tokens were sent; make sure the trustlines were created", skipped: out.skipped });
+    }
+    res.json({ ok: true, sent: out.sent, skipped: out.skipped, amount: FAUCET_TOKEN_AMOUNT });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: err(e) });
+  }
+});
 
 app.listen(PORT, () => {
   console.log(`zkorage backend :${PORT} | token=${TOKEN_ID || "-"} policy=${POLICY_ID || "-"}`);

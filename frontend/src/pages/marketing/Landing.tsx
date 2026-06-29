@@ -341,7 +341,7 @@ export default function Landing() {
       <section className="mb-16 sm:mb-20" data-testid="how-it-works">
         <Reveal className="mb-5">
           <h2 className="text-xl font-semibold tracking-tight">How it works</h2>
-          <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+          <p className="mt-1 max-w-3xl text-sm leading-relaxed text-muted-foreground">
             Your data stays on a prover you run. Only a fingerprint and the proof reach Stellar, where anyone can
             re-check the result. The same three steps power both products.
           </p>
@@ -370,7 +370,7 @@ export default function Landing() {
       <section className="mb-16 sm:mb-20" data-testid="pillars">
         <Reveal className="mb-5">
           <h2 className="text-xl font-semibold tracking-tight">Two products on one engine</h2>
-          <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+          <p className="mt-1 max-w-3xl text-sm leading-relaxed text-muted-foreground">
             Both run against the live testnet. Open either in the app.
           </p>
         </Reveal>

@@ -9,6 +9,7 @@ import Verify from "./pages/marketing/Verify";
 import VerifyRoom from "./pages/marketing/VerifyRoom";
 import VerifyBond from "./pages/marketing/VerifyBond";
 import Explorer from "./pages/marketing/Explorer";
+import Faucet from "./pages/marketing/Faucet";
 // app (sidebar)
 import Home from "./pages/app/Home";
 import Reserves from "./pages/app/Reserves";
@@ -61,6 +62,7 @@ export default function App() {
         <Route path="/verify/room/:id" element={<VerifyRoom />} />
         <Route path="/verify/:issuer" element={<Verify />} />
         <Route path="/explorer" element={<Explorer />} />
+        <Route path="/faucet" element={<Faucet />} />
         <Route path="*" element={<Landing />} />
       </Route>
 
