@@ -1,5 +1,6 @@
 import { Link, NavLink } from "react-router-dom";
-import { ShieldCheck, ArrowRight } from "lucide-react";
+import { ArrowRight } from "lucide-react";
+import { BrandMark } from "@/components/BrandMark";
 import { buttonVariants } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { cn } from "@/lib/utils";
@@ -25,9 +26,7 @@ export function TopBar() {
     <header className="sticky top-0 z-40 border-b bg-background/85 backdrop-blur">
       <div className="mx-auto flex h-16 max-w-5xl items-center gap-6 px-6">
         <Link to="/" className="flex items-center gap-2 font-semibold tracking-tight" aria-label="zkorage home">
-          <span className="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground">
-            <ShieldCheck className="size-4" />
-          </span>
+          <BrandMark />
           <span className="text-[17px]">zkorage</span>
         </Link>
         <nav aria-label="Primary" className="hidden items-center gap-1 sm:flex">
