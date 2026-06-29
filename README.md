@@ -149,25 +149,54 @@ without a wallet to read and verify.
 ### Run the prover
 
 The prover turns a private input into a proof. It is self-hosted on purpose, because it is the only part of
-the system that sees the private data. You do not need it to browse, read, or verify. You only need it to
-create new proofs. It builds and runs on Linux (x86_64), not on Windows.
+the system that sees the private data. You do not need it to browse, read, or verify, only to create new
+proofs. It builds and runs on Linux (x86_64); WSL2 works, native Windows does not.
 
-You need the Rust toolchain, RISC Zero (installed with `rzup`), and Docker (the final Groth16 wrap runs in a
-container).
+Install the prerequisites: the Rust toolchain, RISC Zero 5.0.0-rc.1 (via `rzup`, which gives you `r0vm` and
+`cargo-risczero`), and Docker (the reproducible guest build and the final Groth16 wrap both run in
+containers).
 
 ```bash
+# 1) Install the RISC Zero toolchain:
+curl -L https://risczero.com/install | bash
+rzup install
+
+# 2) Prove the bundled demo claim:
 cd prover
-cargo run --release -p host    # proves the bundled demo claim and writes a proof bundle
+cargo run --release -p host    # writes a proof bundle (bundle.json + proof.txt)
 ```
 
 To produce proofs that verify on-chain you need the canonical, reproducible guest build, and there is also a
 distributed setup (a public gateway plus a GPU or CPU worker). Both are documented in `prover/README.md`.
 
+### Install the Stellar CLI
+
+The `stellar` CLI builds and deploys the Soroban contracts and runs on-chain reads from your terminal. You
+do not need it to run the web app above (the contracts are already deployed), but you need it to build or
+re-deploy a contract and to run the verify-it-yourself commands below.
+
+```bash
+cargo install --locked stellar-cli     # needs the Rust toolchain
+stellar --version                       # this project targets the 26.x line (Protocol 26)
+
+# Create and fund a testnet identity to deploy or invoke from:
+stellar keys generate zkorage-dev --network testnet --fund
+stellar keys address zkorage-dev
+```
+
 ### Build the contracts
 
-Building the Soroban contracts needs the Rust toolchain and the `stellar` CLI. This is not required to run the
-web app above, since the contracts are already deployed to testnet (see
-[Deployed contracts](#deployed-contracts-testnet)).
+This is not required to run the web app above, since the contracts are already deployed to testnet (see
+[Deployed contracts](#deployed-contracts-testnet)). To build them yourself:
+
+```bash
+cd contract
+stellar contract build                  # all contracts -> target/wasm32v1-none/release/*.wasm
+# or one: stellar contract build --package dataroom
+```
+
+The scripts in `contract/scripts/` deploy each contract, and the deployed ids live in
+`contract/deployment.testnet.json`.
 
 ## Self-test
 
