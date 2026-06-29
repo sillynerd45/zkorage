@@ -7,10 +7,11 @@ import { cn } from "@/lib/utils";
 
 // Public marketing nav. The app's ZK operations live behind "Open app →"; the top bar carries only the
 // public/exploration surfaces.
-// docs + verify open in a new tab (keeps the current page); explorer + faucet stay same-tab.
-const NAV: { to: string; label: string; newTab?: boolean }[] = [
-  { to: "/docs", label: "Documentation", newTab: true },
-  { to: "/verify", label: "Verify", newTab: true },
+// All entries open in the same tab. Documentation/Verify open in a new tab only from inside the app shell
+// (see the app Sidebar/BottomNav), not from the public marketing pages.
+const NAV: { to: string; label: string }[] = [
+  { to: "/docs", label: "Documentation" },
+  { to: "/verify", label: "Verify" },
   { to: "/explorer", label: "Explorer" },
   { to: "/faucet", label: "Faucet" },
 ];
@@ -36,7 +37,6 @@ export function TopBar() {
             <NavLink
               key={n.to}
               to={n.to}
-              {...(n.newTab ? { target: "_blank", rel: "noreferrer" } : {})}
               className={({ isActive }) => linkCls(isActive)}
             >
               {n.label}

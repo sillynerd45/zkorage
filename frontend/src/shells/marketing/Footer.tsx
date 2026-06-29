@@ -2,10 +2,11 @@ import { Link } from "react-router-dom";
 import { BrandMark } from "@/components/BrandMark";
 
 // Marketing-shell footer: site links + honest testnet note. (The fixed VersionBadge carries the build SHA.)
-// `newTab` opens an internal route in a new tab (keeps the current page); `external` is an off-site link.
-const LINKS: { to: string; label: string; newTab?: boolean; external?: boolean }[] = [
-  { to: "/docs", label: "Documentation", newTab: true },
-  { to: "/verify", label: "Verify it yourself", newTab: true },
+// Internal routes open in the same tab; `external` is an off-site link. Documentation/Verify open in a new
+// tab only from inside the app shell (see the app Sidebar/BottomNav), not from these public pages.
+const LINKS: { to: string; label: string; external?: boolean }[] = [
+  { to: "/docs", label: "Documentation" },
+  { to: "/verify", label: "Verify it yourself" },
   { to: "/explorer", label: "Explorer" },
   { to: "/faucet", label: "Faucet" },
   { to: "https://github.com/sillynerd45/zkorage", label: "GitHub", external: true },
@@ -45,7 +46,6 @@ export function Footer() {
               <Link
                 key={l.to}
                 to={l.to}
-                {...(l.newTab ? { target: "_blank", rel: "noreferrer" } : {})}
                 className="text-muted-foreground transition-colors hover:text-foreground"
               >
                 {l.label}
