@@ -7,9 +7,10 @@ import { cn } from "@/lib/utils";
 
 // Public marketing nav. The app's ZK operations live behind "Open app →"; the top bar carries only the
 // public/exploration surfaces.
-const NAV = [
-  { to: "/docs", label: "Documentation" },
-  { to: "/verify", label: "Verify" },
+// docs + verify open in a new tab (keeps the current page); explorer + faucet stay same-tab.
+const NAV: { to: string; label: string; newTab?: boolean }[] = [
+  { to: "/docs", label: "Documentation", newTab: true },
+  { to: "/verify", label: "Verify", newTab: true },
   { to: "/explorer", label: "Explorer" },
   { to: "/faucet", label: "Faucet" },
 ];
@@ -32,7 +33,12 @@ export function TopBar() {
         </Link>
         <nav aria-label="Primary" className="hidden items-center gap-1 sm:flex">
           {NAV.map((n) => (
-            <NavLink key={n.to} to={n.to} className={({ isActive }) => linkCls(isActive)}>
+            <NavLink
+              key={n.to}
+              to={n.to}
+              {...(n.newTab ? { target: "_blank", rel: "noreferrer" } : {})}
+              className={({ isActive }) => linkCls(isActive)}
+            >
               {n.label}
             </NavLink>
           ))}
