@@ -9,12 +9,14 @@
 export const SUBMIT_ATTEMPTS = 3;
 
 /** A failure worth another go on its own: a gateway / network blip, not a rejected proof. An unknown failure
- *  (no message) is treated as transient too, since a bare network throw often carries none. */
+ *  (no message) is treated as transient too, since a bare network throw often carries none. The HTTP codes are
+ *  matched only in an HTTP context ("status code 502", "HTTP 502"), never as a bare number, so a domain error
+ *  that happens to contain "502" (e.g. "need 502 stroops") is not mistaken for a gateway blip. */
 export function isTransientSubmitError(msg?: string): boolean {
   if (!msg) return true;
   const m = msg.toLowerCase();
   return (
-    /\b50[0234]\b/.test(m) || // 500 / 502 / 503 / 504, incl. "status code 502"
+    /(status code|http)\s*50[234]\b/.test(m) || // "request failed with status code 502", "HTTP 502"
     m.includes("bad gateway") ||
     m.includes("gateway timeout") ||
     m.includes("service unavailable") ||
@@ -34,11 +36,13 @@ export function isTransientSubmitError(msg?: string): boolean {
 
 /** The grant already exists (this accessor's per-room nullifier is spent). That is a SUCCESS for opening: the
  *  access is on-chain, so we fetch the key rather than fail. It also makes a retry idempotent if a prior
- *  attempt's tx landed but its response was lost. */
+ *  attempt's tx landed but its response was lost. Matches the gate's reused-nullifier error #12 (in any
+ *  wrapping) and the explicit "already (spent|recorded|granted|...)" phrasings, but NOT a bare "already" (which
+ *  could appear in an unrelated message like "transaction already submitted"). */
 export function looksAlreadyRecorded(msg?: string): boolean {
   if (!msg) return false;
   const m = msg.toLowerCase();
-  return m.includes("nullifier") || m.includes("already") || /\b#12\b/.test(m) || m.includes("error(contract, #12)");
+  return m.includes("nullifier") || m.includes("#12") || /already (spent|recorded|granted|admitted|exist)/.test(m);
 }
 
 /** Turn a raw submit failure into a sentence a user can act on, never a bare "status code 502". */
@@ -49,9 +53,20 @@ export function humanizeSubmitError(msg?: string): string {
   return msg && msg.trim() ? msg : "We couldn't record your access on-chain. Please try again.";
 }
 
+// Sleep, but wake early if cancelled, so teardown after the user navigates away mid-backoff is snappy.
+async function cancellableSleep(ms: number, isCancelled: () => boolean): Promise<void> {
+  const step = 250;
+  for (let waited = 0; waited < ms; waited += step) {
+    if (isCancelled()) return;
+    await new Promise((res) => setTimeout(res, Math.min(step, ms - waited)));
+  }
+}
+
 /** Run an on-chain submit with a few retries on transient failures (small backoff between tries). Stops early
  *  on a non-transient failure (it will not pass on a retry) or once the grant is recorded. Returns the last
- *  result either way; the caller decides success via `ok` / looksAlreadyRecorded. */
+ *  result either way; the caller decides success via `ok` / looksAlreadyRecorded. The returned value is either
+ *  the real submit result `T` or, when every attempt failed (or the run was cancelled before any attempt), a
+ *  minimal `{ ok: false, error? }` the caller reads the same way. */
 export async function submitWithRetry<T extends { ok: boolean; error?: string }>(
   fn: () => Promise<T>,
   opts: {
@@ -61,27 +76,25 @@ export async function submitWithRetry<T extends { ok: boolean; error?: string }>
     /** Backoff before the next attempt; overridable so the selftest runs without real waits. */
     backoffMs?: (attempt: number) => number;
   } = {},
-): Promise<T> {
+): Promise<T | { ok: false; error?: string }> {
   const total = opts.attempts ?? SUBMIT_ATTEMPTS;
   const isCancelled = opts.isCancelled ?? (() => false);
   const backoff = opts.backoffMs ?? ((attempt: number) => 1500 * attempt); // 1.5s, then 3s
-  let last = { ok: false } as T;
+  let last: { ok: false; error?: string } = { ok: false };
   for (let attempt = 1; attempt <= total; attempt++) {
     if (isCancelled()) return last;
     opts.onAttempt?.(attempt, total);
     try {
       const r = await fn();
       if (r.ok || looksAlreadyRecorded(r.error)) return r;
-      last = r;
+      last = { ok: false, error: r.error };
       if (!isTransientSubmitError(r.error)) return r;
     } catch (e) {
       const error = String((e as Error)?.message ?? e);
-      last = { ok: false, error } as T;
-      if (looksAlreadyRecorded(error) || !isTransientSubmitError(error)) return last;
+      if (looksAlreadyRecorded(error) || !isTransientSubmitError(error)) return { ok: false, error };
+      last = { ok: false, error };
     }
-    if (attempt < total && !isCancelled()) {
-      await new Promise((res) => setTimeout(res, backoff(attempt)));
-    }
+    if (attempt < total) await cancellableSleep(backoff(attempt), isCancelled);
   }
   return last;
 }

@@ -809,12 +809,16 @@ export function useSharedOpen() {
       setProveStep("Recording your access on-chain.");
       // Record both grants. The membership grant carries the recipient_pub the keepers seal to; the bond grant
       // satisfies is_doc_admitted. Both must exist before the keepers will release the key. Each submit retries
-      // its own transient failures, so a gateway blip on one does not force a full re-prove.
+      // its own transient failures, so a gateway blip on one does not force a full re-prove. Both run in
+      // parallel, so the retry hint stays generic (no per-call attempt number that would flicker between them).
+      const onAttempt = (attempt: number) => {
+        if (attempt > 1) setProveStep("Recording your access on-chain. Retrying…");
+      };
       const submits: Promise<{ ok: boolean; error?: string }>[] = [
-        submitWithRetry(() => submitBond(bondBundle), { isCancelled: () => cancelled.current }),
+        submitWithRetry(() => submitBond(bondBundle), { isCancelled: () => cancelled.current, onAttempt }),
       ];
       if (memberBundle)
-        submits.unshift(submitWithRetry(() => requestAccess(memberBundle), { isCancelled: () => cancelled.current }));
+        submits.unshift(submitWithRetry(() => requestAccess(memberBundle), { isCancelled: () => cancelled.current, onAttempt }));
       const results = await Promise.all(submits);
       if (cancelled.current) return;
       for (const r of results) {

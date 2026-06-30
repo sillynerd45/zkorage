@@ -34,16 +34,20 @@ ok("bad gateway is transient", isTransientSubmitError("502 Bad Gateway"));
 ok("timeout is transient", isTransientSubmitError("socket hang up / ETIMEDOUT"));
 ok("failed to fetch is transient", isTransientSubmitError("TypeError: Failed to fetch"));
 ok("html parse error is transient", isTransientSubmitError("Unexpected token '<' in JSON at position 0"));
+ok("HTTP 502 (fetch layer) is transient", isTransientSubmitError("HTTP 502"));
 ok("no message is transient (retry the unknown)", isTransientSubmitError(undefined));
 ok("a rejected proof is NOT transient", !isTransientSubmitError("proof verification failed"));
 ok("a contract reject is NOT transient", !isTransientSubmitError("Error(Contract, #7)"));
 ok("the amount 5020 does not look like a 502", !isTransientSubmitError("amount 5020 too small"));
+ok("a bare 502 in a domain error is NOT transient", !isTransientSubmitError("insufficient balance: need 502 stroops"));
 
 // ── looksAlreadyRecorded ──
 ok("nullifier reuse looks already-recorded", looksAlreadyRecorded("nullifier already spent"));
 ok("error #12 looks already-recorded", looksAlreadyRecorded("Error(Contract, #12)"));
+ok("a differently-wrapped #12 still looks already-recorded", looksAlreadyRecorded("contract error #12"));
 ok("'already granted' looks already-recorded", looksAlreadyRecorded("access already granted"));
 ok("a 502 does NOT look already-recorded", !looksAlreadyRecorded("Request failed with status code 502"));
+ok("'already submitted' does NOT look already-recorded", !looksAlreadyRecorded("transaction already submitted"));
 ok("no message does NOT look already-recorded", !looksAlreadyRecorded(undefined));
 
 // ── humanizeSubmitError ──
@@ -127,10 +131,22 @@ await check("cancellation between attempts stops the retry loop", async () => {
   let calls = 0;
   let cancel = false;
   const r = await submitWithRetry(
-    async () => { calls++; cancel = true; return { ok: false, error: "502" }; },
+    async () => { calls++; cancel = true; return { ok: false, error: "Failed to fetch" }; },
     { ...NOWAIT, isCancelled: () => cancel },
   );
   return !r.ok && calls === 1; // first run flips cancel; the loop top sees it and bails
+});
+
+await check("backoff wakes early on cancel (no long wait)", async () => {
+  let calls = 0;
+  let cancel = false;
+  const t0 = Date.now();
+  const r = await submitWithRetry(
+    async () => { calls++; cancel = true; return { ok: false, error: "Failed to fetch" }; },
+    { isCancelled: () => cancel, backoffMs: () => 5000 },
+  );
+  const elapsed = Date.now() - t0;
+  return !r.ok && calls === 1 && elapsed < 1000; // cancellableSleep woke early instead of waiting 5s
 });
 
 console.log(`submitRetry selftest: ${pass} passed, ${fail} failed`);
