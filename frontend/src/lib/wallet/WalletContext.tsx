@@ -93,7 +93,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     };
   }, [refresh]);
 
-  // Re-validate when the tab regains focus. This catches account / network switches made in the extension.
+  // Re-validate when the tab regains focus. This catches account / network switches made in the extension
+  // while this tab was in the background.
   useEffect(() => {
     const onFocus = async () => {
       if (status !== "connected" && status !== "wrong-network") return;
@@ -102,6 +103,29 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
+  }, [status, refresh]);
+
+  // While connected, poll for an account / network switch made in the extension WITH this tab already focused.
+  // Freighter exposes no change event, and the focus handler above only fires after a tab refocus, so a switch
+  // made while the user stays on the page would otherwise go unnoticed: My Balances would keep the old account's
+  // locks, the "you already hold this bond" check would miss, and the sync toggle would show the old account's
+  // preference. getAddress is a cheap message to the extension, and refresh() only changes React state when the
+  // address or network actually changed, so an unchanged poll causes no re-render. The poll goes through
+  // freighter(), so the Playwright __freighterMock seam drives it too.
+  useEffect(() => {
+    if (status !== "connected" && status !== "wrong-network") return;
+    let inFlight = false;
+    const id = setInterval(async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const s = await refresh();
+        if (mounted.current) setStatus(s);
+      } finally {
+        inFlight = false;
+      }
+    }, 2000);
+    return () => clearInterval(id);
   }, [status, refresh]);
 
   const connect = useCallback(async () => {
