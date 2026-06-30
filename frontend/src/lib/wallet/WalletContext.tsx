@@ -47,21 +47,51 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [network, setNetwork] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const mounted = useRef(true);
+  // The user's INTENT to be connected, separate from the live wallet status. Set on a successful connect /
+  // silent reconnect, cleared on disconnect. Background reconcilers gate every state write on this, so an
+  // in-flight read that resolves after Disconnect cannot revive the wallet (Freighter keeps returning the
+  // address after an app-level disconnect, since it has no programmatic revoke).
+  const wantConnected = useRef(false);
 
-  // Read address + network and resolve to connected | wrong-network. Returns the resolved status.
-  const refresh = useCallback(async (): Promise<WalletStatus> => {
+  // Read the live Freighter address + network and resolve to a status. PURE: writes no React state, so a read
+  // that resolves after the user disconnects (or after unmount) cannot revive anything. Goes through
+  // freighter(), so the Playwright __freighterMock seam drives it too.
+  const readWallet = useCallback(async (): Promise<{
+    status: WalletStatus;
+    address: string | null;
+    network: string | null;
+  }> => {
     const fi = freighter();
     const a = await fi.getAddress();
-    if (a.error || !a.address) {
-      setAddress(null);
-      setNetwork(null);
-      return "disconnected";
-    }
+    if (a.error || !a.address) return { status: "disconnected", address: null, network: null };
     const n = await fi.getNetwork();
-    setAddress(a.address);
-    setNetwork(n.network ?? null);
-    return n.network === EXPECTED_NETWORK ? "connected" : "wrong-network";
+    return {
+      status: n.network === EXPECTED_NETWORK ? "connected" : "wrong-network",
+      address: a.address,
+      network: n.network ?? null,
+    };
   }, []);
+
+  // A background re-check: read the live wallet and apply it, but ONLY while the user still intends to be
+  // connected and the provider is mounted. Intent is re-checked AFTER the await, so a reconcile in flight when
+  // the user clicks Disconnect drops its result instead of repopulating address/status.
+  const reconcile = useCallback(async () => {
+    if (!wantConnected.current) return;
+    const r = await readWallet();
+    if (!mounted.current || !wantConnected.current) return;
+    setStatus(r.status);
+    setAddress(r.address);
+    setNetwork(r.network);
+  }, [readWallet]);
+
+  // Used by the explicit connect / silent-reconnect flows (which set the intent just before calling): apply
+  // address + network and return the status for the caller to set.
+  const refresh = useCallback(async (): Promise<WalletStatus> => {
+    const r = await readWallet();
+    setAddress(r.address);
+    setNetwork(r.network);
+    return r.status;
+  }, [readWallet]);
 
   // On mount: detect the extension, then silently reconnect if the user connected before and the site
   // is still allowed (Freighter remembers the grant).
@@ -82,6 +112,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         /* treat as not allowed */
       }
       if (wanted && allowed) {
+        wantConnected.current = true;
         const s = await refresh();
         if (mounted.current) setStatus(s);
       } else if (mounted.current) {
@@ -93,40 +124,33 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     };
   }, [refresh]);
 
-  // Re-validate when the tab regains focus. This catches account / network switches made in the extension
-  // while this tab was in the background.
+  // Re-validate when the tab regains focus: catches an account / network switch (or an extension unlock) made
+  // while this tab was backgrounded. reconcile() no-ops unless the user intends to be connected.
   useEffect(() => {
-    const onFocus = async () => {
-      if (status !== "connected" && status !== "wrong-network") return;
-      const s = await refresh();
-      if (mounted.current) setStatus(s);
-    };
+    const onFocus = () => void reconcile();
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, [status, refresh]);
+  }, [reconcile]);
 
-  // While connected, poll for an account / network switch made in the extension WITH this tab already focused.
-  // Freighter exposes no change event, and the focus handler above only fires after a tab refocus, so a switch
-  // made while the user stays on the page would otherwise go unnoticed: My Balances would keep the old account's
-  // locks, the "you already hold this bond" check would miss, and the sync toggle would show the old account's
-  // preference. getAddress is a cheap message to the extension, and refresh() only changes React state when the
-  // address or network actually changed, so an unchanged poll causes no re-render. The poll goes through
-  // freighter(), so the Playwright __freighterMock seam drives it too.
+  // Poll for a change made WITH this tab focused: an account / network switch, an extension lock, or recovery
+  // from one. Freighter exposes no change event, and the focus handler only fires on a refocus, so a switch made
+  // while the user stays on the page would otherwise go unnoticed (stale My Balances, a missed "you already hold
+  // this bond" check, a stale sync toggle). The interval lives for the provider's lifetime but no-ops unless the
+  // user intends to be connected, so it also keeps trying through an extension lock and recovers on unlock
+  // instead of stranding the app in "disconnected" until a reload. It skips a hidden tab (the focus handler
+  // covers refocus) to keep extension chatter down; reconcile() only re-renders when something changed.
   useEffect(() => {
-    if (status !== "connected" && status !== "wrong-network") return;
     let inFlight = false;
-    const id = setInterval(async () => {
-      if (inFlight) return;
+    const id = setInterval(() => {
+      if (inFlight || !wantConnected.current) return;
+      if (typeof document !== "undefined" && document.hidden) return;
       inFlight = true;
-      try {
-        const s = await refresh();
-        if (mounted.current) setStatus(s);
-      } finally {
+      void reconcile().finally(() => {
         inFlight = false;
-      }
+      });
     }, 2000);
     return () => clearInterval(id);
-  }, [status, refresh]);
+  }, [reconcile]);
 
   const connect = useCallback(async () => {
     setError(null);
@@ -146,6 +170,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         return;
       }
       if (typeof localStorage !== "undefined") localStorage.setItem(LS_KEY, "1");
+      wantConnected.current = true;
       const s = await refresh();
       if (mounted.current) setStatus(s);
     } catch (e) {
@@ -155,6 +180,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   }, [refresh]);
 
   const disconnect = useCallback(() => {
+    // Drop the connect intent FIRST, so any reconcile already in flight sees it after its await and drops its
+    // result instead of repopulating the wallet we are about to clear.
+    wantConnected.current = false;
     // Freighter has no programmatic revoke; this is an app-level disconnect (stop using the grant).
     if (typeof localStorage !== "undefined") localStorage.removeItem(LS_KEY);
     // Drop the in-memory master signature (the HKDF input keying material for both pillars), so a later
