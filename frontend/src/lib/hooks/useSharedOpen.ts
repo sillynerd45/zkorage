@@ -41,6 +41,7 @@ import { markBondLocked, clearBondLocked, hasBondLockedFor } from "@/lib/dataroo
 import { getBondOpenIdentity } from "@/lib/bonded/bondOpenIdentity";
 import { getBondSig, loadIdentityAt } from "@/lib/bonded/handle";
 import { isHex32 } from "@/lib/format";
+import { submitWithRetry, looksAlreadyRecorded, humanizeSubmitError } from "@/lib/dataroom/submitRetry";
 
 // "Open a document" (Model B). One screen, one action: the member lands on the rooms they are approved for,
 // picks a document, and clicks Open. A single orchestrator reads their live on-chain status and branches:
@@ -754,9 +755,17 @@ export function useSharedOpen() {
         if (cancelled.current) return;
         setPhase("queuing");
         setProveStep("Recording your access on-chain.");
-        const r = await submitBondOpen(bondBundle);
+        const r = await submitWithRetry(() => submitBondOpen(bondBundle), {
+          isCancelled: () => cancelled.current,
+          onAttempt: (attempt, total) =>
+            setProveStep(
+              attempt === 1
+                ? "Recording your access on-chain."
+                : `Recording your access on-chain. Retrying (attempt ${attempt} of ${total})…`,
+            ),
+        });
         if (cancelled.current) return;
-        if (!r.ok) throw new Error(r.error || "could not record your access on-chain");
+        if (!r.ok && !looksAlreadyRecorded(r.error)) throw new Error(humanizeSubmitError(r.error));
         await doOpen(openDocId, identity, BOND_FLOOR);
         return;
       }
@@ -799,13 +808,17 @@ export function useSharedOpen() {
       setPhase("queuing");
       setProveStep("Recording your access on-chain.");
       // Record both grants. The membership grant carries the recipient_pub the keepers seal to; the bond grant
-      // satisfies is_doc_admitted. Both must exist before the keepers will release the key.
-      const submits: Promise<{ ok: boolean; error?: string }>[] = [submitBond(bondBundle)];
-      if (memberBundle) submits.unshift(requestAccess(memberBundle));
+      // satisfies is_doc_admitted. Both must exist before the keepers will release the key. Each submit retries
+      // its own transient failures, so a gateway blip on one does not force a full re-prove.
+      const submits: Promise<{ ok: boolean; error?: string }>[] = [
+        submitWithRetry(() => submitBond(bondBundle), { isCancelled: () => cancelled.current }),
+      ];
+      if (memberBundle)
+        submits.unshift(submitWithRetry(() => requestAccess(memberBundle), { isCancelled: () => cancelled.current }));
       const results = await Promise.all(submits);
       if (cancelled.current) return;
       for (const r of results) {
-        if (!r.ok) throw new Error(r.error || "could not record your access on-chain");
+        if (!r.ok && !looksAlreadyRecorded(r.error)) throw new Error(humanizeSubmitError(r.error));
       }
       await doOpen(openDocId, identity, BOND_FLOOR);
     } catch (e) {
