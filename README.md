@@ -7,79 +7,101 @@
 
 <h1 align="center">zkorage</h1>
 
-<p align="center">Prove a fact about private data without showing the data, and let anyone check the proof on Stellar.</p>
+<p align="center"><b>Prove a fact about private data. Let anyone verify it on Stellar without seeing the data.</b></p>
 
-You hold some private information. It could be a document, a reserve balance, or a KYC record. You want to
-prove one fact about it ("reserves are at least the supply", "this person passed KYC", "this file says
-revenue is over $X") to someone who should not see the raw data. zkorage runs a zero-knowledge proof on a
-machine you control, turns it into a small proof, and a Stellar (Soroban) smart contract verifies it
-on-chain. The person checking the proof never sees your data and does not have to trust our server.
+<p align="center">
+  <img alt="Network: Stellar testnet" src="https://img.shields.io/badge/Stellar-testnet-7b3fe4">
+  <img alt="Prover: RISC Zero 5.0.0-rc.1" src="https://img.shields.io/badge/prover-RISC%20Zero%205.0.0--rc.1-5a45ff">
+  <img alt="Verifier: Soroban BN254" src="https://img.shields.io/badge/verifier-Soroban%20Groth16%20(BN254)-2ea043">
+</p>
 
-> Built for the **Stellar Hacks: Real-World ZK** hackathon. The contracts are **unaudited. This is a demo on
-> testnet.**
+<p align="center">
+  <a href="https://zkorage.wazowsky.id"><b>Live demo</b></a> ·
+  <a href="#demo"><b>Demo video</b></a> ·
+  <a href="https://apizk.wazowsky.id"><b>API</b></a> ·
+  <a href="https://github.com/sillynerd45/zkorage"><b>Source</b></a>
+</p>
 
-## Links
+zkorage is a zero-knowledge toolkit on Stellar (Soroban). You hold private data: a document, a reserve
+balance, a bond you locked. You prove **one fact** about it to someone who should not see the rest, and that
+person verifies the proof against an on-chain contract. They never see your data, and they do not have to
+trust our server. Everything reads back from the public ledger.
 
-- **App (live demo):** https://zkorage.wazowsky.id
-- **Source code:** https://github.com/sillynerd45/zkorage
-- **API:** https://apizk.wazowsky.id
+You can browse and verify everything with **no wallet**. Connect Freighter (set to Testnet) only when you want
+to create your own proofs and pay your own gas.
 
-The app runs on Stellar **testnet**. You can browse and verify everything with no wallet. To create your own
-proofs and pay your own gas, connect a wallet (see [Wallet support](#wallet-support)).
+> Built for **Stellar Hacks: Real-World ZK**. The contracts are **unaudited**. This is a **testnet demo**. Do
+> not use it with real funds.
+
+## Demo
+
+<!-- TODO: paste the public YouTube or Loom link here, then change "coming soon" to the link. Keep it under the
+     hackathon's video length cap. Place a short GIF of the store-then-open flow right below it if you record one. -->
+
+**Demo video:** _coming soon._
+
+In about two minutes the video walks through the live flow: a room owner seals a document, a reader who was
+never named on a list opens it by proving they qualify, and a third party re-checks the on-chain result with
+no zkorage server in the loop.
+
+## Why zero-knowledge is the point here
+
+This hackathon asks for projects where zero-knowledge is genuinely load-bearing, not decoration. Here is the
+exact place it carries the weight.
+
+A reader opens a sealed room by proving they **hold a qualifying bond**: a token locked above a threshold until
+a deadline. They reveal nothing else.
+
+- An **access list** would need the reader's identity, which defeats the point.
+- **Reading the public chain** would expose which wallet holds the bond, again defeating the point.
+- A plain **signature** from us would just move the trust back onto our server.
+
+The zero-knowledge proof is the only thing that lets the on-chain verifier be **certain the reader qualifies
+while the reader stays anonymous** inside an anonymity set. A one-time nullifier then stops the same access
+from being reused. Take the same idea to the Bonded Proofs side: you prove a fact that holds only while your
+bond stays locked, so pulling the bond makes the proof go void and it cannot be faked after the fact.
 
 ## What you can do
 
-The app has two main areas.
+The app has two areas.
 
 ### Confidential Data Room
 
-Store an encrypted document and share it only with people who prove they are allowed to open it, without
-revealing who they are. The file itself stays encrypted. Only a tamper-evident fingerprint goes on-chain.
+Store an encrypted document and open it only to people who prove they are allowed, without revealing who they
+are. The file stays encrypted off-chain; only a tamper-evident fingerprint goes on-chain. The room owner picks
+one access model:
 
-A room owner picks one of two access models:
+- **Membership.** The owner approves a list. A member opens a document by proving membership without revealing
+  which member, and only once per room (a nullifier blocks reuse).
+- **Bonded Access.** The owner sets a requirement (a token, a minimum amount, a deadline). Anyone who locks a
+  qualifying bond opens the room with no approval and no member list, proving they qualify without revealing
+  which wallet, which lock, or the exact amount.
 
-- **Membership.** The owner approves a list of members. An approved member opens a document by proving they
-  are on the list, without revealing which member they are, and only once per room (a nullifier blocks reuse).
-- **Bonded Access.** The owner sets a requirement: a token, a minimum amount, and a deadline. Anyone who
-  locks a qualifying bond can open the room with no approval and no member list. The reader proves they hold a
-  qualifying bond without revealing which wallet, which lock, or the exact amount.
-
-When someone is allowed to open a document, the document key is released by a 2-of-3 keeper committee, so no
-single server ever holds the key. The reader collects two of the three sealed shares and rebuilds the key in
-their own browser.
+When access is granted, the document key is released by a **2-of-3 keeper committee**, so no single server ever
+holds the key. The reader collects two sealed shares and rebuilds the key in their own browser.
 
 ### Bonded Proofs
 
-Lock tokens in a time-locked escrow contract on Stellar, then build proofs on top of that lock.
+Lock tokens in a time-locked escrow contract, then build proofs on top of that lock. The standalone Bonded
+Access bond doubles as a reusable, anonymous access gate across rooms with the same requirement. Two earlier
+proof demos (a solvency proof that voids the moment you withdraw collateral, and an anonymous tier that expires
+at a deadline) stay reachable by URL.
 
-- **Bonded Access bond.** The same bond above also works as a standalone, anonymous access gate. Lock a
-  qualifying bond once and reuse it to open every room that asks for the same requirement.
-- **Earlier proof demos.** A solvency proof that becomes void the moment you withdraw your collateral, and an
-  anonymous tier that expires at a chosen deadline. These were earlier demos and stay reachable by URL.
+Outside the app, the public site has Documentation, a **Verify** page (paste a link or id and re-check it
+on-chain), an **Explorer** of public rooms, and a **Faucet** for the four test tokens used by Bonded Access.
 
-### The public site
+## What the proof guarantees, and the trust model
 
-Outside the app, the public site has a landing page, **Documentation**, a **Verify** page (paste a link or an
-id and re-check it on-chain), an **Explorer** of public rooms, and a **Faucet** that hands out the four test
-tokens used by Bonded Access.
-
-## Wallet support
-
-zkorage derives your private keys by having your wallet sign one fixed message, then running that signature
-through a key-derivation step (sign-to-derive). Nothing is stored, so you get the same keys on any device. This
-needs a wallet that supports deterministic message signing the SEP-53 way (a sha256 over the standard "Stellar
-Signed Message" prefix, signed with ed25519, returning the same bytes every time).
-
-- **Freighter (tested).** This is the only wallet wired into the app today, and the one we test against.
-  Install the Freighter extension, set it to **Testnet**, and connect from the top right.
-- **xBull (not integrated yet).** xBull signs the same SEP-53 way, so it would derive the same identity, but
-  it is not wired in yet. Support is planned through the Stellar Wallets Kit.
-
-Other wallets are out for now. Rabet and Albedo sign arbitrary messages in their own non-SEP-53 formats, so
-they would produce a different identity, and the rest were not checked.
-
-You only need a wallet to make your own proofs and pay your own gas. Reading and verifying on-chain needs no
-wallet.
+1. **The verifier learns one fact and nothing else.** The proof attests the predicate ("reader holds a
+   qualifying bond", "reserves are at least supply"), not the underlying data.
+2. **The prover is the only party that ever sees the private data, so we self-host proving** and never send a
+   private witness to a shared proving market.
+3. **The result lives on-chain.** Anyone re-reads it and re-verifies the proof against the public Groth16
+   verifier, with no zkorage server. See [Verify it yourself](#verify-it-yourself).
+4. **Every claim is anchored to something real.** For the Data Room and Bonded Access, the anchor is on-chain
+   fact: a lock's state, a token's supply, checked by the gate contract. For the signature-anchored use-case
+   proofs, an attester's ed25519 signature is checked **inside** the zkVM. A proof over unanchored data would
+   be hollow, so the anchor is part of the design.
 
 ## How it works
 
@@ -90,20 +112,103 @@ wallet.
   </picture>
 </p>
 
-Three pieces:
+- **Prover (off-chain, self-hosted).** A RISC Zero zkVM guest checks the private input, asserts the fact, and
+  produces a STARK proof. The host wraps that into a small Groth16 proof over the BN254 curve. It runs on a
+  box we control, with GPU proving and a CPU fallback, never in the browser and never on a shared market.
+- **Verifier (on-chain).** A bare Groth16 verifier on Soroban checks the proof with native BN254 host
+  functions. A small policy/gate contract then binds the proven fact to on-chain facts and records the result,
+  so anyone can re-read and re-check it.
+- **Keys (Data Room).** The document key is AES-256-GCM, split 2-of-3 with Shamir across a keeper committee.
+  No key or contents ever go on-chain.
 
-- **Prover (off-chain, self-hosted).** A RISC Zero zkVM guest checks the private input, asserts the fact you
-  want to prove, and produces a STARK proof. The host wraps that into a small Groth16 proof over the BN254
-  curve. The prover is the only party that ever sees the private data, so we run it ourselves and never send a
-  private input to a third-party proving service.
-- **Verifier (on-chain).** A bare Groth16 verifier contract on Soroban checks the proof with native BN254
-  pairing host functions. A small policy contract then binds the proven fact to on-chain facts (a token's
-  supply, a lock's state) and records the result. Anyone can re-read and re-check it.
-- **Attestation.** The private data is signed by a trusted party (a custodian, an auditor, a KYC provider).
-  The signature is checked inside the zkVM, so a proof is only as good as the signed claim behind it. The demo
-  uses a mock signer that can be swapped for a real one.
+**Built with:** Stellar / Soroban (soroban-sdk 26.1.0, Protocol 26 BN254 host functions), RISC Zero 5.0.0-rc.1
+(zkVM + Groth16 wrap, BN254), Rust, TypeScript, React + Vite, Node. Full design notes in
+[`ARCHITECTURE.md`](ARCHITECTURE.md).
 
-The whole stack runs on **RISC Zero 5.0.0-rc.1**, with GPU proving on a self-hosted box and a CPU fallback.
+## Verify it yourself
+
+Every result is on the public chain, so you can re-check it with the `stellar` CLI and no zkorage server. The
+in-app **Verify** page fills in the exact values for any claim, so you do not have to assemble them by hand.
+
+```bash
+# Re-verify a Groth16 proof against the public verifier (bundle comes from the Verify page or GET /audit/latest):
+stellar contract invoke --id CBAPC663PTWIWDLYNCG5WAD5MIZF4SKY43U6L2NM5ZUU5XFOS4JDYAFW \
+  --network testnet --source <any-funded-account> -- verify --seal <hex> --image_id <hex> --journal <hex>
+```
+
+Here `journal` is the sha256 digest of the journal bytes.
+
+## Deployed contracts (testnet)
+
+These are the contracts the live app uses. The full record (the verifier, the demo token, and the earlier
+per-use-case gates) is in [`contract/deployment.testnet.json`](contract/deployment.testnet.json) and
+[`ARCHITECTURE.md`](ARCHITECTURE.md), and the in-app **Contracts** page reads them live. Click an id to open it
+on stellar.expert.
+
+| Contract | Role | Id |
+|---|---|---|
+| Groth16 verifier | Checks every proof on-chain (RISC Zero params 5.0.0-rc.1) | [`CBAPC663…AFW`](https://stellar.expert/explorer/testnet/contract/CBAPC663PTWIWDLYNCG5WAD5MIZF4SKY43U6L2NM5ZUU5XFOS4JDYAFW) |
+| Data Room | Seals documents, gates anonymous access, records grants | [`CDUQITRV…LNN`](https://stellar.expert/explorer/testnet/contract/CDUQITRVJOPJNVWBUINLZFI2LHPOLVFW2I7354WEFDG2W3VIG627HLNN) |
+| Escrow | Time-locked bond the proofs bind to | [`CAMQKJKA…OXC`](https://stellar.expert/explorer/testnet/contract/CAMQKJKAJTOMT66N5N3E3VIRTN5ACDKV6P3Z2HLYVJHLAVRGJKHZFOXC) |
+| Bonded Access gate | Verifies the anonymous bond proof and grants access | [`CCKX6B7Q…CZU`](https://stellar.expert/explorer/testnet/contract/CCKX6B7QIE42YA27Y4KTB6CTXRB3OBGR5EW7N2BLAG4AB3V6CFDKXCZU) |
+
+## Tests and rigor
+
+The on-chain behavior is covered by Rust unit tests on every contract, plus end-to-end runs that prove and
+submit against live testnet, plus Playwright specs that drive a real browser.
+
+| Contract | Tests |
+|---|---|
+| Data Room (DR1-DR6) | 117 |
+| Bonded Access gate | 36 |
+| Solvency gate | 29 |
+| Tier gate | 25 |
+| Escrow | 22 |
+| Demo token | 7 |
+| Groth16 verifier | 4 |
+
+The strongest evidence is on-chain, not a test count:
+
+- **Anonymous access, then reuse blocked.** Two different accessors derived from one membership credential: the
+  first opened the room, the second was rejected on-chain by the nullifier, and the record reveals neither
+  identity nor which member. This is the load-bearing demonstration, and it is live.
+- **A proof that voids itself.** In the solvency demo, a proof verified SOLVENT on-chain, and the moment the
+  collateral was unbonded the same `is_granted` read returned VOID. The bond is the live signal, not a stored
+  flag.
+
+Run the suites yourself in [Run it locally](#run-it-locally).
+
+## Run it locally
+
+You need **Node 22**. These steps run the web app against the live testnet contracts, so you do **not** need
+the prover or Docker just to browse, read, or verify. Run each server in its own terminal.
+
+```bash
+# 1) Build the SDK first. The backend and frontend consume it via file:../sdk.
+cd sdk && npm install && npm run build
+
+# 2) Backend API on :8787
+cd backend && cp .env.example .env && npm install && npm run dev
+
+# 3) Frontend on :5173
+cd frontend && npm install && npm run dev
+```
+
+Open http://localhost:5173. The contract ids are already filled in `backend/.env.example`. To submit through
+the server relay, set `SIGNER_SECRET` to a funded testnet key; reads and verification work without it.
+Cloudflare R2 is optional (leave the `R2_*` vars blank to use the local blob store).
+
+Self-test:
+
+```bash
+cd sdk && npm run smoke                 # re-verify the live testnet claims from the chain
+cd frontend && npx playwright install   # first run only
+npx playwright test                     # end-to-end specs (Chrome runs GPU-disabled; keep it that way)
+```
+
+Running the **self-hosted prover** (only needed to create new proofs) and **rebuilding or redeploying the
+contracts** are covered in [`prover/README.md`](prover/README.md), [`deploy/README.md`](deploy/README.md), and
+[`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ## Repository layout
 
@@ -119,137 +224,36 @@ keyper/     The 2-of-3 keeper committee that splits and releases each Data Room 
 deploy/     Dockerfiles and deploy notes for the prover VM.
 ```
 
-## Run it locally
+## Wallet support
 
-You need **Node 22**. These steps run the web app against the live testnet contracts. You do not need the
-prover or Docker just to browse, read, or verify. Run each server in its own terminal.
+zkorage derives your keys by having your wallet sign one fixed message the SEP-53 way (a sha256 over the
+standard "Stellar Signed Message" prefix, signed with ed25519, returning the same bytes every time), then
+running that signature through a key-derivation step. Nothing is stored, so you get the same keys on any
+device.
 
-```bash
-# 1) Build the SDK first. The backend and frontend consume it via file:../sdk.
-cd sdk && npm install && npm run build
+- **Freighter (tested).** The only wallet wired in today. Install the extension, set it to Testnet, connect
+  from the top right.
+- **xBull (not integrated yet).** It signs the same SEP-53 way, so it would derive the same identity, but it is
+  not wired in. Support is planned through the Stellar Wallets Kit.
 
-# 2) Backend API on :8787 (leave it running)
-cd backend && cp .env.example .env && npm install && npm run dev
+Reading and verifying need no wallet. You only need one to create your own proofs and pay your own gas.
 
-# 3) Frontend on :5173 (leave it running)
-cd frontend && npm install && npm run dev
-```
+## Known limitations and what is next
 
-The contract ids are already filled in `backend/.env.example`. To submit transactions through the server
-relay, set `SIGNER_SECRET` to a funded testnet key. Reads and verification work without it.
+This is a hackathon demo, and the honest edges are part of the trust story.
 
-**Cloudflare R2 is optional.** The backend stores the encrypted Data Room files in object storage. Leave the
-`R2_*` variables blank in `backend/.env` to use the built-in local store at `backend/data/blobs`, which is
-fine for local development. To use Cloudflare R2 instead, set `R2_ACCOUNT_ID`, `R2_ENDPOINT`, `R2_BUCKET`,
-`R2_ACCESS_KEY_ID`, and `R2_SECRET_ACCESS_KEY` in `backend/.env`.
+- **Unaudited, testnet only.** Do not use the contracts with real funds.
+- **The attester is mocked.** For the signature-anchored use-case proofs the signer is a demo key, swappable
+  for a real issuer. The Data Room and Bonded Access anchor to on-chain fact instead, which is why they are the
+  live focus.
+- **The demo backend builds witnesses.** Anonymity holds against the prover only when the data owner holds the
+  witness, which is the production model. The demo builds witnesses for you so the flow is easy to try.
+- **Five use-case proofs are set aside.** Proof-of-Reserves, KYC, Compliance, Confidential payroll, and
+  Fundraising still work and stay reachable by URL, but a design decision moved the focus to anchors that are
+  on-chain or zkTLS rather than an external attester signature.
+- **One earlier solvency demo lock has expired**, so that one demo reads void on the live site. The Data Room
+  and Bonded Access flows are the working focus.
 
-Open http://localhost:5173. Connect Freighter (set to Testnet) to sign your own transactions, or use the app
-without a wallet to read and verify.
+## License
 
-### Run the prover
-
-The prover turns a private input into a proof. It is self-hosted on purpose, because it is the only part of
-the system that sees the private data. You do not need it to browse, read, or verify, only to create new
-proofs. It builds and runs on Linux (x86_64); WSL2 works, native Windows does not.
-
-Install the prerequisites: the Rust toolchain, RISC Zero 5.0.0-rc.1 (via `rzup`, which gives you `r0vm` and
-`cargo-risczero`), and Docker (the reproducible guest build and the final Groth16 wrap both run in
-containers).
-
-```bash
-# 1) Install the RISC Zero toolchain:
-curl -L https://risczero.com/install | bash
-rzup install
-
-# 2) Prove the bundled demo claim:
-cd prover
-cargo run --release -p host    # writes a proof bundle (bundle.json + proof.txt)
-```
-
-To produce proofs that verify on-chain you need the canonical, reproducible guest build, and there is also a
-distributed setup (a public gateway plus a GPU or CPU worker). Both are documented in `prover/README.md`.
-
-### Install the Stellar CLI
-
-The `stellar` CLI builds and deploys the Soroban contracts and runs on-chain reads from your terminal. You
-do not need it to run the web app above (the contracts are already deployed), but you need it to build or
-re-deploy a contract and to run the verify-it-yourself commands below.
-
-```bash
-cargo install --locked stellar-cli     # needs the Rust toolchain
-stellar --version                       # this project targets the 26.x line (Protocol 26)
-
-# Create and fund a testnet identity to deploy or invoke from:
-stellar keys generate zkorage-dev --network testnet --fund
-stellar keys address zkorage-dev
-```
-
-### Build the contracts
-
-This is not required to run the web app above, since the contracts are already deployed to testnet (see
-[Deployed contracts](#deployed-contracts-testnet)). To build them yourself:
-
-```bash
-cd contract
-stellar contract build                  # all contracts -> target/wasm32v1-none/release/*.wasm
-# or one: stellar contract build --package dataroom
-```
-
-The scripts in `contract/scripts/` deploy each contract, and the deployed ids live in
-`contract/deployment.testnet.json`.
-
-## Self-test
-
-```bash
-cd sdk && npm run smoke              # re-verify the live testnet claims from the chain
-cd mcp && npm install && npm run build && npm run selftest   # a client calls every MCP tool
-
-# Frontend end-to-end tests (Chrome runs GPU-disabled, do not change that):
-cd frontend && npx playwright install   # first run only: download the test browser
-npx playwright test
-```
-
-To run the frontend tests against the live site instead of a local server:
-
-```bash
-cd frontend && BASE_URL=https://zkorage.wazowsky.id npx playwright test
-```
-
-## Deployed contracts (testnet)
-
-These are the contracts the app uses today. The full record, including the earlier per-week gates, is in
-`contract/deployment.testnet.json`, and the in-app **Contracts** page reads them live.
-
-| Contract | Id |
-|---|---|
-| Groth16 verifier (RISC Zero, params 5.0.0-rc.1) | `CBAPC663PTWIWDLYNCG5WAD5MIZF4SKY43U6L2NM5ZUU5XFOS4JDYAFW` |
-| Data Room | `CDUQITRVJOPJNVWBUINLZFI2LHPOLVFW2I7354WEFDG2W3VIG627HLNN` |
-| Escrow (time-locked bond) | `CAMQKJKAJTOMT66N5N3E3VIRTN5ACDKV6P3Z2HLYVJHLAVRGJKHZFOXC` |
-| Bonded Access gate | `CCKX6B7QIE42YA27Y4KTB6CTXRB3OBGR5EW7N2BLAG4AB3V6CFDKXCZU` |
-
-## Verify a claim yourself, with no zkorage server
-
-Every result lives on the public chain, so you can re-check it directly. The Verify page in the app shows the
-exact commands for any given claim. As an example, read a Proof-of-Reserves result and re-verify its proof
-against the public verifier:
-
-```bash
-# Read the persisted result + history from the chain:
-stellar contract invoke --id CDQ2PA27UTJDLPA4XTGG647SNTMUYO2KRFGS3SW5SMNBIWRB7JVCZXQ6 \
-  --network testnet --source <any-funded-account> -- get_latest_result
-
-# Re-verify the Groth16 proof against the public verifier (the bundle comes from GET /audit/latest):
-stellar contract invoke --id CBAPC663PTWIWDLYNCG5WAD5MIZF4SKY43U6L2NM5ZUU5XFOS4JDYAFW \
-  --network testnet --source <any-funded-account> -- verify --seal <hex> --image_id <hex> --journal <hex>
-```
-
-Here `journal` is the sha256 digest of the journal bytes. The app's Verify page fills in the exact values for
-any claim, so you do not have to assemble them by hand.
-
-## Status
-
-The full build is complete and live on testnet: the use-case proofs (Proof-of-Reserves, KYC, Compliance,
-Confidential payroll, Fundraising), the Confidential Data Room, the Bonded Proofs escrow, and Bonded Access.
-The app focuses on the Data Room and Bonded Proofs. The earlier per-use-case proofs stay reachable by URL.
-
-This is a hackathon demo. The contracts are unaudited. Do not use them with real funds.
+[MIT](LICENSE).
