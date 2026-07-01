@@ -246,13 +246,17 @@ Reading and verifying need no wallet. You only need one to create your own proof
 This is a hackathon demo, and the honest edges are part of the trust story.
 
 - **Unaudited, testnet only.** Do not use the contracts with real funds.
-- **The attester is mocked.** Where a claim relies on an issuer's signature, the signer is a demo key,
-  swappable for a real issuer. The Data Room and Bonded Access anchor to on-chain fact instead, which is why
-  they are the live focus.
-- **The demo backend builds witnesses.** Anonymity holds against the prover only when the data owner holds the
-  witness, which is the production model. The demo builds witnesses for you so the flow is easy to try.
-- **One earlier solvency demo lock has expired**, so that one demo reads void on the live site. The Data Room
-  and Bonded Access flows are the working focus.
+- **The demo builds your witness for you.** A proof's private input, the witness, is the secret that would
+  identify you: your membership secret and Merkle path, or your bond details. To keep the demo one-click, the
+  zkorage backend assembles that witness and the project-run prover proves it. So you stay anonymous to the
+  verifier and to anyone reading the chain, but not to the zkorage operator, which sees the witness while
+  proving.
+- **Anonymity against the operator is the production step (what is next).** Your keys are already derived in
+  your browser from a wallet signature and never stored, so the witness can be built client-side and the
+  backend never has to learn who you are. The prover still sees the witness while it proves, which you close in
+  one of two ways: run your own prover (the architecture supports it), or have zkorage run the prover inside a
+  confidential-computing enclave so the operator cannot read the witness either. Proving stays self-hosted
+  either way, never in the browser and never on a shared market.
 
 ## License
 
