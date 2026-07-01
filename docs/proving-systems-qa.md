@@ -54,8 +54,8 @@ trusted setup is done **once for the whole zkVM**. Changing a guest program does
 specific program is identified by its `image_id`, a hash committed as a public input.
 
 With Circom + Groth16 the setup is **per circuit**. zkorage proves many predicates and they keep evolving
-(reserves, KYC, compliance, payroll, fundraising, RSA-signed PDFs, anonymous membership). In a Circom world
-each one needs its own ceremony, and changing a predicate means another ceremony plus a fresh trust
+(anonymous membership, bonded access, a solvency proof, an expiring tier, RSA-signed documents). In a Circom
+world each one needs its own ceremony, and changing a predicate means another ceremony plus a fresh trust
 assumption. A zkVM's one-time universal setup is exactly what lets the predicate set grow without that
 burden. (Noir + UltraHonk also avoids per-circuit setup via its universal SRS, and a Soroban verifier for it
 does exist as a community reference, see below.)
@@ -100,15 +100,15 @@ This corrects an earlier version of this doc, which said no Soroban UltraHonk ve
 
 Two files, both of which grow with circuit complexity:
 
-- **`circuit_final.zkey`** — the Groth16 **proving key**. This is the big one; its size scales with the number
+- **`circuit_final.zkey`**, the Groth16 **proving key**. This is the big one; its size scales with the number
   of constraints. For complex predicates it can be tens to hundreds of MB, even over a GB.
-- **`circuit.wasm`** — the **witness generator**, also size-scaling (the `.zkey` usually dominates).
+- **`circuit.wasm`**, the **witness generator**, also size-scaling (the `.zkey` usually dominates).
 
 To prove in the browser you call roughly `snarkjs.groth16.fullProve(input, "circuit.wasm",
 "circuit_final.zkey")`, so the user's browser has to download and hold both before it can produce a proof.
 The size pain is well known: Semaphore-style circuits are tens of MB, Tornado-style ones are hundreds of MB,
-and zkEmail (RSA plus email parsing, similar to our DR4 zkPDF) had a proving key around 1.6 GB, which was
-unusable on mobile.
+and zkEmail (RSA plus email parsing, similar to our RSA document-authenticity proof) had a proving key around
+1.6 GB, which was unusable on mobile.
 
 ## Q: So why is RISC Zero the better choice on UX?
 

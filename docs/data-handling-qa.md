@@ -82,11 +82,11 @@ The gateway suppresses its HTTP request log (`gateway.py:281`) and routes the ho
 values, but it has not been audited line by line for incidental logging, so treat "no logging" as a design
 intent, not a proven guarantee.
 
-### Q7. What about the other proofs (reserves, KYC, compliance, payroll, fundraising)? Does the prover see that data?
-Yes, by design. Those proofs prove a fact about private attested data, so the **private witness reaches the
-prover** in memory (and through the same temporary files in Q5). This is expected: a zero-knowledge proof
-hides the data from the **verifier**, not from the **prover**. That is exactly why the prover is self-hosted
-and why a private witness is never sent to a third-party proving marketplace.
+### Q7. What about a proof over private attested data, not a Data Room upload? Does the prover see that data?
+Yes, by design. A proof over private attested data proves a fact about that data, so the **private witness
+reaches the prover** in memory (and through the same temporary files in Q5). This is expected: a
+zero-knowledge proof hides the data from the **verifier**, not from the **prover**. That is exactly why the
+prover is self-hosted and why a private witness is never sent to a third-party proving marketplace.
 
 ### Q8. What are the honest residual risks?
 - **Process memory.** While encrypting or proving, the plaintext or the witness is in RAM. A memory dump or
