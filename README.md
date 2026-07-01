@@ -35,6 +35,7 @@ to create your own proofs and pay your own gas.
 - [What you can do](#what-you-can-do)
 - [What the proof guarantees, and the trust model](#what-the-proof-guarantees-and-the-trust-model)
 - [How it works](#how-it-works)
+- [The self-hosted prover](#the-self-hosted-prover)
 - [Verify it yourself](#verify-it-yourself)
 - [Deployed contracts (testnet)](#deployed-contracts-testnet)
 - [Tests and rigor](#tests-and-rigor)
@@ -107,6 +108,25 @@ on-chain), an **Explorer** of public rooms, and a **Faucet** for the four test t
 
 **Built with:** Stellar / Soroban (soroban-sdk 26.1.0, Protocol 26 BN254 host functions), RISC Zero 5.0.0-rc.1
 (zkVM + Groth16 wrap, BN254), Rust, TypeScript, React + Vite, Node. Full design notes in
+[`ARCHITECTURE.md`](ARCHITECTURE.md).
+
+## The self-hosted prover
+
+The prover is the one part of zkorage that ever sees your private data in the clear, so it runs on hardware you
+control, never in the browser and never on a shared proving market. This is the point of self-hosting: a
+zero-knowledge proof hides the data from the verifier, but the prover still needs the plaintext witness to
+build the proof. Sending that witness to a third-party proving marketplace would hand the secret away, so
+zkorage never does.
+
+A RISC Zero zkVM guest checks the private input and asserts the fact, and the host wraps the STARK into a
+Groth16 proof over BN254. In production the data owner runs their own prover, so plaintext never reaches anyone
+else. The public demo runs a shared prover the project operates, which does not change what a verifier trusts,
+because verification is on-chain.
+
+You do not need the prover to browse, read, or verify, only to create new proofs. It builds and runs on Linux
+(x86_64; WSL2 works, native Windows does not), needs the RISC Zero 5.0.0-rc.1 toolchain (installed with `rzup`)
+and Docker, and is documented in [`prover/README.md`](prover/README.md). The deeper pipeline (a two-machine
+gateway plus a GPU or CPU worker, reproducible guest builds, and pinned image ids) is in
 [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ## Verify it yourself
@@ -189,9 +209,9 @@ cd frontend && npx playwright install   # first run only
 npx playwright test                     # end-to-end specs (Chrome runs GPU-disabled; keep it that way)
 ```
 
-Running the **self-hosted prover** (only needed to create new proofs) and **rebuilding or redeploying the
-contracts** are covered in [`prover/README.md`](prover/README.md), [`deploy/README.md`](deploy/README.md), and
-[`ARCHITECTURE.md`](ARCHITECTURE.md).
+Rebuilding or redeploying the contracts is covered in [`deploy/README.md`](deploy/README.md) and
+[`ARCHITECTURE.md`](ARCHITECTURE.md). The contracts are already on testnet, so you do not need this to run the
+app. To create your own proofs, see [The self-hosted prover](#the-self-hosted-prover).
 
 ## Repository layout
 
