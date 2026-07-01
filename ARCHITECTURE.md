@@ -114,6 +114,44 @@ with storage preserved.
 The SDK reproduces the key-free open byte-for-byte, so the open runs entirely in the browser and the recipient
 secret never leaves it. The MCP server exposes read-only tools only, with no open or key tool.
 
+### Opening a sealed room
+
+The full open flow, from a private witness to a decrypted document, without revealing who the reader is:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Reader
+    participant B as Browser
+    participant P as Self-hosted prover
+    participant C as Soroban contracts
+    participant K as Keeper committee
+    Reader->>B: Open a sealed room
+    B->>P: Private witness (membership or bond)
+    Note over P: The only party that sees the witness
+    P-->>B: Groth16 proof, nothing private
+    B->>C: request_access(proof)
+    Note over C: Verify proof, check nullifier, bind to on-chain fact
+    C-->>B: Grant recorded, keyed to a recipient key
+    B->>K: Request key shares (2 of 3)
+    Note over K: Each keeper re-reads is_granted on its own RPC
+    K-->>B: Sealed shares to the recipient key
+    Note over B: Reconstruct the key and decrypt in the browser
+```
+
+**Reading the numbered steps:**
+
+1. The reader asks to open a sealed room.
+2. The browser sends the private witness (an approved membership, or a qualifying bond) to the self-hosted
+   prover, the only party that ever sees it.
+3. The prover returns a Groth16 proof that carries nothing private.
+4. The browser submits the proof with `request_access`; the gate verifies it, checks the nullifier, and binds
+   it to on-chain fact.
+5. The gate records the grant, keyed to the recipient key committed inside the proof.
+6. The browser asks the committee for key shares, which needs any 2 of 3.
+7. Each keeper re-reads `is_granted` on its own RPC, then returns its share sealed to the recipient key; the
+   browser reconstructs the key and decrypts, all in the browser.
+
 ## Bonded Proofs internals
 
 - **Escrow.** A Soroban-native, time-locked bond over a SEP-41 token. It stores the time the lock expires and a
