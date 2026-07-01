@@ -19,17 +19,6 @@
   <a href="https://zkorage.wazowsky.id"><b>Live demo</b></a>
 </p>
 
-<p align="center">
-  <a href="#what-you-can-do">What it does</a> &nbsp;·&nbsp;
-  <a href="#how-it-works">How it works</a> &nbsp;·&nbsp;
-  <a href="#what-the-proof-guarantees-and-the-trust-model">Trust model</a> &nbsp;·&nbsp;
-  <a href="#verify-it-yourself">Verify it yourself</a> &nbsp;·&nbsp;
-  <a href="#deployed-contracts-testnet">Contracts</a> &nbsp;·&nbsp;
-  <a href="#tests-and-rigor">Tests</a> &nbsp;·&nbsp;
-  <a href="#run-it-locally">Run it locally</a> &nbsp;·&nbsp;
-  <a href="ARCHITECTURE.md">Architecture</a>
-</p>
-
 zkorage is a zero-knowledge toolkit on Stellar (Soroban). You hold private data: a document, a reserve
 balance, a bond you locked. You prove **one fact** about it to someone who should not see the rest, and that
 person verifies the proof against an on-chain contract. They never see your data, and they do not have to
@@ -40,6 +29,21 @@ to create your own proofs and pay your own gas.
 
 > Built for **Stellar Hacks: Real-World ZK**. The contracts are **unaudited**. This is a **testnet demo**. Do
 > not use it with real funds.
+
+## Contents
+
+- [What you can do](#what-you-can-do)
+- [What the proof guarantees, and the trust model](#what-the-proof-guarantees-and-the-trust-model)
+- [How it works](#how-it-works)
+- [Verify it yourself](#verify-it-yourself)
+- [Deployed contracts (testnet)](#deployed-contracts-testnet)
+- [Tests and rigor](#tests-and-rigor)
+- [Run it locally](#run-it-locally)
+- [Repository layout](#repository-layout)
+- [Wallet support](#wallet-support)
+- [Known limitations and what is next](#known-limitations-and-what-is-next)
+- [License](#license)
+- [Architecture (deep dive)](ARCHITECTURE.md)
 
 ## What you can do
 
