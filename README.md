@@ -16,10 +16,7 @@
 </p>
 
 <p align="center">
-  <a href="https://zkorage.wazowsky.id"><b>Live demo</b></a> ·
-  <a href="#demo"><b>Demo video</b></a> ·
-  <a href="https://apizk.wazowsky.id"><b>API</b></a> ·
-  <a href="https://github.com/sillynerd45/zkorage"><b>Source</b></a>
+  <a href="https://zkorage.wazowsky.id"><b>Live demo</b></a>
 </p>
 
 zkorage is a zero-knowledge toolkit on Stellar (Soroban). You hold private data: a document, a reserve
@@ -32,34 +29,6 @@ to create your own proofs and pay your own gas.
 
 > Built for **Stellar Hacks: Real-World ZK**. The contracts are **unaudited**. This is a **testnet demo**. Do
 > not use it with real funds.
-
-## Demo
-
-<!-- TODO: paste the public YouTube or Loom link here, then change "coming soon" to the link. Keep it under the
-     hackathon's video length cap. Place a short GIF of the store-then-open flow right below it if you record one. -->
-
-**Demo video:** _coming soon._
-
-In about two minutes the video walks through the live flow: a room owner seals a document, a reader who was
-never named on a list opens it by proving they qualify, and a third party re-checks the on-chain result with
-no zkorage server in the loop.
-
-## Why zero-knowledge is the point here
-
-This hackathon asks for projects where zero-knowledge is genuinely load-bearing, not decoration. Here is the
-exact place it carries the weight.
-
-A reader opens a sealed room by proving they **hold a qualifying bond**: a token locked above a threshold until
-a deadline. They reveal nothing else.
-
-- An **access list** would need the reader's identity, which defeats the point.
-- **Reading the public chain** would expose which wallet holds the bond, again defeating the point.
-- A plain **signature** from us would just move the trust back onto our server.
-
-The zero-knowledge proof is the only thing that lets the on-chain verifier be **certain the reader qualifies
-while the reader stays anonymous** inside an anonymity set. A one-time nullifier then stops the same access
-from being reused. Take the same idea to the Bonded Proofs side: you prove a fact that holds only while your
-bond stays locked, so pulling the bond makes the proof go void and it cannot be faked after the fact.
 
 ## What you can do
 
@@ -93,15 +62,15 @@ on-chain), an **Explorer** of public rooms, and a **Faucet** for the four test t
 ## What the proof guarantees, and the trust model
 
 1. **The verifier learns one fact and nothing else.** The proof attests the predicate ("reader holds a
-   qualifying bond", "reserves are at least supply"), not the underlying data.
+   qualifying bond", "reader is an approved member"), not the underlying data.
 2. **The prover is the only party that ever sees the private data, so we self-host proving** and never send a
    private witness to a shared proving market.
 3. **The result lives on-chain.** Anyone re-reads it and re-verifies the proof against the public Groth16
    verifier, with no zkorage server. See [Verify it yourself](#verify-it-yourself).
 4. **Every claim is anchored to something real.** For the Data Room and Bonded Access, the anchor is on-chain
-   fact: a lock's state, a token's supply, checked by the gate contract. For the signature-anchored use-case
-   proofs, an attester's ed25519 signature is checked **inside** the zkVM. A proof over unanchored data would
-   be hollow, so the anchor is part of the design.
+   fact: a lock's state, a token's supply, checked by the gate contract. Where a claim is about issuer-signed
+   data, that signature is checked **inside** the zkVM. A proof over unanchored data would be hollow, so the
+   anchor is part of the design.
 
 ## How it works
 
@@ -140,10 +109,9 @@ Here `journal` is the sha256 digest of the journal bytes.
 
 ## Deployed contracts (testnet)
 
-These are the contracts the live app uses. The full record (the verifier, the demo token, and the earlier
-per-use-case gates) is in [`contract/deployment.testnet.json`](contract/deployment.testnet.json) and
-[`ARCHITECTURE.md`](ARCHITECTURE.md), and the in-app **Contracts** page reads them live. Click an id to open it
-on stellar.expert.
+These are the contracts the live app uses. The full record is in
+[`contract/deployment.testnet.json`](contract/deployment.testnet.json) and [`ARCHITECTURE.md`](ARCHITECTURE.md),
+and the in-app **Contracts** page reads them live. Click an id to open it on stellar.expert.
 
 | Contract | Role | Id |
 |---|---|---|
@@ -159,7 +127,7 @@ submit against live testnet, plus Playwright specs that drive a real browser.
 
 | Contract | Tests |
 |---|---|
-| Data Room (DR1-DR6) | 117 |
+| Data Room | 117 |
 | Bonded Access gate | 36 |
 | Solvency gate | 29 |
 | Tier gate | 25 |
@@ -243,14 +211,11 @@ Reading and verifying need no wallet. You only need one to create your own proof
 This is a hackathon demo, and the honest edges are part of the trust story.
 
 - **Unaudited, testnet only.** Do not use the contracts with real funds.
-- **The attester is mocked.** For the signature-anchored use-case proofs the signer is a demo key, swappable
-  for a real issuer. The Data Room and Bonded Access anchor to on-chain fact instead, which is why they are the
-  live focus.
+- **The attester is mocked.** Where a claim relies on an issuer's signature, the signer is a demo key,
+  swappable for a real issuer. The Data Room and Bonded Access anchor to on-chain fact instead, which is why
+  they are the live focus.
 - **The demo backend builds witnesses.** Anonymity holds against the prover only when the data owner holds the
   witness, which is the production model. The demo builds witnesses for you so the flow is easy to try.
-- **Five use-case proofs are set aside.** Proof-of-Reserves, KYC, Compliance, Confidential payroll, and
-  Fundraising still work and stay reachable by URL, but a design decision moved the focus to anchors that are
-  on-chain or zkTLS rather than an external attester signature.
 - **One earlier solvency demo lock has expired**, so that one demo reads void on the live site. The Data Room
   and Bonded Access flows are the working focus.
 

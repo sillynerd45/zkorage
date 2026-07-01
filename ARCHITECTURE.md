@@ -1,9 +1,8 @@
 # zkorage architecture
 
 This is the deeper companion to the [README](README.md). It covers the proving pipeline, the on-chain
-verifier and gate pattern, the full contract set on testnet, the Data Room and Bonded Proofs internals, and
-the build and deploy paths. Read the README first for what zkorage does and why the zero-knowledge is
-load-bearing.
+verifier and gate pattern, the contract set on testnet, the Data Room and Bonded Proofs internals, and the
+build and deploy paths. Read the README first for what zkorage does.
 
 ## The engine in one pass
 
@@ -13,7 +12,7 @@ zkorage has three moving parts and one anchor.
 2. A **verifier** contract on Soroban checks that proof on-chain with native BN254 host functions.
 3. A **policy / gate** contract binds the proven fact to on-chain facts (a token supply, a lock state) and
    records the result so anyone can re-read and re-check it.
-4. The **anchor** is what makes a proof mean something: an attester signature checked inside the zkVM, or an
+4. The **anchor** is what makes a proof mean something: an issuer signature checked inside the zkVM, or an
    on-chain fact the gate enforces. Without an anchor, a proof of "I computed correctly over my inputs" says
    nothing about whether the inputs were real.
 
@@ -40,20 +39,16 @@ program. Adding a new predicate kind means adding its host binary to the worker 
 ### Guests and what they prove
 
 Image ids and journal layouts are recorded in
-[`contract/deployment.testnet.json`](contract/deployment.testnet.json). Summary:
+[`contract/deployment.testnet.json`](contract/deployment.testnet.json). Summary of the guests behind the live
+app:
 
 | Guest | Claim type | Proves | Image id (prefix) |
 |---|---|---|---|
-| Proof-of-Reserves / revenue | 2, 6 | A signed value is at least a threshold | `973c9831…` |
-| Identity / KYC | 3 | A subject passed KYC, subject hidden | `a5198a5a…` |
-| Compliance | 4 | KYC and not-sanctioned (Merkle non-membership) | `54d5921c…` |
-| Payroll | 5 | Income at least a threshold, salary sealed to an auditor view key | `2c9cc61b…` |
-| Accredited investor | 7 | Accreditation by an allow-listed provider | `26d74373…` |
 | Data Room seal | 8 | A document key is sealed (ECIES) to a recipient and bound to the blob | `8f24842d…` |
-| Membership (Data Room DR2) | 9 | Membership in a set plus a nullifier, member hidden | `9550a12e…` |
-| Document authenticity (DR4) | 10 | A real RSA-2048 bank-statement signature, re-verified in-zkVM | `e4f4a356…` |
-| Solvency (Bonded Proofs) | 12 | Reserves at least supply, bound to a live escrow lock | `d0a2f137…` |
-| Anonymous tier (Bonded Proofs) | 13 | Membership in a qualifying set, expiring at a deadline | `2671938b…` |
+| Membership | 9 | Membership in a set plus a nullifier, member hidden | `9550a12e…` |
+| Document authenticity | 10 | A real RSA-2048 statement signature, re-verified in-zkVM | `e4f4a356…` |
+| Solvency | 12 | Reserves at least supply, bound to a live escrow lock | `d0a2f137…` |
+| Anonymous tier | 13 | Membership in a qualifying set, expiring at a deadline | `2671938b…` |
 | Bonded Access | 14 | The holder locked a qualifying bond, wallet and amount hidden | `dc4da02d…` |
 
 The membership and tier guests use ed25519 plus sha256 only, so their image ids reproduce across machines. The
@@ -80,44 +75,38 @@ a stored flag. That is why a solvency grant flips to void the instant the collat
 
 ## Deployed contracts (testnet)
 
-Deployer `GDLECNXD…GXZY6`. The four the live app leans on are in the README; the full set:
+Deployer `GDLECNXD…GXZY6`. The four the live app leans on are in the README; the wider set:
 
 | Contract | Id |
 |---|---|
 | Groth16 verifier | `CBAPC663PTWIWDLYNCG5WAD5MIZF4SKY43U6L2NM5ZUU5XFOS4JDYAFW` |
-| Demo SEP-41 supply token (zUSD) | `CC3JKNC4EKALMT7WALUMCTVBSH73ZZSP3AC4B7IQUAZ7UYYZCEIISQLA` |
-| Data Room (DR1-DR6) | `CDUQITRVJOPJNVWBUINLZFI2LHPOLVFW2I7354WEFDG2W3VIG627HLNN` |
+| Demo SEP-41 supply token | `CC3JKNC4EKALMT7WALUMCTVBSH73ZZSP3AC4B7IQUAZ7UYYZCEIISQLA` |
+| Data Room | `CDUQITRVJOPJNVWBUINLZFI2LHPOLVFW2I7354WEFDG2W3VIG627HLNN` |
 | Escrow (time-locked bond) | `CAMQKJKAJTOMT66N5N3E3VIRTN5ACDKV6P3Z2HLYVJHLAVRGJKHZFOXC` |
-| Bond token (zkUSD) | `CCFHRZAP7GYUBNJ4RN7NBZL5GS7Q32F4CIXDTWTTIGPYEDWRIS2TUPA5` |
+| Bond token | `CCFHRZAP7GYUBNJ4RN7NBZL5GS7Q32F4CIXDTWTTIGPYEDWRIS2TUPA5` |
 | Bonded Access gate | `CCKX6B7QIE42YA27Y4KTB6CTXRB3OBGR5EW7N2BLAG4AB3V6CFDKXCZU` |
 | Solvency gate | `CDHUG4NFTDIO4HX2MZH3PR77EKYUAU47HVKH4UO2WG7GSKDEF4ABWMLA` |
 | Tier gate | `CASSJSBMFDS3BCUBYKXG52SUS7GIHBCHDUM5FGQO4LY5VOWPUPPUFKZP` |
-| Proof-of-Reserves policy (set aside) | `CDQ2PA27UTJDLPA4XTGG647SNTMUYO2KRFGS3SW5SMNBIWRB7JVCZXQ6` |
-| KYC gate (set aside) | `CCTHDSEQFMAOPJXI5GVSUTMXO5DHZUJS7YQYAEIGKFMOAMTNDKSL4FWT` |
-| Compliance gate (set aside) | `CDSA3PUL7OZ5HKLIT73ZTG64TLYK4QTO5ZHZKHA3JBS76R5L5Q2EO4FV` |
-| Payroll gate (set aside) | `CA6XYNHYR3GS3TQ24Z2Y45SXRNQDA5Z4L2PU54YM2WUKSMPVWVMYZCDA` |
-| Accredited gate (set aside) | `CCLSXZBOPCAJQS6L54EAGZQHTD5QUES2OSYCFX5XJT6ZXSICRPS4QKQZ` |
-| Fundraise access (set aside) | `CDEV4METH74Z42DFV6HC3VLF3PWACXVIIS7C3PLK6CZT2B6L5I3YBC2L` |
 
 ## Confidential Data Room internals
 
-The Data Room contract was built in place over DR1 to DR6, so all of it lives at one contract id with storage
-preserved across upgrades.
+The Data Room contract was built up in place across several upgrades, so all of it lives at one contract id
+with storage preserved.
 
-- **DR1, data plane.** `create_room` then `put_document`. The seal guest seals the AES-256-GCM document key to
-  a recipient x25519 key and binds it to the content hash, room id, and document id. The ciphertext is stored
+- **Data plane.** `create_room` then `put_document`. The seal guest seals the AES-256-GCM document key to a
+  recipient x25519 key and binds it to the content hash, room id, and document id. The ciphertext is stored
   off-chain (Cloudflare R2, or a local store for development), content-addressed by its hash. Only the
   fingerprint goes on-chain.
-- **DR2, anonymous eligibility.** A member proves a leaf in a depth-20 sha256 Merkle tree of approved members,
-  plus a nullifier `sha256(0x02 ‖ id_secret ‖ room_id)`. The grant is keyed to the public accessor the holder
-  signs for, the member identity and tree index stay private, and the nullifier blocks a second open. Rotating
-  the eligible root revokes stale grants.
-- **DR3, key release.** A self-built 2-of-3 threshold committee (`keyper/`). The document key is Shamir-split
-  over GF(256), and each keeper seals its share (ECIES) only to the proof-bound recipient on the on-chain
-  grant, reading `is_granted` from its own RPC. The reader collects two shares and reconstructs the key in the
+- **Anonymous eligibility.** A member proves a leaf in a depth-20 sha256 Merkle tree of approved members, plus
+  a nullifier `sha256(0x02 ‖ id_secret ‖ room_id)`. The grant is keyed to the public accessor the holder signs
+  for, the member identity and tree index stay private, and the nullifier blocks a second open. Rotating the
+  eligible root revokes stale grants.
+- **Key release.** A self-built 2-of-3 threshold committee (`keyper/`). The document key is Shamir-split over
+  GF(256), and each keeper seals its share (ECIES) only to the proof-bound recipient on the on-chain grant,
+  reading `is_granted` from its own RPC. The reader collects two shares and reconstructs the key in the
   browser. No key material is ever on-chain.
-- **DR4, document authenticity.** Re-verifies a real RSA-2048 signature over a bank statement inside the zkVM
-  and asserts a field is at least a threshold, statement and exact value hidden.
+- **Document authenticity.** Re-verifies a real RSA-2048 signature over a signed statement inside the zkVM and
+  asserts a field is at least a threshold, statement and exact value hidden.
 - **Bonded Access (claim type 14) and Room Management.** A room is Membership or Bonded Access, not both. A
   bonded room needs no approval and no member list: a reader locks a non-revocable qualifying bond and proves
   it anonymously to open.
@@ -140,11 +129,11 @@ secret never leaves it. The MCP server exposes read-only tools only, with no ope
 
 ## Attestation
 
-For the signature-anchored use-case proofs, the private data is signed as an ed25519 envelope
-`{claim_type, value(s), issuer_id, nonce, expiry}`. The guest verifies the signature and asserts the committed
-`issuer_id` equals the key that signed, so a prover cannot verify under their own key while claiming an
-allow-listed issuer. Trust is anchored by an issuer-key allowlist held in the contract. The demo uses mock
-signers, swappable for real issuers.
+Where a claim is about data signed by an issuer, the private data is signed as an ed25519 envelope
+`{claim_type, value(s), issuer_id, nonce, expiry}`. The guest verifies the signature inside the zkVM and
+asserts the committed `issuer_id` equals the key that signed, so a prover cannot verify under their own key
+while claiming an allow-listed issuer. Trust is anchored by an issuer-key allowlist held in the contract. The
+demo uses mock signers, swappable for real issuers.
 
 ## Build, test, deploy
 
@@ -174,5 +163,5 @@ signers, swappable for real issuers.
 
 The verifier learns one fact and nothing else. The prover sees the plaintext, so proving is self-hosted and
 never sent to a shared market. The result is on-chain, so anyone re-reads and re-verifies it without a zkorage
-server. Every claim is anchored to an attester signature checked in the zkVM or to an on-chain fact the gate
+server. Every claim is anchored to an issuer signature checked in the zkVM or to an on-chain fact the gate
 enforces. The contracts are unaudited and for the testnet demo only.
