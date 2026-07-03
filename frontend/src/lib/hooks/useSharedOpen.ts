@@ -27,7 +27,8 @@ import { signDataRoomAccess, bondAccessCommitment, type DataRoomIdentity, type O
 import { sdk } from "@/lib/sdk";
 import { useWallet, useTxSigner } from "@/lib/wallet/WalletContext";
 import { useDataRoomIdentity } from "@/lib/hooks/useDataRoomIdentity";
-import { readJoinRequests, writeJoinRequests } from "@/lib/dataroom/requests";
+import { readJoinRequests, writeJoinRequests, type JoinRequest } from "@/lib/dataroom/requests";
+import { useAutoRefreshRequests } from "@/lib/hooks/useAutoRefreshRequests";
 import { pushVault, isVaultSyncOn, setVaultSyncOn } from "@/lib/dataroom/vault";
 import { SYNC_EVENT } from "@/lib/sync/prefs";
 import { syncRestoreAll, syncDisable } from "@/lib/sync/orchestrator";
@@ -107,6 +108,10 @@ export function useSharedOpen() {
     );
   }, []);
   useEffect(() => { reloadOpenable(connected ? address : null); }, [connected, address, reloadOpenable]);
+  // Silently re-check the tracked requests against the chain (commitment-based, no signature) on mount, on a
+  // wallet switch, and when the tab regains focus, and promote any just-approved room into "Rooms you can open"
+  // without a manual Refresh. Older history with no stored commitment is left to the Refresh button.
+  useAutoRefreshRequests(address, connected, () => reloadOpenable(address));
 
   // Cross-device sync via the encrypted vault. Default OFF (opt-in). "locked" = sync was turned on before but
   // the wallet has not signed THIS session (a page reload), so we wait for a one-tap sign-in rather than pop the
@@ -156,12 +161,16 @@ export function useSharedOpen() {
     setRefreshing(true);
     try {
       const list = readJoinRequests(address);
-      const updated = [];
+      const updated: JoinRequest[] = [];
       for (const r of list) {
         try {
-          const id = await ident.derive(r.roomId);
-          const s = id ? await getEnrollStatus(r.roomId, id.idCommitment).catch(() => null) : null;
-          updated.push(s ? { ...r, state: s.state } : r);
+          // Re-check with the stored public commitment (no signature); only fall back to deriving for older
+          // history that has none, backfilling it so later automatic refreshes stay signature-free.
+          let commitment = r.commitment;
+          if (!commitment) commitment = (await ident.derive(r.roomId))?.idCommitment;
+          if (!commitment) { updated.push(r); continue; }
+          const s = await getEnrollStatus(r.roomId, commitment).catch(() => null);
+          updated.push({ ...r, commitment, state: s ? s.state : r.state });
         } catch { updated.push(r); }
       }
       writeJoinRequests(address, updated);

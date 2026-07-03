@@ -141,11 +141,13 @@ export async function importRoomsBackup(sig: Uint8Array, file: unknown): Promise
     if (e.state !== "eligible" && e.state !== "pending" && e.state !== "none") continue; // EnrollState
     if (typeof e.ts !== "number" || !Number.isFinite(e.ts)) continue;
     const label = typeof e.label === "string" ? e.label.slice(0, MAX_LABEL_LEN) : undefined;
-    valid.push(
-      label !== undefined
-        ? { roomId: e.roomId, state: e.state, ts: e.ts, label }
-        : { roomId: e.roomId, state: e.state, ts: e.ts },
-    );
+    // The public per-room commitment, kept only if it is a well-formed 32-byte hex (so a restored history can
+    // still auto-refresh its status without a signature). Anything else is dropped, like any other junk field.
+    const commitment = typeof e.commitment === "string" && isHex32(e.commitment) ? e.commitment : undefined;
+    const entry: JoinRequest = { roomId: e.roomId, state: e.state, ts: e.ts };
+    if (label !== undefined) entry.label = label;
+    if (commitment !== undefined) entry.commitment = commitment;
+    valid.push(entry);
     if (valid.length >= MAX_IMPORT_ROOMS) break;
   }
   return valid;

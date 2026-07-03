@@ -17,6 +17,7 @@ import {
 } from "@/lib/api";
 import { isHex32 } from "@/lib/format";
 import { type JoinRequest, requestsKey, readJoinRequests } from "@/lib/dataroom/requests";
+import { useAutoRefreshRequests } from "@/lib/hooks/useAutoRefreshRequests";
 
 // Module-level caches for the owner view (the rooms you own + each room's pending list + your last selection),
 // so leaving and returning to Room Management (or the Approve sub-tab) repaints the room list, the selected
@@ -97,8 +98,10 @@ export function useEnroll() {
       setMemberState(r.state);
       setRequestedRoom(joinRoom.trim().toLowerCase());
       if (address) {
+        // Store the public commitment so the status can later be re-checked with NO signature (the automatic
+        // pending -> approved refresh in Discover / Membership / Open reads it).
         const next = [
-          { roomId: joinRoom.trim().toLowerCase(), label, state: r.state, ts: Date.now() },
+          { roomId: joinRoom.trim().toLowerCase(), label, state: r.state, ts: Date.now(), commitment: ident.idCommitment },
           ...myRequests.filter((x) => x.roomId !== joinRoom.trim().toLowerCase()),
         ];
         persistRequests(address, next);
@@ -126,9 +129,10 @@ export function useEnroll() {
   // reset effect above). Drives the "Request sent" / "Already approved" disabled button.
   const joinDone = memberState === "pending" || memberState === "eligible";
 
-  // Refresh the live status of every tracked request: derive each room's commitment (the FIRST derive prompts
-  // the wallet once; the rest reuse the cached signature) and read its current state. Sequential to avoid a
-  // signature race on the shared cache.
+  // Refresh the live status of every tracked request. An entry that carries a stored commitment is re-checked
+  // with NO signature; only an older entry with none falls back to deriving (the FIRST derive prompts the
+  // wallet once; the rest reuse the cached signature). A derived commitment is backfilled so later automatic
+  // refreshes stay signature-free. Sequential to avoid a signature race on the shared cache.
   const refreshRequests = useCallback(async () => {
     if (!address) return;
     // Re-read from disk (not the stale `myRequests` snapshot) so a request the Open tab's Refresh wrote in the
@@ -140,9 +144,11 @@ export function useEnroll() {
       const updated: JoinRequest[] = [];
       for (const r of list) {
         try {
-          const ident = await id.derive(r.roomId);
-          const s = ident ? await getEnrollStatus(r.roomId, ident.idCommitment).catch(() => null) : null;
-          updated.push(s ? { ...r, state: s.state } : r);
+          let commitment = r.commitment;
+          if (!commitment) commitment = (await id.derive(r.roomId))?.idCommitment;
+          if (!commitment) { updated.push(r); continue; }
+          const s = await getEnrollStatus(r.roomId, commitment).catch(() => null);
+          updated.push({ ...r, commitment, state: s ? s.state : r.state });
         } catch { updated.push(r); }
       }
       persistRequests(address, updated);
@@ -150,6 +156,11 @@ export function useEnroll() {
       setRequestsBusy(false);
     }
   }, [address, id, persistRequests]);
+
+  // Automatically re-check the tracked requests (commitment-based, no signature) on mount, on a wallet switch,
+  // and when the tab regains focus, so a just-approved request flips from Pending to "Open documents" without
+  // the user clicking Refresh. Re-reads the persisted list on any change.
+  useAutoRefreshRequests(address, connected, () => setMyRequests(readJoinRequests(address)));
 
   // --- owner: approve members of a room you own ---
   // Seed the owner view from the module caches so the selected room + its pending list survive a tab switch

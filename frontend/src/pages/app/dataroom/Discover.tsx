@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { ChevronDown, Clock, Compass, FolderOpen, KeyRound, Loader2, Search, Settings2, ShieldCheck, UserPlus, Users } from "lucide-react";
 import { bondAccessCommitment } from "zkorage-sdk";
@@ -6,6 +6,7 @@ import { useDirectory } from "@/lib/hooks/useDirectory";
 import { useRoomList } from "@/lib/hooks/useRoomList";
 import { useWallet } from "@/lib/wallet/WalletContext";
 import { joinRequestStates } from "@/lib/dataroom/requests";
+import { useAutoRefreshRequests } from "@/lib/hooks/useAutoRefreshRequests";
 import { loadIdentityAt } from "@/lib/bonded/handle";
 import { short } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -347,9 +348,18 @@ export default function Discover() {
   useEffect(() => setTab(tabFromHash(hash)), [hash]);
 
   // Reflect this wallet's local request history (this browser) on the per-room buttons. No new signature and
-  // no wallet address is sent; we only read what was stored when you requested/refreshed in Membership.
+  // no wallet address is sent; we only read what was stored when you requested/refreshed in Membership. Kept in
+  // state (not a memo) so the automatic on-chain re-check below can flip a "Requested" button to "Open" the
+  // moment the owner approves, with no manual Refresh. Reset to the new wallet's history when the address
+  // changes (an in-tab Freighter account switch the WalletContext poll surfaces).
   const { connected, address } = useWallet();
-  const statusByRoom = useMemo(() => (connected ? joinRequestStates(address) : {}), [connected, address]);
+  const [statusByRoom, setStatusByRoom] = useState<Record<string, EnrollState>>(() =>
+    connected ? joinRequestStates(address) : {},
+  );
+  useEffect(() => {
+    setStatusByRoom(connected && address ? joinRequestStates(address) : {});
+  }, [connected, address]);
+  useAutoRefreshRequests(address, connected, () => setStatusByRoom(joinRequestStates(address)));
 
   // Search + "Show more" over the listed rooms (the directory can be long). The search box only shows past a
   // small threshold; typing filters by name/id/description and resets to the first page.

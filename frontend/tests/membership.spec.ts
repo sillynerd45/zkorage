@@ -146,6 +146,30 @@ test("membership: Approve all batches every pending request in one action", asyn
   expect(batchCalls).toBe(1);
 });
 
+// A pending "Your requests" row that stored its public commitment is re-checked on-chain automatically (no
+// signature, no click): once the owner approves, the Pending pill becomes "Approved" and the "Open documents"
+// action appears without clicking Refresh.
+test("membership: a pending request auto-updates to 'Open documents' when approved (no manual Refresh)", async ({ page }) => {
+  const j = (b: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(b) });
+  await page.addInitScript(mock(ADDR));
+  await page.addInitScript(`localStorage.setItem("zkorage.dr.requests.${ADDR}", JSON.stringify([
+    { roomId: "${JOIN_ROOM}", label: "Acme", state: "pending", ts: 1, commitment: "${"e".repeat(64)}" },
+  ]));`);
+  await stubs(page);
+  // The on-chain status for this commitment now reads eligible (approved after the request was filed). This
+  // override is registered after stubs(), so it wins over the default "none".
+  await page.route("**/dataroom/enroll/status/**", (r) => r.fulfill(j({ state: "eligible" })));
+  await page.goto("/app/dataroom/membership");
+
+  const row = page.getByTestId("request-row");
+  await expect(row).toHaveCount(1);
+  // No manual Refresh: the auto re-check flips the pill to Approved and reveals the Open documents action.
+  await expect(row.getByTestId("request-state-pill")).toHaveAttribute("data-state", "eligible", { timeout: 15_000 });
+  const openLink = page.getByTestId("request-open");
+  await expect(openLink).toBeVisible();
+  await expect(openLink).toHaveAttribute("href", `/app/dataroom/documents?room=${JOIN_ROOM}#open`);
+});
+
 test("membership: an approved request offers Open documents; a pending one has no open button", async ({ page }) => {
   // Seed the local request history: JOIN_ROOM approved, OWNER_ROOM pending (this browser, per wallet).
   await page.addInitScript(mock(ADDR));

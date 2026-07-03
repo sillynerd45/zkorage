@@ -451,3 +451,79 @@ test("discover: renders dark", async ({ page }) => {
   await expect(page.getByTestId("discover-room")).toHaveCount(2);
   await page.screenshot({ path: "tests/discover-dark.png", fullPage: true });
 });
+
+// A pending request that stored its public commitment is re-checked on-chain automatically (no signature, no
+// click): once the owner approves, the directory button flips from "Requested" to "Open" on its own.
+test("discover: a pending request auto-flips to Open when approved on-chain (no manual refresh)", async ({ page }) => {
+  const ADDR = "GDLECNXD76OZQROASQGWEP4KAMJWTJXZW2LN7OJGYPXIJDRXACWGXZY6";
+  const jj = (b: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(b) });
+  await page.addInitScript(`
+    localStorage.setItem("zkorage.wallet.connected", "1");
+    localStorage.setItem("zkorage.sync.dontAsk", "1");
+    window.__freighterMock = {
+      isConnected: async () => ({ isConnected: true }),
+      isAllowed: async () => ({ isAllowed: true }),
+      requestAccess: async () => ({ address: "${ADDR}" }),
+      getAddress: async () => ({ address: "${ADDR}" }),
+      getNetwork: async () => ({ network: "TESTNET", networkPassphrase: "Test SDF Network ; September 2015" }),
+    };
+    localStorage.setItem("zkorage.dr.requests.${ADDR}", JSON.stringify([
+      { roomId: "${LISTED2}", state: "pending", ts: 1, commitment: "${"cd".repeat(32)}" },
+    ]));
+  `);
+  await stubs(page);
+  // The owner approved since the request was filed: the on-chain status for this commitment now reads eligible.
+  await page.route("**/dataroom/enroll/status/**", (r) => r.fulfill(jj({ state: "eligible" })));
+  await page.goto("/app/dataroom/discover");
+  await expect(page.getByTestId("discover-room")).toHaveCount(2);
+
+  // With no click, the automatic re-check flips LISTED2 from "Requested" to "Open".
+  const open = page.getByTestId("discover-open");
+  await expect(open).toBeVisible();
+  await expect(open).toHaveAttribute("href", `/app/dataroom/documents?room=${LISTED2}#open`);
+  await expect(page.getByTestId("discover-requested")).toHaveCount(0);
+});
+
+// The auto re-check follows an in-tab Freighter account switch: the request history + commitments are per
+// wallet, so each account re-checks only its own requests (regression for a stale button after a switch).
+test("discover: an in-tab account switch re-checks the new wallet's requests", async ({ page }) => {
+  const A = "GDLECNXD76OZQROASQGWEP4KAMJWTJXZW2LN7OJGYPXIJDRXACWGXZY6";
+  const B = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H";
+  const jj = (b: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(b) });
+  await page.addInitScript(`
+    window.__mockAddr = "${A}";
+    localStorage.setItem("zkorage.wallet.connected", "1");
+    localStorage.setItem("zkorage.sync.dontAsk", "1");
+    window.__freighterMock = {
+      isConnected: async () => ({ isConnected: true }),
+      isAllowed: async () => ({ isAllowed: true }),
+      requestAccess: async () => ({ address: window.__mockAddr }),
+      getAddress: async () => ({ address: window.__mockAddr }),
+      getNetwork: async () => ({ network: "TESTNET", networkPassphrase: "Test SDF Network ; September 2015" }),
+    };
+    // Wallet A has a pending request for LISTED2; wallet B a pending one for LISTED1. Stored under each address'
+    // own key, so a switch shows (and re-checks) only that wallet's history.
+    localStorage.setItem("zkorage.dr.requests.${A}", JSON.stringify([
+      { roomId: "${LISTED2}", state: "pending", ts: 1, commitment: "${"a1".repeat(32)}" },
+    ]));
+    localStorage.setItem("zkorage.dr.requests.${B}", JSON.stringify([
+      { roomId: "${LISTED1}", state: "pending", ts: 1, commitment: "${"b2".repeat(32)}" },
+    ]));
+  `);
+  await stubs(page);
+  await page.route("**/dataroom/enroll/status/**", (r) => r.fulfill(jj({ state: "eligible" })));
+  await page.goto("/app/dataroom/discover");
+  await expect(page.getByTestId("discover-room")).toHaveCount(2);
+
+  const listed1Row = page.getByTestId("discover-room").filter({ hasText: "Series A data room" });
+  const listed2Row = page.getByTestId("discover-room").filter({ hasText: "Unnamed room" });
+  // As wallet A: LISTED2 auto-flips to Open; LISTED1 is not in A's history, so it stays joinable.
+  await expect(listed2Row.getByTestId("discover-open")).toBeVisible();
+  await expect(listed1Row.getByTestId("discover-join")).toBeVisible();
+
+  // Switch the active account to B (in-tab, no reload). The poll picks it up; the directory now reflects B's
+  // history: LISTED1 auto-flips to Open, and LISTED2 (A's) reverts to joinable.
+  await page.evaluate((b) => { (window as unknown as { __mockAddr: string }).__mockAddr = b; }, B);
+  await expect(listed1Row.getByTestId("discover-open")).toBeVisible({ timeout: 15_000 });
+  await expect(listed2Row.getByTestId("discover-join")).toBeVisible({ timeout: 15_000 });
+});
