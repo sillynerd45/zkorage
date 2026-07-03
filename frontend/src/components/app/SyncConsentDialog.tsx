@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { RefreshCw, Cloud, ShieldCheck, KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useWallet } from "@/lib/wallet/WalletContext";
-import { getSyncPref, isDontAsk, setDontAsk } from "@/lib/sync/prefs";
+import { getSyncPref, hasSyncPref, isDontAsk, isNoPrompt, setDontAsk } from "@/lib/sync/prefs";
 import { useSync } from "@/lib/sync/useSync";
 
 // The connect-time consent gate for cross-device sync. It appears once per session when a wallet connects (or
@@ -33,13 +33,17 @@ export function SyncConsentDialog() {
   const titleId = useId();
   const bodyId = useId();
 
-  // Decide what to do when a wallet connects or the account changes.
+  // Decide what to do when a wallet connects or the account changes. Consent is PER WALLET: a wallet with a
+  // saved choice is applied silently, a wallet with NONE is asked. Skip the dialog only when this device hard
+  // opted out (noPrompt, not set by the UI), OR the user ticked "don't ask again" AND this wallet already has a
+  // saved choice. So switching to a fresh wallet (no saved choice) still prompts, even on a "don't ask again"
+  // device, instead of silently leaving sync off, which is the reported bug.
   useEffect(() => {
     if (!connected || !address) return;
     if (handled.current.has(address)) return;
-    if (isDontAsk()) {
-      // A familiar user opted out of the dialog: apply their saved choice silently. If sync is on for this
-      // wallet, take the one signature now (their "sign on connect" expectation); otherwise stay local.
+    if (isNoPrompt() || (isDontAsk() && hasSyncPref(address))) {
+      // Apply this wallet's saved choice silently. If sync is on for it, take the one signature now (the
+      // "sign on connect" expectation); otherwise stay local.
       handled.current.add(address);
       if (getSyncPref(address)) void sync.enable().catch(() => {});
       return;

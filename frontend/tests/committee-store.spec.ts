@@ -9,7 +9,7 @@ const ROOM_ID = "a3".repeat(32);
 const PLAINTEXT = "Series A board minutes — strictly confidential";
 const mock = `
   localStorage.setItem("zkorage.wallet.connected", "1");
-  localStorage.setItem("zkorage.sync.dontAsk", "1");
+  localStorage.setItem("zkorage.sync.noPrompt", "1");
   window.__freighterMock = {
     isConnected: async () => ({ isConnected: true }),
     isAllowed: async () => ({ isAllowed: true }),

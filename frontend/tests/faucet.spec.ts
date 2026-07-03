@@ -16,7 +16,7 @@ const ASSETS = [
 function freighterMock() {
   return `
     localStorage.setItem("zkorage.wallet.connected", "1");
-    localStorage.setItem("zkorage.sync.dontAsk", "1");
+    localStorage.setItem("zkorage.sync.noPrompt", "1");
     window.__freighterMock = {
       isConnected: async () => ({ isConnected: true }),
       isAllowed: async () => ({ isAllowed: true }),

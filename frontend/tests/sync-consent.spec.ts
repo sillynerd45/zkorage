@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 
 // The connect-time cross-device sync consent dialog. Unlike the other specs (which seed
-// zkorage.sync.dontAsk to skip the dialog), these DO NOT seed it, so the dialog appears, and the mock
+// zkorage.sync.noPrompt to skip the dialog), these DO NOT seed it, so the dialog appears, and the mock
 // provides signMessage + the vault endpoints are stubbed so the one-signature restore runs offline.
 
 const G = "GABF456WZDNHKUVWA6BBAYLACD3QTMZA745AVRSBK7IYOBQ5NQJ3HGRC";
@@ -94,6 +94,22 @@ test("the wallet menu can turn sync on for a user who dismissed the dialog", asy
   await expect(page.getByTestId("wallet-sync-state")).toHaveText("Off");
   await page.getByTestId("wallet-sync").click();
   await expect(page.getByTestId("wallet-sync-state")).toHaveText("On");
+});
+
+// Consent is PER WALLET: ticking "don't ask again" on one wallet must NOT silence the prompt for a different
+// wallet the user has never decided on. (Regression: a device-wide opt-out was suppressing the dialog for a
+// freshly-connected wallet, leaving its sync silently off with no way to choose.)
+test("a 'don't ask again' device still prompts for a wallet with no saved preference", async ({ page }) => {
+  const PRIOR = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H";
+  await page.addInitScript(mock()); // connects wallet G, which has no saved sync preference
+  await page.addInitScript(`
+    localStorage.setItem("zkorage.sync.dontAsk", "1");       // device opted out via the checkbox, on a prior wallet
+    localStorage.setItem("zkorage.sync.pref.${PRIOR}", "1"); // ...which was decided: sync on
+  `);
+  await stubVaults(page);
+  await page.goto("/app");
+  // Wallet G has no saved preference, so despite the device-level "don't ask again", the dialog appears.
+  await expect(page.getByTestId("sync-consent-dialog")).toBeVisible();
 });
 
 // Login sync must restore BOTH pillars, not just the Data Room. This rounds-trips the REAL backend bond

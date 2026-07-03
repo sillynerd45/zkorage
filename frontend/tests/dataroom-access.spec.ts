@@ -16,7 +16,7 @@ const DOC = "dc4a61c504f4f528a1bb7fed7f0bfb613e1b85f1053afc32d308f20903e4ac0d";
 
 const mock = `
   localStorage.setItem("zkorage.wallet.connected", "1");
-  localStorage.setItem("zkorage.sync.dontAsk", "1");
+  localStorage.setItem("zkorage.sync.noPrompt", "1");
   window.__freighterMock = {
     isConnected: async () => ({ isConnected: true }),
     isAllowed: async () => ({ isAllowed: true }),
@@ -262,7 +262,7 @@ test("Open: a returning device that dismissed the connect dialog shows a promine
   // returning device: sync was enabled before (persisted, legacy key), but the wallet has not signed this
   // session. Clear the spec-wide don't-ask seed so the connect dialog appears (the don't-ask path auto-restores
   // instead, covered by the next test); dismissing it leaves sync on and reveals the in-page locked affordance.
-  await page.addInitScript(`localStorage.removeItem("zkorage.sync.dontAsk"); localStorage.setItem("zkorage.dr.vaultSync.${ADDR}", "1");`);
+  await page.addInitScript(`localStorage.removeItem("zkorage.sync.noPrompt"); localStorage.setItem("zkorage.dr.vaultSync.${ADDR}", "1");`);
   await stubReads(page, "eligible", 8);
   await stubVault(page);
 
@@ -281,7 +281,7 @@ test("Open: a returning device that dismissed the connect dialog shows a promine
 });
 
 test("Open: a returning device with sync on + don't-ask auto-restores on connect, with no dialog", async ({ page }) => {
-  await page.addInitScript(mock); // seeds zkorage.sync.dontAsk = 1
+  await page.addInitScript(mock); // seeds zkorage.sync.noPrompt = 1
   // sync on for this wallet (new key): the familiar-user path signs once on connect and pulls, no dialog.
   await page.addInitScript(`localStorage.setItem("zkorage.sync.pref.${ADDR}", "1");`);
   await stubReads(page, "eligible", 8);

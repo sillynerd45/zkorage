@@ -13,7 +13,7 @@ const WRONG_KEY = "11".repeat(32); // a non-recipient secret → the faithful ta
 const DEMO_G = "GABF456WZDNHKUVWA6BBAYLACD3QTMZA745AVRSBK7IYOBQ5NQJ3HGRC";
 const freighterMock = () => `
   localStorage.setItem("zkorage.wallet.connected", "1");
-  localStorage.setItem("zkorage.sync.dontAsk", "1");
+  localStorage.setItem("zkorage.sync.noPrompt", "1");
   window.__freighterMock = {
     isConnected: async () => ({ isConnected: true }),
     isAllowed: async () => ({ isAllowed: true }),

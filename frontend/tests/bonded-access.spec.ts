@@ -34,7 +34,7 @@ const BOND_HANDLE = {
 
 const mock = `
   localStorage.setItem("zkorage.wallet.connected", "1");
-  localStorage.setItem("zkorage.sync.dontAsk", "1");
+  localStorage.setItem("zkorage.sync.noPrompt", "1");
   localStorage.setItem("zkorage-bond-identity.${ADDR}", ${JSON.stringify(JSON.stringify(BOND_HANDLE))});
   window.__freighterMock = {
     isConnected: async () => ({ isConnected: true }),

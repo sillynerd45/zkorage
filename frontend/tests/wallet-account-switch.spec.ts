@@ -18,7 +18,7 @@ function mock(addr: string) {
     window.__mockAddr = "${addr}";
     window.__mockNet = "TESTNET";
     localStorage.setItem("zkorage.wallet.connected", "1");
-    localStorage.setItem("zkorage.sync.dontAsk", "1");
+    localStorage.setItem("zkorage.sync.noPrompt", "1");
     window.__freighterMock = {
       isConnected: async () => ({ isConnected: true }),
       isAllowed: async () => ({ isAllowed: true }),
@@ -82,4 +82,38 @@ test("a locked extension recovers to connected when unlocked, without a reload",
     (window as unknown as { __mockAddr: string }).__mockAddr = a;
   }, A);
   await expect(page.getByTestId("wallet-address")).toHaveText(sh(A), { timeout: 15_000 });
+});
+
+// The reported bug: on a device where the user ticked "don't ask again" (and a prior wallet is decided),
+// switching the active Freighter account to a wallet with no saved sync preference must still prompt, instead
+// of silently leaving that wallet's sync off. Consent is per wallet; the opt-out only silences DECIDED wallets.
+test("an in-tab switch to a wallet with no saved preference still prompts for sync", async ({ page }) => {
+  // Sync's one-signature restore for the decided wallet A hits the encrypted vaults; stub them (empty).
+  for (const p of ["**/dataroom/rooms-vault/**", "**/bonded/bond/handle-vault/**", "**/bonded/bond/grants-vault/**"]) {
+    await page.route(p, (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ found: false, blob: null }) }));
+  }
+  await page.addInitScript(`
+    window.__mockAddr = "${A}";
+    window.__mockNet = "TESTNET";
+    localStorage.setItem("zkorage.wallet.connected", "1");
+    localStorage.setItem("zkorage.sync.dontAsk", "1");   // device opted out via the checkbox (NOT the test noPrompt)
+    localStorage.setItem("zkorage.sync.pref.${A}", "1"); // wallet A is decided: sync on
+    window.__freighterMock = {
+      isConnected: async () => ({ isConnected: true }),
+      isAllowed: async () => ({ isAllowed: true }),
+      requestAccess: async () => ({ address: window.__mockAddr }),
+      getAddress: async () => ({ address: window.__mockAddr }),
+      getNetwork: async () => ({ network: window.__mockNet, networkPassphrase: "Test SDF Network ; September 2015" }),
+      signMessage: async () => ({ signedMessage: btoa(String.fromCharCode.apply(null, new Array(64).fill(7))), signerAddress: window.__mockAddr }),
+    };
+  `);
+  await page.goto("/app");
+  // Wallet A is decided (dontAsk + sync on) -> applied silently, no dialog.
+  await expect(page.getByTestId("wallet-address")).toHaveText(sh(A));
+  await expect(page.getByTestId("sync-consent-dialog")).toHaveCount(0);
+  // Switch the active account to B (no saved preference): the poll picks it up and the consent dialog appears.
+  await page.evaluate((b) => {
+    (window as unknown as { __mockAddr: string }).__mockAddr = b;
+  }, B);
+  await expect(page.getByTestId("sync-consent-dialog")).toBeVisible({ timeout: 15_000 });
 });
